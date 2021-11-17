@@ -50,6 +50,7 @@ static unsigned int __initdata tsc_early_khz;
 static DEFINE_STATIC_KEY_FALSE_RO(__use_tsc);
 
 int tsc_clocksource_reliable;
+int tsc_allow_direct_sync;
 
 static int __read_mostly tsc_force_recalibrate;
 
@@ -343,6 +344,8 @@ static int __init tsc_setup(char *str)
 		else
 			tsc_as_watchdog = 1;
 	}
+	if (!strcmp(str, "directsync"))
+		tsc_allow_direct_sync = 1;
 	return 1;
 }
 
