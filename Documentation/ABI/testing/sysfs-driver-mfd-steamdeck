@@ -1,0 +1,8 @@
+What:		/sys/bus/platform/devices/VLV0100:*/controller_board_power
+Date:		February 2026
+KernelVersion:	6.20
+Description:
+		Controls power supply (VBUS) for the Deck's controller board.
+Users:
+		"Break glass" emergency bootloader update/recovery script on
+		certain models of Steam Deck.
