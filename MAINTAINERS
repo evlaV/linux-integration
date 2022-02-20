@@ -25024,6 +25024,7 @@ STEAM DECK ACPI PLATFORM DRIVERS
 M:	Andrey Smirnov <andrew.smirnov@gmail.com>
 M:	Nícolas F. R. A. Prado <nfraprado@collabora.com>
 S:	Supported
+F:	drivers/hwmon/steamdeck-hwmon.c
 F:	drivers/mfd/steamdeck.c
 
 STI AUDIO (ASoC) DRIVERS
