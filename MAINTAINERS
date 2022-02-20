@@ -23809,6 +23809,12 @@ F:	include/linux/static_call*.h
 F:	kernel/jump_label.c
 F:	kernel/static_call*.c
 
+STEAM DECK ACPI PLATFORM DRIVERS
+M:	Andrey Smirnov <andrew.smirnov@gmail.com>
+M:	Nícolas F. R. A. Prado <nfraprado@collabora.com>
+S:	Supported
+F:	drivers/mfd/steamdeck.c
+
 STI AUDIO (ASoC) DRIVERS
 M:	Arnaud Pouliquen <arnaud.pouliquen@foss.st.com>
 L:	linux-sound@vger.kernel.org
