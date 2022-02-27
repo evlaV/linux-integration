@@ -23813,6 +23813,7 @@ STEAM DECK ACPI PLATFORM DRIVERS
 M:	Andrey Smirnov <andrew.smirnov@gmail.com>
 M:	Nícolas F. R. A. Prado <nfraprado@collabora.com>
 S:	Supported
+F:	drivers/extcon/extcon-steamdeck.c
 F:	drivers/hwmon/steamdeck-hwmon.c
 F:	drivers/leds/leds-steamdeck.c
 F:	drivers/mfd/steamdeck.c
