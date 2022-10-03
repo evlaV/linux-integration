@@ -35,10 +35,16 @@
 
 static const uint32_t virtio_gpu_formats[] = {
 	DRM_FORMAT_HOST_XRGB8888,
+	DRM_FORMAT_HOST_ARGB8888,
 };
 
 static const uint32_t virtio_gpu_cursor_formats[] = {
 	DRM_FORMAT_HOST_ARGB8888,
+};
+
+static const uint64_t virtio_gpu_format_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID
 };
 
 uint32_t virtio_gpu_translate_format(uint32_t drm_fourcc)
@@ -70,6 +76,13 @@ uint32_t virtio_gpu_translate_format(uint32_t drm_fourcc)
 	return format;
 }
 
+static bool virtio_gpu_format_mod_supported(struct drm_plane *plane,
+					    uint32_t format,
+					    uint64_t modifier)
+{
+	return modifier == DRM_FORMAT_MOD_LINEAR;
+}
+
 static struct
 drm_plane_state *virtio_gpu_plane_duplicate_state(struct drm_plane *plane)
 {
@@ -93,6 +106,7 @@ static const struct drm_plane_funcs virtio_gpu_plane_funcs = {
 	.reset			= drm_atomic_helper_plane_reset,
 	.atomic_duplicate_state = virtio_gpu_plane_duplicate_state,
 	.atomic_destroy_state	= drm_atomic_helper_plane_destroy_state,
+	.format_mod_supported = virtio_gpu_format_mod_supported,
 };
 
 static int virtio_gpu_plane_atomic_check(struct drm_plane *plane,
@@ -594,7 +608,9 @@ struct drm_plane *virtio_gpu_plane_init(struct virtio_gpu_device *vgdev,
 
 	plane = drmm_universal_plane_alloc(dev, struct drm_plane, dev,
 					   1 << index, &virtio_gpu_plane_funcs,
-					   formats, nformats, NULL, type, NULL);
+					   formats, nformats,
+					   virtio_gpu_format_modifiers,
+					   type, NULL);
 	if (IS_ERR(plane))
 		return plane;
 
