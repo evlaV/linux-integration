@@ -1050,6 +1050,9 @@ struct amdgpu_device {
 
 	bool                            job_hang;
 	bool                            dc_enabled;
+
+	/* TODO: Maybe this should be a per-ring info */
+	struct drm_amdgpu_info_guilty_app	info;
 };
 
 static inline struct amdgpu_device *drm_to_adev(struct drm_device *ddev)

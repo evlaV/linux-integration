@@ -227,6 +227,7 @@ struct amdgpu_ring_funcs {
 	int (*preempt_ib)(struct amdgpu_ring *ring);
 	void (*emit_mem_sync)(struct amdgpu_ring *ring);
 	void (*emit_wave_limit)(struct amdgpu_ring *ring, bool enable);
+	void (*get_reset_data)(struct amdgpu_ring *ring, struct amdgpu_job *job);
 };
 
 struct amdgpu_ring {

@@ -9226,6 +9226,34 @@ static void gfx_v10_0_emit_mem_sync(struct amdgpu_ring *ring)
 	amdgpu_ring_write(ring, gcr_cntl); /* GCR_CNTL */
 }
 
+static void gfx_v10_0_get_reset_data(struct amdgpu_ring *ring,
+				     struct amdgpu_job *job)
+{
+	int i;
+
+	struct amdgpu_device *adev = ring->adev;
+	u64 ib_addr;
+	u32 ib_addr_lo;
+
+	ib_addr = RREG32_SOC15(GC, 0, mmCP_IB1_BASE_HI);
+	ib_addr = ib_addr << 32;
+	ib_addr_lo = RREG32_SOC15(GC, 0, mmCP_IB1_BASE_LO);
+	ib_addr += ib_addr_lo;
+
+	adev->info.ib_addr = ib_addr;
+	adev->info.vmid = job->vmid;
+
+	for (i = 0; i < job->num_ibs; i++) {
+		if (lower_32_bits(job->ibs[i].gpu_addr) == ib_addr_lo) {
+			adev->info.ib_size = job->ibs[i].length_dw;
+			break;
+		}
+	}
+
+	DRM_INFO("Guilty app info: IB addr 0x%llx IB size 0x%x VM id %u",
+		  adev->info.ib_addr, adev->info.ib_size, adev->info.vmid);
+}
+
 static const struct amd_ip_funcs gfx_v10_0_ip_funcs = {
 	.name = "gfx_v10_0",
 	.early_init = gfx_v10_0_early_init,
@@ -9297,6 +9325,7 @@ static const struct amdgpu_ring_funcs gfx_v10_0_ring_funcs_gfx = {
 	.emit_reg_write_reg_wait = gfx_v10_0_ring_emit_reg_write_reg_wait,
 	.soft_recovery = gfx_v10_0_ring_soft_recovery,
 	.emit_mem_sync = gfx_v10_0_emit_mem_sync,
+	.get_reset_data = gfx_v10_0_get_reset_data,
 };
 
 static const struct amdgpu_ring_funcs gfx_v10_0_ring_funcs_compute = {

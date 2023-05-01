@@ -1149,6 +1149,13 @@ int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 		return copy_to_user(out, max_ibs,
 				    min((size_t)size, sizeof(max_ibs))) ? -EFAULT : 0;
 	}
+	case AMDGPU_INFO_GUILTY_APP: {
+		struct drm_amdgpu_info_guilty_app info;
+		info.ib_addr = adev->info.ib_addr;
+		info.vmid = adev->info.vmid;
+		info.ib_size = adev->info.ib_size;
+		return copy_to_user(out, &info, min((size_t)size, sizeof(info))) ? -EFAULT : 0;
+	}
 	default:
 		DRM_DEBUG_KMS("Invalid request %d\n", info->query);
 		return -EINVAL;

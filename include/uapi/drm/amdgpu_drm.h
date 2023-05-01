@@ -878,6 +878,7 @@ struct drm_amdgpu_cs_chunk_data {
 	#define AMDGPU_INFO_VIDEO_CAPS_ENCODE		1
 /* Query the max number of IBs per gang per submission */
 #define AMDGPU_INFO_MAX_IBS			0x22
+#define AMDGPU_INFO_GUILTY_APP			0x23
 
 #define AMDGPU_INFO_MMR_SE_INDEX_SHIFT	0
 #define AMDGPU_INFO_MMR_SE_INDEX_MASK	0xff
@@ -1193,6 +1194,12 @@ struct drm_amdgpu_info_video_codec_info {
 
 struct drm_amdgpu_info_video_caps {
 	struct drm_amdgpu_info_video_codec_info codec_info[AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_COUNT];
+};
+
+struct drm_amdgpu_info_guilty_app {
+	__u64 ib_addr;
+	__u32 ib_size;
+	__u32 vmid;
 };
 
 /*
