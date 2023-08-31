@@ -1282,6 +1282,8 @@ struct amdgpu_device {
 	/* Mask of active clusters */
 	uint32_t			aid_mask;
 
+	bool				csib_initialized;
+
 	/* Debug */
 	bool                            debug_vm;
 	bool                            debug_largebar;
