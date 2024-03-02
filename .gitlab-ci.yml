@@ -131,6 +131,9 @@ test-kernel-qemu:
     - .use-debian-kernel-builder
   needs:
     - build-kernel-qemu
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
   script:
     # Download rootfs
     - 'curl -L --header "PRIVATE-TOKEN: ${KERNEL_RESEARCH_ROOTFS_TOKEN}" "${ROOTFS_IMAGE_URL}" --output artifact.zip'
