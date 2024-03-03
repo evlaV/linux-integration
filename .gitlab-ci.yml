@@ -32,14 +32,9 @@ stages:
   variables:
     GIT_STRATEGY: none
   script:
+    - echo "Checking $IMAGE_NAME:$IMAGE_TAG"
     - crane auth login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - >
-      crane manifest $CI_REGISTRY_IMAGE/$IMAGE_NAME:$IMAGE_TAG
-      && IMAGE_EXISTS=1 || IMAGE_EXISTS=0
-    - echo "IMAGE_EXISTS=$IMAGE_EXISTS" > check-image.env
-  artifacts:
-    reports:
-      dotenv: check-image.env
+    - crane manifest $CI_REGISTRY_IMAGE/$IMAGE_NAME:$IMAGE_TAG
 
 .build-docker-image:
   stage: build-image
@@ -47,11 +42,6 @@ stages:
     name: gcr.io/kaniko-project/executor:v1.21.0-debug
     entrypoint: [""]
   script:
-    - |
-      if [ $IMAGE_EXISTS -eq 1 ]; then
-        echo "Skip building $IMAGE_NAME:$IMAGE_TAG"
-        exit 0
-      fi
     - mkdir -p /kaniko/.docker/
     - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
     - >
@@ -62,6 +52,7 @@ stages:
       --single-snapshot
       --build-arg DISTRO_BASE=$IMAGE_DISTRO_BASE
       --build-arg DISTRO_TAG=$IMAGE_DISTRO_TAG
+  when: on_failure
 
 .use-docker-image:
   image:
@@ -91,8 +82,6 @@ build-debian-kernel-builder:
   extends:
     - .use-docker-image
     - .prep-debian-kernel-builder
-  needs:
-    - build-debian-kernel-builder
 
 build-kernel-qemu:
   stage: build-kernel
