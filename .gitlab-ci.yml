@@ -94,14 +94,15 @@ build-kernel-qemu:
     - |
       printf "%s\n" \
         "CONFIG_EXTRA_FIRMWARE_DIR=\"ci/fw\"" \
-        "CONFIG_EXTRA_FIRMWARE=\"${FW_FILES}\"" &> ci/.config-fragment-firmware
+        "CONFIG_EXTRA_FIRMWARE=\"${FW_FILES}\"" \
+         >ci/kernel-config/qemu/config-fragment-firmware
     # Prepare kernel config
     - make x86_64_defconfig && make kvm_guest.config
     - |
-      ./scripts/kconfig/merge_config.sh .config \
-        ci/.config-fragment \
-        ci/.config-fragment-extra \
-        ci/.config-fragment-firmware
+      ./scripts/kconfig/merge_config.sh -m .config \
+        ci/kernel-config/qemu/config-fragment \
+        ci/kernel-config/qemu/config-fragment-extra \
+        ci/kernel-config/qemu/config-fragment-firmware
     - cp .config kernel_config
     # Build kernel
     - make -j $(nproc)
