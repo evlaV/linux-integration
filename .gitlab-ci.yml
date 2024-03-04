@@ -92,9 +92,10 @@ build-kernel-neptune:
   extends:
     - .use-debian-kernel-builder
   rules:
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH =~ /-integration$/
-    - when: manual
+    - if: $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH !~ /-integration$/
+      when: manual
+      allow_failure: true
+    - when: on_success
   variables:
     BUILD_DIR: build/neptune
   script:
@@ -152,8 +153,10 @@ test-kernel-qemu:
   needs:
     - build-kernel-qemu
   rules:
-    - if: $CI_COMMIT_TAG
-    - when: manual
+    - if: $CI_COMMIT_TAG == null
+      when: manual
+      allow_failure: true
+    - when: on_success
   script:
     # Download rootfs
     - 'curl -L --header "PRIVATE-TOKEN: ${KERNEL_RESEARCH_ROOTFS_TOKEN}" "${ROOTFS_IMAGE_URL}" --output artifact.zip'
