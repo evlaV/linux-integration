@@ -109,12 +109,13 @@ build-kernel-neptune:
     - cp $BUILD_DIR/.config kernel_config_neptune
     # Build kernel
     - make O=$BUILD_DIR -j $(nproc)
-    - make O=$BUILD_DIR -j $(nproc) tarzst-pkg
-    - mv $BUILD_DIR/linux-*.tar.zst .
+    - strip -v --strip-debug $BUILD_DIR/vmlinux
+    - ZSTD_CLEVEL=19 make O=$BUILD_DIR -j $(nproc) INSTALL_MOD_STRIP=1 tar-pkg
+    - mv $BUILD_DIR/linux-*.tar .
   artifacts:
     paths:
       - kernel_config_neptune
-      - linux-*.tar.zst
+      - linux-*.tar
 
 build-kernel-qemu:
   stage: build-kernel
