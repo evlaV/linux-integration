@@ -27,6 +27,7 @@
  *      Dave Airlie <airlied@linux.ie>
  *      Jesse Barnes <jesse.barnes@intel.com>
  */
+#include "drm/drm_plane.h"
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/console.h>
@@ -123,7 +124,7 @@ __drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper,
 	if (!drm_fbdev_emulation || !fb_helper)
 		return -ENODEV;
 
-	if (READ_ONCE(fb_helper->deferred_setup))
+	if (READ_ONCE(fb_helper->deferred_setup) || drm_has_active_plane(fb_helper->dev))
 		return 0;
 
 	mutex_lock(&fb_helper->lock);
