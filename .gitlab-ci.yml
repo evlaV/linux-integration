@@ -13,6 +13,8 @@ default:
   interruptible: true
   tags:
     - autoscaled
+    - isolated
+    - linux-heavy
 
 workflow:
   rules:
