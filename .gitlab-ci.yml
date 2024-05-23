@@ -12,9 +12,7 @@ default:
     when: always
   interruptible: true
   tags:
-    - autoscaled
-    - isolated
-    - linux-heavy
+    - x86_64-linux-kvm-docker-heavy
 
 workflow:
   rules:
