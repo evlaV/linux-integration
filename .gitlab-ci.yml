@@ -16,6 +16,7 @@ default:
 
 workflow:
   rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH
   auto_cancel:
@@ -92,7 +93,7 @@ build-kernel-neptune:
   extends:
     - .use-debian-kernel-builder
   rules:
-    - if: $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH !~ /-integration$/
+    - if: $CI_PIPELINE_SOURCE != 'merge_request_event' && $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH !~ /-integration$/
       when: manual
       allow_failure: true
     - when: on_success
@@ -154,7 +155,7 @@ test-kernel-qemu:
   needs:
     - build-kernel-qemu
   rules:
-    - if: $CI_COMMIT_TAG == null
+    - if: $CI_PIPELINE_SOURCE != 'merge_request_event' && $CI_COMMIT_TAG == null
       when: manual
       allow_failure: true
     - when: on_success
