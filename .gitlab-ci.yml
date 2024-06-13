@@ -67,9 +67,9 @@ stages:
 .prep-debian-kernel-builder:
   variables:
     IMAGE_DISTRO_BASE: debian
-    IMAGE_DISTRO_TAG: buster-slim
+    IMAGE_DISTRO_TAG: trixie-slim
     IMAGE_NAME: debian-kernel-builder
-    IMAGE_TAG: "2024-02-29"
+    IMAGE_TAG: "2024-06-10"
 
 check-debian-kernel-builder:
   extends:
