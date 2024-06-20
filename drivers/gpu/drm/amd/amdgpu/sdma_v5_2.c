@@ -1327,7 +1327,7 @@ static int sdma_v5_2_sw_init(struct amdgpu_ip_block *ip_block)
 		adev->sdma.instance[i].funcs = &sdma_v5_2_sdma_funcs;
 		ring = &adev->sdma.instance[i].ring;
 		ring->ring_obj = NULL;
-		ring->use_doorbell = true;
+		ring->use_doorbell = false;
 		ring->me = i;
 
 		drm_info(adev_to_drm(adev), "use_doorbell being set to: [%s]\n",
