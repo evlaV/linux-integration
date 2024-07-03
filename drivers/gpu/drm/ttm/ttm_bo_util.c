@@ -38,6 +38,7 @@
 #include <drm/ttm/ttm_tt.h>
 
 #include <drm/drm_cache.h>
+#include <drm/drm_exec.h>
 
 #include "ttm_bo_internal.h"
 
@@ -819,6 +820,8 @@ static bool ttm_lru_walk_trylock(struct ttm_bo_lru_cursor *curs,
 	struct ttm_operation_ctx *ctx = curs->arg->ctx;
 
 	curs->needs_unlock = false;
+	if (ctx->exec)
+		return false;
 
 	if (dma_resv_trylock(bo->base.resv)) {
 		curs->needs_unlock = true;
@@ -837,13 +840,14 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 				   struct ttm_buffer_object *bo)
 {
 	struct ttm_lru_walk_arg *arg = curs->arg;
-	struct dma_resv *resv = bo->base.resv;
 	int ret;
 
-	if (arg->ctx->interruptible)
-		ret = dma_resv_lock_interruptible(resv, arg->ticket);
+	if (arg->ctx->exec)
+		ret = drm_exec_lock_obj(arg->ctx->exec, &bo->base, true);
+	else if (arg->ctx->interruptible)
+		ret = dma_resv_lock_interruptible(bo->base.resv, arg->ticket);
 	else
-		ret = dma_resv_lock(resv, arg->ticket);
+		ret = dma_resv_lock(bo->base.resv, arg->ticket);
 
 	if (!ret) {
 		curs->needs_unlock = true;
@@ -854,9 +858,12 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 		 * trylocking for this walk.
 		 */
 		arg->ticket = NULL;
-	} else if (ret == -EDEADLK) {
+	} else if (!arg->ctx->exec && ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
+	} else if (arg->ctx->exec && ret == -EALREADY &&
+		   arg->ctx->allow_res_evict) {
+		ret = 0;
 	}
 
 	return ret;
@@ -920,12 +927,17 @@ static void ttm_bo_lru_cursor_cleanup_bo(struct ttm_bo_lru_cursor *curs)
 {
 	struct ttm_buffer_object *bo = curs->bo;
 
-	if (bo) {
-		if (curs->needs_unlock)
+	if (!bo)
+		return;
+
+	if (curs->needs_unlock) {
+		if (curs->arg->ctx->exec)
+			drm_exec_unlock_obj(curs->arg->ctx->exec, &bo->base);
+		else
 			dma_resv_unlock(bo->base.resv);
-		ttm_bo_put(bo);
-		curs->bo = NULL;
 	}
+	ttm_bo_put(bo);
+	curs->bo = NULL;
 }
 
 /**
@@ -995,7 +1007,8 @@ __ttm_bo_lru_cursor_next(struct ttm_bo_lru_cursor *curs)
 		bo = res->bo;
 		if (ttm_lru_walk_trylock(curs, bo))
 			bo_locked = true;
-		else if (!arg->ticket || arg->ctx->no_wait_gpu || arg->trylock_only)
+		else if ((!arg->ticket || arg->ctx->no_wait_gpu ||
+			    arg->trylock_only) && !arg->ctx->exec)
 			continue;
 
 		if (!ttm_bo_get_unless_zero(bo)) {
