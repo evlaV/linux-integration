@@ -36,6 +36,7 @@
 #include <drm/ttm/ttm_tt.h>
 
 #include <drm/drm_cache.h>
+#include <drm/drm_exec.h>
 
 struct ttm_transfer_obj {
 	struct ttm_buffer_object base;
@@ -789,6 +790,9 @@ static bool ttm_lru_walk_trylock(struct ttm_operation_ctx *ctx,
 {
 	*needs_unlock = false;
 
+	if (ctx->exec)
+		return false;
+
 	if (dma_resv_trylock(bo->base.resv)) {
 		*needs_unlock = true;
 		return true;
@@ -809,7 +813,9 @@ static int ttm_lru_walk_ticketlock(struct ttm_lru_walk *walk,
 	struct dma_resv *resv = bo->base.resv;
 	int ret;
 
-	if (walk->ctx->interruptible)
+	if (walk->ctx->exec)
+		ret = drm_exec_lock_obj(walk->ctx->exec, &bo->base, true);
+	else if (walk->ctx->interruptible)
 		ret = dma_resv_lock_interruptible(resv, walk->ticket);
 	else
 		ret = dma_resv_lock(resv, walk->ticket);
@@ -823,17 +829,26 @@ static int ttm_lru_walk_ticketlock(struct ttm_lru_walk *walk,
 		 * trylocking for this walk.
 		 */
 		walk->ticket = NULL;
-	} else if (ret == -EDEADLK) {
+	} else if (!walk->ctx->exec && ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
+	} else if (walk->ctx->exec && ret == -EALREADY &&
+		   walk->ctx->allow_res_evict) {
+		ret = 0;
 	}
 
 	return ret;
 }
 
-static void ttm_lru_walk_unlock(struct ttm_buffer_object *bo, bool locked)
+static void ttm_lru_walk_unlock(struct ttm_buffer_object *bo,
+				struct ttm_operation_ctx *ctx, bool locked)
 {
-	if (locked)
+	if (!locked)
+		return;
+
+	if (ctx->exec)
+		drm_exec_unlock_obj(ctx->exec, &bo->base);
+	else
 		dma_resv_unlock(bo->base.resv);
 }
 
@@ -891,12 +906,12 @@ s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 		 */
 		if (ttm_lru_walk_trylock(walk->ctx, bo, &bo_needs_unlock))
 			bo_locked = true;
-		else if (!walk->ticket || walk->ctx->no_wait_gpu ||
-			 walk->trylock_only)
+		else if ((!walk->ticket || walk->ctx->no_wait_gpu ||
+			  walk->trylock_only) && !walk->ctx->exec)
 			continue;
 
 		if (!ttm_bo_get_unless_zero(bo)) {
-			ttm_lru_walk_unlock(bo, bo_needs_unlock);
+			ttm_lru_walk_unlock(bo, walk->ctx, bo_needs_unlock);
 			continue;
 		}
 
@@ -917,7 +932,7 @@ s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 		if (!lret && bo->resource && bo->resource->mem_type == mem_type)
 			lret = walk->process_bo(walk, bo);
 
-		ttm_lru_walk_unlock(bo, bo_needs_unlock);
+		ttm_lru_walk_unlock(bo, walk->ctx, bo_needs_unlock);
 		ttm_bo_put(bo);
 
 		if (lret == -EBUSY || lret == -EALREADY)
@@ -939,12 +954,14 @@ static void ttm_bo_lru_cursor_cleanup_bo(struct ttm_bo_lru_cursor *curs)
 {
 	struct ttm_buffer_object *bo = curs->bo;
 
-	if (bo) {
-		if (curs->needs_unlock)
-			dma_resv_unlock(bo->base.resv);
-		ttm_bo_put(bo);
-		curs->bo = NULL;
+	if (!bo)
+		return;
+
+	if (curs->needs_unlock) {
+		dma_resv_unlock(bo->base.resv);
 	}
+	ttm_bo_put(bo);
+	curs->bo = NULL;
 }
 
 /**
