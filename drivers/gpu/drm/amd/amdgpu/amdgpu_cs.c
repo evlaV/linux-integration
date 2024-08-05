@@ -1279,7 +1279,9 @@ static int amdgpu_cs_sync_rings(struct amdgpu_cs_parser *p)
 
 		sync_mode = amdgpu_bo_explicit_sync(bo) ?
 			AMDGPU_SYNC_EXPLICIT : AMDGPU_SYNC_NE_OWNER;
-		r = amdgpu_sync_resv(p->adev, &p->sync, resv, sync_mode,
+		/* Implicitly sync only to KERNEL, WRITE and READ */
+		r = amdgpu_sync_resv(p->adev, &p->sync, resv,
+				     DMA_RESV_USAGE_READ, sync_mode,
 				     &fpriv->vm);
 		if (r)
 			return r;

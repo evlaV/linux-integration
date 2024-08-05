@@ -498,6 +498,7 @@ int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx)
 	 */
 	r = amdgpu_sync_resv(ctx->adev, &ctx->sync,
 			     ctx->vm->root.bo->tbo.base.resv,
+			     DMA_RESV_USAGE_READ,
 			     ctx->explicit_sync_unmap ? AMDGPU_SYNC_EXPLICIT :
 							AMDGPU_SYNC_EQ_OWNER,
 			     ctx->vm);
@@ -1452,7 +1453,8 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 
 		/* Implicitly sync to moving fences before mapping anything */
 		r = amdgpu_sync_resv(ctx->adev, &ctx->sync, bo->tbo.base.resv,
-				     AMDGPU_SYNC_EXPLICIT, vm);
+				     DMA_RESV_USAGE_READ, AMDGPU_SYNC_EXPLICIT,
+				     vm);
 		if (r)
 			goto error;
 	}

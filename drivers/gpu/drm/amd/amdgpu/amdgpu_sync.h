@@ -24,6 +24,7 @@
 #ifndef __AMDGPU_SYNC_H__
 #define __AMDGPU_SYNC_H__
 
+#include <linux/dma-resv.h>
 #include <linux/hashtable.h>
 
 struct dma_fence;
@@ -50,8 +51,8 @@ void amdgpu_sync_create(struct amdgpu_sync *sync);
 int amdgpu_sync_fence(struct amdgpu_sync *sync, struct dma_fence *f,
 		      gfp_t flags);
 int amdgpu_sync_resv(struct amdgpu_device *adev, struct amdgpu_sync *sync,
-		     struct dma_resv *resv, enum amdgpu_sync_mode mode,
-		     void *owner);
+		     struct dma_resv *resv, enum dma_resv_usage usage,
+		     enum amdgpu_sync_mode mode, void *owner);
 int amdgpu_sync_kfd(struct amdgpu_sync *sync, struct dma_resv *resv);
 struct dma_fence *amdgpu_sync_peek_fence(struct amdgpu_sync *sync,
 				     struct amdgpu_ring *ring);
