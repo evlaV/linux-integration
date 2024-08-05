@@ -962,6 +962,12 @@ struct drm_amdgpu_gem_va {
 #define AMDGPU_CHUNK_ID_SYNCOBJ_TIMELINE_SIGNAL  0x09
 #define AMDGPU_CHUNK_ID_CP_GFX_SHADOW   0x0a
 
+
+#define AMDGPU_CS_FLAGS_MASK       0x1
+/* Disable implicit sync on BOs wrt other
+ * submissions. */
+#define AMDGPU_CS_NO_IMPLICIT_SYNC 1
+
 struct drm_amdgpu_cs_chunk {
 	__u32		chunk_id;
 	__u32		length_dw;
