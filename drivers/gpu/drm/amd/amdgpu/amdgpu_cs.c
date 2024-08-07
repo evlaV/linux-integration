@@ -193,8 +193,10 @@ static int amdgpu_cs_pass1(struct amdgpu_cs_parser *p,
 	int ret;
 	int i;
 
-	if (cs->in.flags)
+	if (cs->in.flags & ~AMDGPU_CS_FLAGS_MASK)
 		return -EINVAL;
+
+	p->flags = cs->in.flags;
 
 	chunk_array = memdup_array_user(u64_to_user_ptr(cs->in.chunks),
 					cs->in.num_chunks,
@@ -1275,16 +1277,19 @@ static int amdgpu_cs_sync_rings(struct amdgpu_cs_parser *p)
 	}
 
 	drm_exec_for_each_locked_object(&p->exec, obj) {
+		/* Implicitly sync only to KERNEL, WRITE and READ */
+		enum dma_resv_usage usage = DMA_RESV_USAGE_READ;
 		struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 
 		struct dma_resv *resv = bo->tbo.base.resv;
 		enum amdgpu_sync_mode sync_mode;
 
+		if (p->flags & AMDGPU_CS_NO_IMPLICIT_SYNC)
+			usage = DMA_RESV_USAGE_KERNEL;
+
 		sync_mode = amdgpu_bo_explicit_sync(bo) ?
 			AMDGPU_SYNC_EXPLICIT : AMDGPU_SYNC_NE_OWNER;
-		/* Implicitly sync only to KERNEL, WRITE and READ */
-		r = amdgpu_sync_resv(p->adev, &p->sync, resv,
-				     DMA_RESV_USAGE_READ, sync_mode,
+		r = amdgpu_sync_resv(p->adev, &p->sync, resv, usage, sync_mode,
 				     &fpriv->vm);
 		if (r)
 			return r;
@@ -1343,6 +1348,8 @@ static int amdgpu_cs_submit(struct amdgpu_cs_parser *p,
 	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
 	struct amdgpu_job *leader = p->gang_leader;
 	struct amdgpu_vm *vm = &fpriv->vm;
+	enum dma_resv_usage read_usage = DMA_RESV_USAGE_READ;
+	enum dma_resv_usage write_usage = DMA_RESV_USAGE_WRITE;
 	struct amdgpu_bo_list_entry *e;
 	struct drm_gem_object *gobj;
 	unsigned int i;
@@ -1394,6 +1401,10 @@ static int amdgpu_cs_submit(struct amdgpu_cs_parser *p,
 		return r;
 	}
 
+	if (p->flags & AMDGPU_CS_NO_IMPLICIT_SYNC) {
+		read_usage = write_usage = DMA_RESV_USAGE_BOOKKEEP;
+	}
+
 	p->fence = dma_fence_get(&leader->base.s_fence->finished);
 	drm_exec_for_each_locked_object(&p->exec, gobj) {
 
@@ -1406,11 +1417,11 @@ static int amdgpu_cs_submit(struct amdgpu_cs_parser *p,
 
 			dma_resv_add_fence(gobj->resv,
 					   &p->jobs[i]->base.s_fence->finished,
-					   DMA_RESV_USAGE_READ);
+					   read_usage);
 		}
 
 		/* The gang leader as remembered as writer */
-		dma_resv_add_fence(gobj->resv, p->fence, DMA_RESV_USAGE_WRITE);
+		dma_resv_add_fence(gobj->resv, p->fence, write_usage);
 	}
 
 	seq = amdgpu_ctx_add_fence(p->ctx, p->entities[p->gang_leader_idx],
