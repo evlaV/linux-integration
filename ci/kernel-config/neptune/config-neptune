@@ -98,9 +98,6 @@ CONFIG_TCG_TPM=m
 CONFIG_CFG80211_CERTIFICATION_ONUS=y
 CONFIG_ATH_REG_DYNAMIC_USER_REG_HINTS=y
 
-# Enable support for AMDGPU color calibration features
-CONFIG_DRM_AMD_COLOR_STEAMDECK=y
-
 # Enable ath11k tracing for wifi debugging
 CONFIG_ATH11K_TRACING=y
 
@@ -109,3 +106,6 @@ CONFIG_SYSFB_SIMPLEFB=n
 
 # Enable Extensible Scheduling Class
 CONFIG_SCHED_CLASS_EXT=y
+
+# Disable call depth tracking speculative execution vulnerability mitigation
+CONFIG_CALL_DEPTH_TRACKING=n
