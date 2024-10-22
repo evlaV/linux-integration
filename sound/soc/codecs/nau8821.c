@@ -6,7 +6,7 @@
 // Author: John Hsu <kchsu0@nuvoton.com>
 // Co-author: Seven Lee <wtli@nuvoton.com>
 //
-
+#define DEBUG
 #include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -276,6 +276,58 @@ static bool nau8821_volatile_reg(struct device *dev, unsigned int reg)
 	default:
 		return false;
 	}
+}
+
+static int nau8821_reg_write(void *context, unsigned int reg,
+					      unsigned int value)
+{
+	struct i2c_client *client = context;
+	u8 buf[4];
+	int ret;
+
+	buf[0] = (reg >> 8) & 0xff;
+	buf[1] = reg & 0xff;
+	buf[2] = (value >> 8) & 0xff;
+	buf[3] = value & 0xff;
+
+	ret = i2c_master_send(client, buf, sizeof(buf));
+	if (ret == sizeof(buf)) {
+		dev_info(&client->dev, "%x <= %x\n", reg, value);
+		return 0;
+	} else if (ret < 0)
+		return ret;
+	else
+		return -EIO;
+}
+
+static int nau8821_reg_read(void *context, unsigned int reg,
+					     unsigned int *value)
+{
+	struct i2c_client *client = context;
+	struct i2c_msg xfer[2];
+	u16 reg_buf, val_buf;
+	int ret;
+
+	reg_buf = cpu_to_be16(reg);
+	xfer[0].addr = client->addr;
+	xfer[0].len = sizeof(reg_buf);
+	xfer[0].buf = (u8 *)&reg_buf;
+	xfer[0].flags = 0;
+
+	xfer[1].addr = client->addr;
+	xfer[1].len = sizeof(val_buf);
+	xfer[1].buf = (u8 *)&val_buf;
+	xfer[1].flags = I2C_M_RD;
+
+	ret = i2c_transfer(client->adapter, xfer, ARRAY_SIZE(xfer));
+	if (ret < 0)
+		return ret;
+	else if (ret != ARRAY_SIZE(xfer))
+		return -EIO;
+
+	*value = be16_to_cpu(val_buf);
+	dev_info(&client->dev, "%x => %x\n", reg, *value);
+	return 0;
 }
 
 static int nau8821_biq_coeff_get(struct snd_kcontrol *kcontrol,
@@ -606,6 +658,9 @@ static int system_clock_control(struct snd_soc_dapm_widget *w,
 	struct snd_soc_component *component =
 		snd_soc_dapm_to_component(w->dapm);
 	struct nau8821 *nau8821 = snd_soc_component_get_drvdata(component);
+	struct regmap *regmap = nau8821->regmap;
+	unsigned int value;
+	bool clk_fll, error;
 
 	if (SND_SOC_DAPM_EVENT_OFF(event)) {
 		dev_dbg(nau8821->dev, "system clock control : POWER OFF\n");
@@ -620,13 +675,43 @@ static int system_clock_control(struct snd_soc_dapm_widget *w,
 		} else {
 			nau8821_configure_sysclk(nau8821, NAU8821_CLK_DIS, 0);
 		}
+	} else {
+		dev_dbg(nau8821->dev, "system clock control : POWER ON\n");
+		/* Check the clock source setting is proper or not
+		 * no matter the source is from FLL or MCLK.
+		 */
+		regmap_read(regmap, NAU8821_R04_FLL1, &value);
+		clk_fll = value & NAU8821_FLL_RATIO_MASK;
+		/* It's error to use internal clock when playback */
+		regmap_read(regmap, NAU8821_R09_FLL6, &value);
+		error = value & NAU8821_DCO_EN;
+		if (!error) {
+			/* Check error depending on source is FLL or MCLK. */
+			regmap_read(regmap, NAU8821_R03_CLK_DIVIDER, &value);
+			if (clk_fll)
+				error = !(value & NAU8821_CLK_SRC_MASK);
+			else
+				error = value & NAU8821_CLK_SRC_MASK;
+		}
+		/* Recover the clock source setting if error. */
+		if (error) {
+			if (clk_fll) {
+				regmap_update_bits(regmap, NAU8821_R09_FLL6,
+						   NAU8821_DCO_EN, 0);
+				regmap_update_bits(regmap, NAU8821_R03_CLK_DIVIDER,
+						   NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
+			} else {
+				nau8821_configure_sysclk(nau8821, NAU8821_CLK_MCLK, 0);
+			}
+		}
 	}
 	return 0;
 }
 
 static const struct snd_soc_dapm_widget nau8821_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("System Clock", SND_SOC_NOPM, 0, 0,
-		system_clock_control, SND_SOC_DAPM_POST_PMD),
+			    system_clock_control, SND_SOC_DAPM_POST_PMD |
+			    SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_SUPPLY("MICBIAS", NAU8821_R74_MIC_BIAS,
 		NAU8821_MICBIAS_POWERUP_SFT, 0, NULL, 0),
 	SND_SOC_DAPM_SUPPLY("DMIC Clock", SND_SOC_NOPM, 0, 0,
@@ -818,6 +903,7 @@ static int nau8821_hw_params(struct snd_pcm_substream *substream,
 	unsigned int val_len = 0, ctrl_val, bclk_fs, clk_div;
 	const struct nau8821_osr_attr *osr;
 
+	dev_info(nau8821->dev, "%s\n", __func__);
 	nau8821->fs = params_rate(params);
 	/* CLK_DAC or CLK_ADC = OSR * FS
 	 * DAC or ADC clock frequency is defined as Over Sampling Rate (OSR)
@@ -1216,10 +1302,101 @@ static const struct regmap_config nau8821_regmap_config = {
 	.writeable_reg = nau8821_writeable_reg,
 	.volatile_reg = nau8821_volatile_reg,
 
+	.reg_read = nau8821_reg_read,
+	.reg_write = nau8821_reg_write,
+
 	.cache_type = REGCACHE_RBTREE,
 	.reg_defaults = nau8821_reg_defaults,
 	.num_reg_defaults = ARRAY_SIZE(nau8821_reg_defaults),
 };
+
+static ssize_t reg_control_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct nau8821 *nau8821 = dev_get_drvdata(dev);
+	char reg_char[10], val_char[10];
+	long reg, val;
+
+	if (sscanf(buf, "%s %s", reg_char, val_char) == 2) {
+		if (!kstrtol(reg_char, 16, &reg) && !kstrtol(val_char, 16, &val)) {
+			if (nau8821_writeable_reg(dev, reg)) {
+				regmap_write(nau8821->regmap, reg, val);
+				return count;
+			}
+		}
+	}
+
+	dev_err(dev, "Format Error!");
+	dev_err(dev, "echo [register] [value] > reg_debug");
+	dev_err(dev, "register and value are all hexadecimal");
+	return -EINVAL;
+}
+
+static ssize_t reg_control_show(struct device *dev,
+	 struct device_attribute *attr, char *buf)
+{
+	#define LINE_NUM 16
+	struct nau8821 *nau8821 = dev_get_drvdata(dev);
+	unsigned int val[NAU8821_REG_MAX + 1] = { 0 };
+	unsigned int reg;
+	int i, count = 0;
+
+	for (reg = 0; reg <= NAU8821_REG_MAX; reg++) {
+		if (!nau8821_readable_reg(dev, reg)) {
+			val[reg] = 0;
+			continue;
+		}
+		regmap_read(nau8821->regmap, reg, &val[reg]);
+	}
+
+	count += sprintf(buf + count,
+		"addr\t00\t01\t02\t03\t04\t05\t06\t07\t08\t09\t0A\t0B\t0C\t0D\t0E\t0F\n");
+	for (reg = 0; reg < NAU8821_REG_MAX; reg += LINE_NUM) {
+		count += sprintf(buf + count, "0x%02X:\t", reg);
+		for (i = 0; i < LINE_NUM; i++) {
+			if ((reg+i) > NAU8821_REG_MAX)
+				break;
+			count += sprintf(buf + count, "%04X\t", val[reg + i]);
+		}
+		count += sprintf(buf + count, "\n");
+	}
+
+	if (count >= PAGE_SIZE)
+		count = PAGE_SIZE - 1;
+
+	msleep(100);
+
+	return count;
+}
+
+static DEVICE_ATTR(reg_control, S_IRUGO | S_IWUSR, reg_control_show,
+	reg_control_store);
+
+static struct attribute *nau8821_attrs[] = {
+	&dev_attr_reg_control.attr,
+	NULL,
+};
+
+static const struct attribute_group nau8821_attr_group = {
+	.name = "reg_debug",
+	.attrs = nau8821_attrs,
+};
+
+static void remove_sysfs_debug(struct device *dev)
+{
+	sysfs_remove_group(&dev->kobj, &nau8821_attr_group);
+}
+
+static int create_sysfs_debug(struct device *dev)
+{
+	int ret;
+
+	ret = sysfs_create_group(&dev->kobj, &nau8821_attr_group);
+	if (ret)
+		remove_sysfs_debug(dev);
+	return ret;
+}
+
 
 static int nau8821_component_probe(struct snd_soc_component *component)
 {
@@ -1383,13 +1560,13 @@ static int nau8821_set_fll(struct snd_soc_component *component,
 		fll_param->fll_int, fll_param->clk_ref_div);
 
 	nau8821_fll_apply(nau8821, fll_param);
-	mdelay(20);
+	mdelay(2);
 	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
 		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
-	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
-		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_MCLK);
-	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
-		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
+	//regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
+	//	NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_MCLK);
+	//regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
+	//	NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
 
 	return 0;
 }
@@ -1845,7 +2022,8 @@ static int nau8821_i2c_probe(struct i2c_client *i2c)
 	}
 	i2c_set_clientdata(i2c, nau8821);
 
-	nau8821->regmap = devm_regmap_init_i2c(i2c, &nau8821_regmap_config);
+	//nau8821->regmap = devm_regmap_init_i2c(i2c, &nau8821_regmap_config);
+	nau8821->regmap = devm_regmap_init(dev, NULL, i2c, &nau8821_regmap_config);
 	if (IS_ERR(nau8821->regmap))
 		return PTR_ERR(nau8821->regmap);
 
@@ -1869,7 +2047,8 @@ static int nau8821_i2c_probe(struct i2c_client *i2c)
 
 	if (i2c->irq)
 		nau8821_setup_irq(nau8821);
-
+	
+	create_sysfs_debug(dev);
 	ret = devm_snd_soc_register_component(&i2c->dev,
 		&nau8821_component_driver, &nau8821_dai, 1);
 
