@@ -1962,6 +1962,8 @@ static int amd_pstate_epp_cpu_init(struct cpufreq_policy *policy)
 
 	current_pstate_driver->adjust_perf = NULL;
 
+	current_pstate_driver->adjust_perf = NULL;
+
 	return 0;
 
 free_cpudata1:
