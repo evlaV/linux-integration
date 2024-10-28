@@ -1739,12 +1739,6 @@ static int __init amd_pstate_init(void)
 		return -ENODEV;
 	}
 
-	ret = amd_pstate_register_driver(cppc_state);
-	if (ret) {
-		pr_err("failed to register with return %d\n", ret);
-		return ret;
-	}
-
 	/* capability check */
 	if (cpu_feature_enabled(X86_FEATURE_CPPC)) {
 		pr_debug("AMD CPPC MSR based functionality is supported\n");
@@ -1755,6 +1749,12 @@ static int __init amd_pstate_init(void)
 		static_call_update(amd_pstate_update_perf, shmem_update_perf);
 		static_call_update(amd_pstate_get_epp, shmem_get_epp);
 		static_call_update(amd_pstate_set_epp, shmem_set_epp);
+	}
+
+	ret = amd_pstate_register_driver(cppc_state);
+	if (ret) {
+		pr_err("failed to register with return %d\n", ret);
+		return ret;
 	}
 
 	if (amd_pstate_prefcore) {
