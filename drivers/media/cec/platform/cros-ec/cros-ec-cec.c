@@ -173,7 +173,8 @@ static int cros_ec_cec_set_log_addr(struct cec_adapter *adap, u8 logical_addr)
 	struct ec_params_cec_set params = {
 		.cmd = CEC_CMD_LOGICAL_ADDRESS,
 		.port = port->port_num,
-		.val = logical_addr,
+		//dbg	.val = logical_addr,
+		.val = 0xe,	//dbg-set logical addr
 	};
 	int ret;
 
@@ -301,6 +302,10 @@ static const char *const port_ba_conns[] = { "Port B", "Port A", NULL };
 static const char *const port_d_conns[] = { "Port D", NULL };
 
 static const struct cec_dmi_match cec_dmi_match_table[] = {
+	/* AMD Lilac */
+	{ "AMD", "Lilac", "0000:03:00.0", port_b_conns },
+	/* OEM F7F */
+	{ "OEM", "F7F", "0000:03:00.0", port_b_conns },
 	/* Google Fizz */
 	{ "Google", "Fizz", "0000:00:02.0", port_b_conns },
 	/* Google Brask */
@@ -327,8 +332,6 @@ static const struct cec_dmi_match cec_dmi_match_table[] = {
 	{ "Google", "Taranza", "0000:00:02.0", port_db_conns },
 	/* Google Dexi */
 	{ "Google", "Dexi", "0000:00:02.0", port_db_conns },
-	/* AMD Lilac */
-	{ "AMD", "Lilac", "0000:03:00.0", port_c_conns },
 };
 
 static struct device *cros_ec_cec_find_hdmi_dev(struct device *dev,
@@ -467,6 +470,9 @@ static int cros_ec_cec_init_port(struct device *dev,
 		ret = -ENOMEM;
 		goto out_probe_adapter;
 	}
+
+	cec_notifier_set_phys_addr(port->notify, 0x1000);                //dbg-setup phys_addr
+	port->adap->log_addrs.log_addr[0] = 0xe;			//dbg-setup logical addr
 
 	ret = cec_register_adapter(port->adap, dev);
 	if (ret < 0)

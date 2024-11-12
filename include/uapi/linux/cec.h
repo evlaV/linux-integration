@@ -192,7 +192,8 @@ static inline int cec_msg_status_is_ok(const struct cec_msg *msg)
 	return !(msg->rx_status & CEC_RX_STATUS_FEATURE_ABORT);
 }
 
-#define CEC_LOG_ADDR_INVALID		0xff
+//#define CEC_LOG_ADDR_INVALID		0xff
+#define CEC_LOG_ADDR_INVALID		0xe		//dbg-hardcode to 0xe by default
 #define CEC_PHYS_ADDR_INVALID		0xffff
 
 /*

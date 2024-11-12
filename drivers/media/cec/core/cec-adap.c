@@ -1279,8 +1279,10 @@ static int cec_config_log_addr(struct cec_adapter *adap,
 	unsigned int i;
 	int err;
 
-	if (cec_has_log_addr(adap, log_addr))
-		return 0;
+	if (cec_has_log_addr(adap, log_addr)) {
+		//return 0;
+		pr_info("[cec_config_log_addr]: check cec_has_log_addr(adap, log_addr):%x\n", cec_has_log_addr(adap, log_addr));
+	}
 
 	/* Send poll message */
 	msg.len = 1;
