@@ -6,6 +6,7 @@
  * Author: Neil Armstrong <narmstrong@baylibre.com>
  */
 
+#include "linux/printk.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -178,6 +179,8 @@ static int cros_ec_cec_set_log_addr(struct cec_adapter *adap, u8 logical_addr)
 	};
 	int ret;
 
+	cecprint("enter...\n");
+
 	ret = cros_ec_cmd(cros_ec, 0, EC_CMD_CEC_SET, &params, sizeof(params),
 			  NULL, 0);
 	if (ret < 0) {
@@ -185,6 +188,8 @@ static int cros_ec_cec_set_log_addr(struct cec_adapter *adap, u8 logical_addr)
 			"error setting CEC logical address on EC: %d\n", ret);
 		return ret;
 	}
+
+	cecprint("exit !\n");
 
 	return 0;
 }
@@ -198,6 +203,8 @@ static int cros_ec_cec_transmit(struct cec_adapter *adap, u8 attempts,
 	struct ec_params_cec_write params;
 	struct ec_params_cec_write_v1 params_v1;
 	int ret;
+
+	cecprint("enter...\n");
 
 	if (cros_ec_cec->write_cmd_version == 0) {
 		memcpy(params.msg, cec_msg->msg, cec_msg->len);
@@ -218,6 +225,8 @@ static int cros_ec_cec_transmit(struct cec_adapter *adap, u8 attempts,
 		return ret;
 	}
 
+	cecprint("exit !\n");
+
 	return 0;
 }
 
@@ -233,6 +242,8 @@ static int cros_ec_cec_adap_enable(struct cec_adapter *adap, bool enable)
 	};
 	int ret;
 
+	cecprint("enter ...\n");
+
 	ret = cros_ec_cmd(cros_ec, 0, EC_CMD_CEC_SET, &params, sizeof(params),
 			  NULL, 0);
 	if (ret < 0) {
@@ -241,6 +252,8 @@ static int cros_ec_cec_adap_enable(struct cec_adapter *adap, bool enable)
 			(enable ? "en" : "dis"), ret);
 		return ret;
 	}
+
+	cecprint("exit !\n");
 
 	return 0;
 }
@@ -303,9 +316,11 @@ static const char *const port_d_conns[] = { "Port D", NULL };
 
 static const struct cec_dmi_match cec_dmi_match_table[] = {
 	/* AMD Lilac */
-	{ "AMD", "Lilac", "0000:03:00.0", port_b_conns },
-	/* OEM F7F */
-	{ "OEM", "F7F", "0000:03:00.0", port_b_conns },
+	//{ "AMD", "Lilac", "0000:03:00.0", port_b_conns },
+	{ "AMD", "Lilac", "0000:03:00.0", port_c_conns },
+	/* OEM */
+	//{ "OEM", "F7F", "0000:03:00.0", port_b_conns },
+	{ "OEM", "F7F", "0000:03:00.0", port_c_conns },
 	/* Google Fizz */
 	{ "Google", "Fizz", "0000:00:02.0", port_b_conns },
 	/* Google Brask */
@@ -353,6 +368,8 @@ static struct device *cros_ec_cec_find_hdmi_dev(struct device *dev,
 				return ERR_PTR(-EPROBE_DEFER);
 			put_device(d);
 			*conns = m->conns;
+			cecprint("dmi matched: vendor:%s, product:%s, hdmi_dev:%s port:%s\n", \
+						m->sys_vendor, m->product_name, m->devname, (m->conns)[0]);
 			return d;
 		}
 	}
@@ -467,6 +484,7 @@ static int cros_ec_cec_init_port(struct device *dev,
 	port->notify = cec_notifier_cec_adap_register(hdmi_dev, conns[port_num],
 						      port->adap);
 	if (!port->notify) {
+		cecprint("register cec_notifier for adap failed !\n");
 		ret = -ENOMEM;
 		goto out_probe_adapter;
 	}
@@ -475,8 +493,10 @@ static int cros_ec_cec_init_port(struct device *dev,
 	port->adap->log_addrs.log_addr[0] = 0xe;			//dbg-setup logical addr
 
 	ret = cec_register_adapter(port->adap, dev);
-	if (ret < 0)
+	if (ret < 0) {
+		cecprint("failed to register adapter !\n");
 		goto out_probe_notify;
+	}
 
 	cros_ec_cec->ports[port_num] = port;
 
@@ -500,8 +520,11 @@ static int cros_ec_cec_probe(struct platform_device *pdev)
 	int ret;
 
 	hdmi_dev = cros_ec_cec_find_hdmi_dev(&pdev->dev, &conns);
-	if (IS_ERR(hdmi_dev))
+	if (IS_ERR(hdmi_dev)) {
+		cecprint("cannot find hdmi dev !\n");
 		return PTR_ERR(hdmi_dev);
+	}
+	cecprint("success to find hdmi_dev:0x%llx\n", hdmi_dev);
 
 	cros_ec_cec = devm_kzalloc(&pdev->dev, sizeof(*cros_ec_cec),
 				   GFP_KERNEL);
@@ -514,18 +537,25 @@ static int cros_ec_cec_probe(struct platform_device *pdev)
 	device_init_wakeup(&pdev->dev, 1);
 
 	ret = cros_ec_cec_get_num_ports(cros_ec_cec);
-	if (ret)
+	if (ret) {
+		cecprint("get prots failed !\n");
 		return ret;
+	}
 
 	ret = cros_ec_cec_get_write_cmd_version(cros_ec_cec);
-	if (ret)
+	if (ret) {
+		cecprint("failed to get write_cmd_version\n");
 		return ret;
+	}
 
+	cecprint("polling ports arr begin: <num=%d>", cros_ec_cec->num_ports);
 	for (int i = 0; i < cros_ec_cec->num_ports; i++) {
 		ret = cros_ec_cec_init_port(&pdev->dev, cros_ec_cec, i,
 					    hdmi_dev, conns);
-		if (ret)
+		if (ret) {
+			cecprint("init port failed !\n");
 			goto unregister_ports;
+		}
 	}
 
 	/* Get CEC events from the EC. */

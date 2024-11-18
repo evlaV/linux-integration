@@ -24,6 +24,8 @@
  */
 
 /* The caprices of the preprocessor require that this be declared right here */
+#include "drm/drm_print.h"
+#include "media/cec.h"
 #define CREATE_TRACE_POINTS
 
 #include "dm_services_types.h"
@@ -93,6 +95,8 @@
 #include <drm/drm_vblank.h>
 #include <drm/drm_audio_component.h>
 #include <drm/drm_gem_atomic_helper.h>
+
+#include <media/cec-notifier.h>
 
 #include <acpi/video.h>
 
@@ -3282,17 +3286,32 @@ void amdgpu_dm_update_connector_after_detect(
 		dc_sink_retain(aconnector->dc_sink);
 		if (sink->dc_edid.length == 0) {
 			aconnector->edid = NULL;
-			if (aconnector->dc_link->aux_mode) {
-				drm_dp_cec_unset_edid(
-					&aconnector->dm_dp_aux.aux);
+
+			if (aconnector->base.connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+				if (aconnector->hdmi.cec_notifier) {
+					cecprint("notify cec adapter to invalidate phy addr !\n");
+					cec_notifier_phys_addr_invalidate(aconnector->hdmi.cec_notifier);
+				}
+			} else {
+				if (aconnector->dc_link->aux_mode) {
+					drm_dp_cec_unset_edid(
+						&aconnector->dm_dp_aux.aux);
+				}
 			}
 		} else {
 			aconnector->edid =
 				(struct edid *)sink->dc_edid.raw_edid;
 
-			if (aconnector->dc_link->aux_mode)
-				drm_dp_cec_set_edid(&aconnector->dm_dp_aux.aux,
-						    aconnector->edid);
+			if (aconnector->base.connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+				if (aconnector->hdmi.cec_notifier) {
+					cecprint("notify cec adapter to set phy addr !\n");
+					cec_notifier_set_phys_addr_from_edid(aconnector->hdmi.cec_notifier, aconnector->edid);
+				}
+			} else {
+				if (aconnector->dc_link->aux_mode)
+					drm_dp_cec_set_edid(&aconnector->dm_dp_aux.aux,
+						    	aconnector->edid);
+			}
 		}
 
 		if (!aconnector->timing_requested) {
@@ -3307,6 +3326,12 @@ void amdgpu_dm_update_connector_after_detect(
 		amdgpu_dm_update_freesync_caps(connector, aconnector->edid);
 		update_connector_ext_caps(aconnector);
 	} else {
+		if (aconnector->base.connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+			if (aconnector->hdmi.cec_notifier) {
+				cecprint("invalidate phy addr due to invalid sink !\n");
+				cec_notifier_phys_addr_invalidate(aconnector->hdmi.cec_notifier);
+			}
+		}
 		drm_dp_cec_unset_edid(&aconnector->dm_dp_aux.aux);
 		amdgpu_dm_update_freesync_caps(connector, NULL);
 		drm_connector_update_edid_property(connector, NULL);
@@ -7713,6 +7738,82 @@ create_i2c(struct ddc_service *ddc_service,
 	return i2c;
 }
 
+/* HDMI CEC Begin */
+static struct device *find_cec_device(void)
+{
+	struct device *d = NULL;
+
+	/* Find the device, bail out if not yet registered */
+	//d = bus_find_device_by_name(&pci_bus_type, NULL, "0000:06:00.0");
+	d = bus_find_device_by_name(&pci_bus_type, NULL, "0000:03:00.0");		//#KCDBG fremont VGA: 0000:03:00.0
+	if (!d) {
+		cecprint("failed to find avilable cec device !\n");
+		return d;
+	}
+	put_device(d);
+
+	cecprint("find available cec device <0x%lx>!\n", d);
+
+	return d;
+}
+
+static void cec_dbg_dump(struct device *hdmi_dev, struct device *kdev, struct device *drmdev, struct device *encoderdev)
+{
+	if (hdmi_dev) {
+		cecprint("dump hdmidev: addr(0x%llx), init_name(%s), kbojname(%s)\n", \
+				hdmi_dev, hdmi_dev->init_name, hdmi_dev->kobj.name);
+	}
+
+	if (kdev) {
+		cecprint("dump kdev: addr(0x%lx), init_name(%s), kobjname(%s)\n", \
+					kdev, kdev->init_name, kdev->kobj.name);
+	}
+
+	if (drmdev) {
+		cecprint("dump aconnector: addr(0x%lx), init_name(%s), kobjname(%s)\n", \
+					drmdev, drmdev->init_name, drmdev->kobj.name);
+	}
+
+	if (encoderdev) {
+		cecprint("dump encoder: addr(0x%lx), init_name(%s), kobjname(%s)\n", \
+					encoderdev, encoderdev->init_name, encoderdev->kobj.name);
+	}
+}
+
+static void amdgpu_dm_initialize_hdmi_connector(struct amdgpu_display_manager *dm,
+											struct amdgpu_dm_connector *aconnector,
+											struct amdgpu_encoder *aencoder)
+{
+	struct cec_connector_info conn_info;
+	struct device *hdmi_dev = NULL;
+	struct device *kdev= aconnector->base.kdev;
+	struct device *drm_dev= aconnector->base.dev->dev;
+	struct device *encoder_dev = aencoder->base.dev->dev;
+	//struct amdgpu_hdmi *amdgpu_hdmi = &aconnector->hdmi;
+	//struct cec_notifier *cec_notifier = amdgpu_hdmi->cec_notifier;
+
+	//struct intel_encoder *intel_encoder = &dig_port->base;
+	//struct drm_device *dev = intel_encoder->base.dev;
+
+	cecprint("enter\n");
+
+	cec_fill_conn_info_from_drm(&conn_info, &aconnector->base);
+	hdmi_dev = find_cec_device();
+	if (hdmi_dev) {
+		cec_dbg_dump(hdmi_dev, kdev, drm_dev, encoder_dev);
+		//#KCDBG	aconnector->hdmi.cec_notifier = cec_notifier_conn_register(hdmi_dev, "Port B", &conn_info);
+		aconnector->hdmi.cec_notifier = cec_notifier_conn_register(hdmi_dev, "Port C", &conn_info);	//#KCDBG fremont: CEC EC port C
+	}
+
+	if (!aconnector->hdmi.cec_notifier) {
+		cecprint("CEC notifier get failed\n");
+		return;
+	}
+
+	cecprint("exit\n");
+	return;
+}
+/* HDMI CEC End */
 
 /*
  * Note: this function assumes that dc_link_detect() was called for the
@@ -7775,6 +7876,10 @@ static int amdgpu_dm_connector_init(struct amdgpu_display_manager *dm,
 
 	drm_connector_attach_encoder(
 		&aconnector->base, &aencoder->base);
+
+	cecprint("enum connector type begin <connector_type=%d>\n", connector_type);
+	if (connector_type == DRM_MODE_CONNECTOR_HDMIA)
+		amdgpu_dm_initialize_hdmi_connector(dm, aconnector, aencoder);
 
 	if (connector_type == DRM_MODE_CONNECTOR_DisplayPort
 		|| connector_type == DRM_MODE_CONNECTOR_eDP)

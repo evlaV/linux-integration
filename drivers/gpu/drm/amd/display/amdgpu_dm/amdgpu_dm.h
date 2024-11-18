@@ -629,11 +629,25 @@ struct amdgpu_hdmi_vsdb_info {
 	bool replay_mode;
 };
 
+struct amdgpu_hdmi {
+#if 0
+	i915_reg_t hdmi_reg;
+	struct {
+		enum drm_dp_dual_mode_type type;
+		int max_tmds_clock;
+	} dp_dual_mode;
+#endif
+	struct amdgpu_dm_connector *attached_connector;
+	struct cec_notifier *cec_notifier;
+};
+
 struct amdgpu_dm_connector {
 
 	struct drm_connector base;
 	uint32_t connector_id;
 	int bl_idx;
+
+	struct amdgpu_hdmi hdmi;
 
 	/* we need to mind the EDID between detect
 	   and get modes due to analog/digital/tvencoder */

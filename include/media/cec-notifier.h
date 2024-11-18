@@ -160,7 +160,9 @@ static inline struct device *cec_notifier_parse_hdmi_phandle(struct device *dev)
  */
 static inline void cec_notifier_phys_addr_invalidate(struct cec_notifier *n)
 {
+	cecprint("enter..\n");
 	cec_notifier_set_phys_addr(n, CEC_PHYS_ADDR_INVALID);
+	cecprint("enter...done\n");
 }
 
 #endif

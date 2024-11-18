@@ -5,6 +5,8 @@
  * Copyright 2016 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
  */
 
+#include "linux/printk.h"
+#include "media/cec.h"
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -715,18 +717,23 @@ void cec_transmit_attempt_done_ts(struct cec_adapter *adap,
 {
 	switch (status & ~CEC_TX_STATUS_MAX_RETRIES) {
 	case CEC_TX_STATUS_OK:
+		cecprint("case CEC_TX_STATUS_OK enter\n");
 		cec_transmit_done_ts(adap, status, 0, 0, 0, 0, ts);
 		return;
 	case CEC_TX_STATUS_ARB_LOST:
+		cecprint("case CEC_TX_STATUS_ARB_LOST enter\n");
 		cec_transmit_done_ts(adap, status, 1, 0, 0, 0, ts);
 		return;
 	case CEC_TX_STATUS_NACK:
+		cecprint("case NACK enter\n");
 		cec_transmit_done_ts(adap, status, 0, 1, 0, 0, ts);
 		return;
 	case CEC_TX_STATUS_LOW_DRIVE:
+		cecprint("case CEC_TX_STATUS_LOW_DRIVE enter\n");
 		cec_transmit_done_ts(adap, status, 0, 0, 1, 0, ts);
 		return;
 	case CEC_TX_STATUS_ERROR:
+		cecprint("case CEC_TX_STATUS_ERROR enter\n");
 		cec_transmit_done_ts(adap, status, 0, 0, 0, 1, ts);
 		return;
 	default:
@@ -1330,7 +1337,7 @@ static int cec_config_log_addr(struct cec_adapter *adap,
 	 * good idea to try and claim this logical address.
 	 */
 	if (i == max_retries) {
-		dprintk(0, "polling for LA %u failed with tx_status=0x%04x\n",
+		cecprint("polling for LA %u failed with tx_status=0x%04x\n",
 			log_addr, msg.tx_status);
 		return 0;
 	}
@@ -1606,20 +1613,29 @@ int cec_adap_enable(struct cec_adapter *adap)
 	bool enable;
 	int ret = 0;
 
+	cecprint("enter\n");
+
 	enable = adap->monitor_all_cnt || adap->monitor_pin_cnt ||
 		 adap->log_addrs.num_log_addrs;
-	if (adap->needs_hpd)
+	if (adap->needs_hpd) {
+		cecprint("adap->phys_addr=0x%x\n", adap->phys_addr);
 		enable = enable && adap->phys_addr != CEC_PHYS_ADDR_INVALID;
+	}
 
-	if (adap->devnode.unregistered)
+	if (adap->devnode.unregistered) {
+		cecprint("unregistered !\n");
 		enable = false;
+	}
 
-	if (enable == adap->is_enabled)
+	if (enable == adap->is_enabled) {
+		cecprint("adapter already enabled, do nothing <is_enabled=%d>!\n", enable);
 		return 0;
+	}
 
 	/* serialize adap_enable */
 	mutex_lock(&adap->devnode.lock);
 	if (enable) {
+		cecprint("adapter is enabled !\n");
 		adap->last_initiator = 0xff;
 		adap->transmit_in_progress = false;
 		adap->tx_low_drive_log_cnt = 0;
@@ -1636,6 +1652,7 @@ int cec_adap_enable(struct cec_adapter *adap)
 				WARN_ON(call_op(adap, adap_monitor_pin_enable, true));
 		}
 	} else {
+		cecprint("adapter not enabled !\n");
 		/* Disable monitor-all/pin modes if needed (needs_hpd == 1) */
 		if (adap->monitor_all_cnt)
 			WARN_ON(call_op(adap, adap_monitor_all_enable, false));
@@ -1664,12 +1681,16 @@ void __cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr, bool block)
 	bool becomes_invalid = phys_addr == CEC_PHYS_ADDR_INVALID;
 	bool is_invalid = adap->phys_addr == CEC_PHYS_ADDR_INVALID;
 
-	if (phys_addr == adap->phys_addr)
+	if (phys_addr == adap->phys_addr) {
+		cecprint("return due to the same phys_addr <0x%x>!\n", phys_addr);
 		return;
-	if (!becomes_invalid && adap->devnode.unregistered)
+	}
+	if (!becomes_invalid && adap->devnode.unregistered) {
+		cecprint("return due to unregistered devnode !\n");
 		return;
+	}
 
-	dprintk(1, "new physical address %x.%x.%x.%x\n",
+	printk("[CEC] new physical address %x.%x.%x.%x\n",
 		cec_phys_addr_exp(phys_addr));
 	if (becomes_invalid || !is_invalid) {
 		adap->phys_addr = CEC_PHYS_ADDR_INVALID;

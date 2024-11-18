@@ -18,6 +18,8 @@
 #include <linux/cec-funcs.h>
 #include <media/rc-core.h>
 
+#define cecprint(x, ...)       printk("[CEC] %s: " x, __func__, ##__VA_ARGS__)
+
 #define CEC_CAP_DEFAULTS (CEC_CAP_LOG_ADDRS | CEC_CAP_TRANSMIT | \
 			  CEC_CAP_PASSTHROUGH | CEC_CAP_RC)
 

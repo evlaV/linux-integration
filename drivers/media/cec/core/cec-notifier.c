@@ -60,9 +60,12 @@ cec_notifier_get_conn(struct device *hdmi_dev, const char *port_name)
 		     (n->port_name && !strcmp(n->port_name, port_name)))) {
 			kref_get(&n->kref);
 			mutex_unlock(&cec_notifiers_lock);
+			cecprint("success to find cec_notifier:0x%llx, port:%s, hdmi_dev:0x%llx, adap:0x%llx\n", \
+					n, n->port_name, n->hdmi_dev, n->cec_adap);
 			return n;
 		}
 	}
+
 	n = kzalloc(sizeof(*n), GFP_KERNEL);
 	if (!n)
 		goto unlock;
@@ -76,6 +79,8 @@ cec_notifier_get_conn(struct device *hdmi_dev, const char *port_name)
 		}
 	}
 	n->phys_addr = CEC_PHYS_ADDR_INVALID;
+	cecprint("failed to find cec_notifier, create new one:0x%llx, port:%s, hdmi_dev:0x%llx, adap:0x%llx\n", \
+			n, n->port_name, n->hdmi_dev, n->cec_adap);
 
 	mutex_init(&n->lock);
 	kref_init(&n->kref);
@@ -154,6 +159,9 @@ cec_notifier_cec_adap_register(struct device *hdmi_dev, const char *port_name,
 	if (WARN_ON(!adap))
 		return NULL;
 
+	cecprint("enter... adap.name=%s, port.name:%s, adap_controls_phys_addr=%d\n", \
+			adap->name, port_name, adap->adap_controls_phys_addr);
+
 	n = cec_notifier_get_conn(hdmi_dev, port_name);
 	if (!n)
 		return n;
@@ -185,13 +193,28 @@ EXPORT_SYMBOL_GPL(cec_notifier_cec_adap_unregister);
 
 void cec_notifier_set_phys_addr(struct cec_notifier *n, u16 pa)
 {
-	if (n == NULL)
+	if (n == NULL) {
+		printk("[CEC] %s cec_notifier is NULL !\n", __func__);
 		return;
+	}
 
 	mutex_lock(&n->lock);
 	n->phys_addr = pa;
-	if (n->cec_adap && !n->cec_adap->adap_controls_phys_addr)
+
+	if (n->cec_adap) {
+		printk("[CEC] %s cec_adap is ok !\n", __func__);
+	} else {
+		printk("[CEC] %s cec_adap is null !\n", __func__);
+	}
+
+	if (n->cec_adap && !n->cec_adap->adap_controls_phys_addr) {
+		if (n->cec_adap)
+			printk("[CEC] n->cec_adap->adap_controls_phys_addr is %d\n", n->cec_adap->adap_controls_phys_addr);
 		cec_s_phys_addr(n->cec_adap, n->phys_addr, false);
+	} else {
+		if (n->cec_adap)
+			printk("[CEC] adap_controls_phys_addr=%d\n", n->cec_adap->adap_controls_phys_addr);
+	}
 	mutex_unlock(&n->lock);
 }
 EXPORT_SYMBOL_GPL(cec_notifier_set_phys_addr);
@@ -206,13 +229,18 @@ void cec_notifier_set_phys_addr_from_edid(struct cec_notifier *n,
 {
 	u16 pa = CEC_PHYS_ADDR_INVALID;
 
+	cecprint("enter..\n");
+
 	if (n == NULL)
 		return;
 
 	if (edid && edid->extensions)
 		pa = cec_get_edid_phys_addr((const u8 *)edid,
 				EDID_LENGTH * (edid->extensions + 1), NULL);
+
 	cec_notifier_set_phys_addr(n, pa);
+
+	cecprint("enter..done, pa=0x%x\n", pa);
 }
 EXPORT_SYMBOL_GPL(cec_notifier_set_phys_addr_from_edid);
 
