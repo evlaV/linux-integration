@@ -147,7 +147,7 @@ void amdgpu_ring_commit(struct amdgpu_ring *ring)
 	count %= ring->funcs->align_mask + 1;
 	ring->funcs->insert_nop(ring, count);
 
-	mb();
+	smp_wmb();
 	amdgpu_ring_set_wptr(ring);
 
 	if (ring->funcs->end_use)
@@ -441,8 +441,6 @@ bool amdgpu_ring_soft_recovery(struct amdgpu_ring *ring, unsigned int vmid,
 	if (unlikely(ring->adev->debug_disable_soft_recovery))
 		return false;
 
-	deadline = ktime_add_us(ktime_get(), 10000);
-
 	if (amdgpu_sriov_vf(ring->adev) || !ring->funcs->soft_recovery || !fence)
 		return false;
 
@@ -452,6 +450,8 @@ bool amdgpu_ring_soft_recovery(struct amdgpu_ring *ring, unsigned int vmid,
 	spin_unlock_irqrestore(fence->lock, flags);
 
 	atomic_inc(&ring->adev->gpu_reset_counter);
+
+	deadline = ktime_add_ms(ktime_get(), 1000);
 	while (!dma_fence_is_signaled(fence) &&
 	       ktime_to_ns(ktime_sub(deadline, ktime_get())) > 0)
 		ring->funcs->soft_recovery(ring, vmid);

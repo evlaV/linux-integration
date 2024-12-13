@@ -1237,7 +1237,7 @@ static int sdma_v5_2_sw_init(void *handle)
 	for (i = 0; i < adev->sdma.num_instances; i++) {
 		ring = &adev->sdma.instance[i].ring;
 		ring->ring_obj = NULL;
-		ring->use_doorbell = true;
+		ring->use_doorbell = false;
 		ring->me = i;
 
 		DRM_INFO("use_doorbell being set to: [%s]\n",

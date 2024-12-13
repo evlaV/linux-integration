@@ -94,6 +94,8 @@
 #define FN(reg_name, field_name) \
 	hws->shifts->field_name, hws->masks->field_name
 
+static const uint8_t DP_SINK_BRANCH_DEV_NAME_KT50X0[] = "KT50X0!";
+
 struct dce110_hw_seq_reg_offsets {
 	uint32_t crtc;
 };
@@ -1889,9 +1891,29 @@ void dce110_enable_accelerated_mode(struct dc *dc, struct dc_state *context)
 				break;
 			}
 		}
-		// We are trying to enable eDP, don't power down VDD
-		if (can_apply_edp_fast_boot)
+
+		/*
+		 * TO-DO: So far the code logic below only addresses single eDP case.
+		 * For dual eDP case, there are a few things that need to be
+		 * implemented first:
+		 *
+		 * 1. Change the fastboot logic above, so eDP link[0 or 1]'s
+		 * stream[0 or 1] will all be checked.
+		 *
+		 * 2. Change keep_edp_vdd_on to an array, and maintain keep_edp_vdd_on
+		 * for each eDP.
+		 *
+		 * Once above 2 things are completed, we can then change the logic below
+		 * correspondingly, so dual eDP case will be fully covered.
+		 */
+
+		// We are trying to enable eDP, don't power down VDD if eDP stream is existing
+		if ((edp_stream_num == 1 && edp_streams[0] != NULL) || can_apply_edp_fast_boot) {
 			keep_edp_vdd_on = true;
+			DC_LOG_EVENT_LINK_TRAINING("Keep eDP Vdd on\n");
+		} else {
+			DC_LOG_EVENT_LINK_TRAINING("No eDP stream enabled, turn eDP Vdd off\n");
+		}
 	}
 
 	// Check seamless boot support
@@ -3186,6 +3208,13 @@ void dce110_enable_dp_link_output(
 			link->dc->res_pool->dp_clock_source;
 	const struct link_hwss *link_hwss = get_link_hwss(link, link_res);
 	unsigned int i;
+	if (link->ctx->dce_version == DCN_VERSION_3_01 &&
+	    link->dpcd_caps.sink_dev_id == DP_BRANCH_DEVICE_ID_0060AD &&
+	    memcmp(&link->dpcd_caps.branch_dev_name,
+		   DP_SINK_BRANCH_DEV_NAME_KT50X0,
+		   sizeof(link->dpcd_caps.branch_dev_name)) == 0) {
+		msleep(2000);
+	}
 
 	/*
 	 * Add the logic to extract BOTH power up and power down sequences
