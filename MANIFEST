@@ -1,0 +1,28 @@
+6.11/features/stable-updates:
+    7424ab40896c2af234a185e13529fbc048835d24 ("Linux 6.11.1")
+6.11/features/backport-misc:
+    39eca19f6536352421b393c165ec77a2e7e53939 ("[FROM-ML] nvme-pci: 512 byte aligned dma pool segment quirk")
+6.11/features/amd-drm-extra:
+    29e6c663729867e2d1b8db22a5358fae54a5ccd0 ("Adds VRR init and update call during resume time")
+6.11/features/bt:
+    c350435e9502aef3df77e4de80373f80b9144eef ("[FOR-UPSTREAM] Bluetooth: btrtl: add suspend handling to ignore BT_DIS")
+6.11/features/gpu-reset:
+    43dcf027e3a084851750deb9ef606a25e1f17285 ("drm/amdgpu: schedule GPU reset event work function")
+6.11/features/quirks:
+    f1b793ea16ce9c8797b02f8345b5be58141d4b75 ("media: platform: cros-ec: Add AMD Lilac to the match table")
+6.11/features/sched-ext:
+    56f542dff37970648c06e089756b03719dfe5842 ("sched_ext: patch sched_ext")
+6.11/features/setup-gitlabci:
+    d071343af5429ff6cc635c4f32478b78bfa915da ("gitlab-ci: Use latest crane docker image")
+6.11/features/steamdeck-mfd:
+    bdca829fb42b2219ba99ee7449ff61caa26ab61a ("mfd: steamdeck: Expose controller board power in sysfs")
+6.11/features/tsc:
+    064b8dbefef2ff19c9baa0002cc9dd011d16a8a1 ("x86: revert extra time added to check for tsc wraps")
+6.11/features/usb:
+    c6605098418b949575ddcadeb6324555288d6646 ("usb: dwc3: Fix "linux,extcon-name"")
+6.11/features/wifi:
+    094160b08d4433ce3e857d4a043ae2400978c7bf ("[NOT-FOR-UPSTREAM] wifi: ath11k: Rename QCA2066 fw dir to QCA206X")
+6.11/features/hid:
+    a0f290033d0729720936eb0a82fa8f89713f8c56 ("xpad: add QH Electronics USB VID")
+6.11/features/hacks:
+    14a81c6bc6ab16e1981e968c4eec632a999f900f ("[NOT-FOR-UPSTREAM] ASoC: nau8821: Reset 8821 clock on start")
