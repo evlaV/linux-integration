@@ -724,7 +724,7 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.name = "qca2066 hw2.1",
 		.hw_rev = ATH11K_HW_QCA2066_HW21,
 		.fw = {
-			.dir = "QCA2066/hw2.1",
+			.dir = "QCA206X/hw2.1",
 			.board_size = 256 * 1024,
 			.cal_offset = 128 * 1024,
 		},
@@ -1924,6 +1924,7 @@ void ath11k_core_halt(struct ath11k *ar)
 	ath11k_mac_scan_finish(ar);
 	ath11k_mac_peer_cleanup_all(ar);
 	cancel_delayed_work_sync(&ar->scan.timeout);
+	cancel_work_sync(&ar->channel_update_work);
 	cancel_work_sync(&ar->regd_update_work);
 	cancel_work_sync(&ab->update_11d_work);
 
@@ -2125,6 +2126,7 @@ static void ath11k_core_reset(struct work_struct *work)
 	reinit_completion(&ab->recovery_start);
 	atomic_set(&ab->recovery_start_count, 0);
 
+	ath11k_coredump_collect(ab);
 	ath11k_core_pre_reconfigure_recovery(ab);
 
 	reinit_completion(&ab->reconfigure_complete);
@@ -2261,6 +2263,7 @@ struct ath11k_base *ath11k_core_alloc(struct device *dev, size_t priv_size,
 	INIT_WORK(&ab->restart_work, ath11k_core_restart);
 	INIT_WORK(&ab->update_11d_work, ath11k_update_11d);
 	INIT_WORK(&ab->reset_work, ath11k_core_reset);
+	INIT_WORK(&ab->dump_work, ath11k_coredump_upload);
 	timer_setup(&ab->rx_replenish_retry, ath11k_ce_rx_replenish_retry, 0);
 	init_completion(&ab->htc_suspend);
 	init_completion(&ab->wow.wakeup_completed);

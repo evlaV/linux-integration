@@ -31,6 +31,8 @@ struct ath11k_hif_ops {
 	void (*ce_irq_enable)(struct ath11k_base *ab);
 	void (*ce_irq_disable)(struct ath11k_base *ab);
 	void (*get_ce_msi_idx)(struct ath11k_base *ab, u32 ce_id, u32 *msi_idx);
+	void (*coredump_download)(struct ath11k_base *ab);
+	int (*target_crash)(struct ath11k_base *ab);
 };
 
 static inline void ath11k_hif_ce_irq_enable(struct ath11k_base *ab)
@@ -91,6 +93,13 @@ static inline int ath11k_hif_resume(struct ath11k_base *ab)
 	return 0;
 }
 
+static inline int ath11k_hif_force_rddm(struct ath11k_base *ab)
+{
+	if (ab->hif.ops->target_crash)
+		return ab->hif.ops->target_crash(ab);
+	return 0;
+}
+
 static inline u32 ath11k_hif_read32(struct ath11k_base *ab, u32 address)
 {
 	return ab->hif.ops->read32(ab, address);
@@ -144,6 +153,12 @@ static inline void ath11k_get_ce_msi_idx(struct ath11k_base *ab, u32 ce_id,
 		ab->hif.ops->get_ce_msi_idx(ab, ce_id, msi_data_idx);
 	else
 		*msi_data_idx = ce_id;
+}
+
+static inline void ath11k_hif_coredump_download(struct ath11k_base *ab)
+{
+	if (ab->hif.ops->coredump_download)
+		ab->hif.ops->coredump_download(ab);
 }
 
 #endif /* _HIF_H_ */
