@@ -31,7 +31,7 @@ stages:
 .check-docker-image:
   stage: check-image
   image:
-    name: gcr.io/go-containerregistry/crane/debug:v0.15.0
+    name: gcr.io/go-containerregistry/crane:debug
     entrypoint: [""]
   variables:
     GIT_STRATEGY: none
