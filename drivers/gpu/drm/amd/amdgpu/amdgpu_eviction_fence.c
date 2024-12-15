@@ -87,8 +87,7 @@ amdgpu_eviction_fence_replace_fence(struct amdgpu_eviction_fence_mgr *evf_mgr,
 	}
 
 	/* Free old fence */
-	if (old_ef)
-		dma_fence_put(&old_ef->base);
+	dma_fence_put(&old_ef->base);
 	return 0;
 
 free_err:
@@ -97,16 +96,63 @@ free_err:
 }
 
 static void
-amdgpu_eviction_fence_eviction_worker(struct work_struct *work)
+amdgpu_eviction_fence_suspend_worker(struct work_struct *work)
 {
-	struct amdgpu_eviction_fence_mgr *evf_mgr = work_to_evf_mgr(work, eviction_work.work);
+	struct amdgpu_eviction_fence_mgr *evf_mgr = work_to_evf_mgr(work, suspend_work.work);
 	struct amdgpu_fpriv *fpriv = evf_mgr_to_fpriv(evf_mgr);
 	struct amdgpu_userq_mgr *uq_mgr = &fpriv->userq_mgr;
+	struct amdgpu_vm *vm = &fpriv->vm;
+	struct amdgpu_bo_va *bo_va;
+	struct drm_exec exec;
+	bool userq_active = amdgpu_userqueue_active(uq_mgr);
+	int ret;
 
-	if (!evf_mgr->ev_fence)
+
+	/* For userqueues, the fence replacement happens in resume path */
+	if (userq_active) {
+		amdgpu_userqueue_suspend(uq_mgr);
+		return;
+	}
+
+	/* Signal old eviction fence */
+	amdgpu_eviction_fence_signal(evf_mgr);
+
+	/* Do not replace eviction fence is fd is getting closed */
+	if (evf_mgr->fd_closing)
 		return;
 
-	amdgpu_userqueue_suspend(uq_mgr);
+	/* Prepare the objects to replace eviction fence */
+	drm_exec_init(&exec, DRM_EXEC_IGNORE_DUPLICATES, 0);
+	drm_exec_until_all_locked(&exec) {
+		ret = amdgpu_vm_lock_pd(vm, &exec, 2);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(ret))
+			goto unlock_drm;
+
+		/* Lock the done list */
+		list_for_each_entry(bo_va, &vm->done, base.vm_status) {
+			struct amdgpu_bo *bo = bo_va->base.bo;
+
+			if (!bo)
+				continue;
+
+			if (vm != bo_va->base.vm)
+				continue;
+
+			ret = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			drm_exec_retry_on_contention(&exec);
+			if (unlikely(ret))
+				goto unlock_drm;
+		}
+	}
+
+	/* Replace old eviction fence with new one */
+	ret = amdgpu_eviction_fence_replace_fence(&fpriv->evf_mgr, &exec);
+	if (ret)
+		DRM_ERROR("Failed to replace eviction fence\n");
+
+unlock_drm:
+	drm_exec_fini(&exec);
 }
 
 static bool amdgpu_eviction_fence_enable_signaling(struct dma_fence *f)
@@ -120,7 +166,7 @@ static bool amdgpu_eviction_fence_enable_signaling(struct dma_fence *f)
 	ev_fence = to_ev_fence(f);
 	evf_mgr = ev_fence->evf_mgr;
 
-	schedule_delayed_work(&evf_mgr->eviction_work, 0);
+	schedule_delayed_work(&evf_mgr->suspend_work, 0);
 	return true;
 }
 
@@ -133,15 +179,7 @@ static const struct dma_fence_ops amdgpu_eviction_fence_ops = {
 
 void amdgpu_eviction_fence_signal(struct amdgpu_eviction_fence_mgr *evf_mgr)
 {
-	struct amdgpu_eviction_fence *ev_fence;
-
 	spin_lock(&evf_mgr->ev_fence_lock);
-	ev_fence = evf_mgr->ev_fence;
-	if (!ev_fence) {
-		spin_unlock(&evf_mgr->ev_fence_lock);
-		return;
-	}
-
 	dma_fence_signal(&evf_mgr->ev_fence->base);
 	spin_unlock(&evf_mgr->ev_fence_lock);
 }
@@ -169,7 +207,7 @@ void amdgpu_eviction_fence_destroy(struct amdgpu_eviction_fence_mgr *evf_mgr)
 	struct amdgpu_eviction_fence *ev_fence;
 
 	/* Wait for any pending work to execute */
-	flush_delayed_work(&evf_mgr->eviction_work);
+	flush_delayed_work(&evf_mgr->suspend_work);
 
 	spin_lock(&evf_mgr->ev_fence_lock);
 	ev_fence = evf_mgr->ev_fence;
@@ -193,20 +231,19 @@ int amdgpu_eviction_fence_attach(struct amdgpu_eviction_fence_mgr *evf_mgr,
 	if (!resv)
 		return 0;
 
-	spin_lock(&evf_mgr->ev_fence_lock);
-	ev_fence = evf_mgr->ev_fence;
-	spin_unlock(&evf_mgr->ev_fence_lock);
-	if (!ev_fence)
-		return 0;
-
 	ret = dma_resv_reserve_fences(resv, 1);
 	if (ret) {
 		DRM_DEBUG_DRIVER("Failed to resv fence space\n");
 		return ret;
 	}
 
-	ef = dma_fence_get(&ev_fence->base);
-	dma_resv_add_fence(resv, ef, DMA_RESV_USAGE_BOOKKEEP);
+	spin_lock(&evf_mgr->ev_fence_lock);
+	ev_fence = evf_mgr->ev_fence;
+	if (ev_fence) {
+		ef = dma_fence_get(&ev_fence->base);
+		dma_resv_add_fence(resv, ef, DMA_RESV_USAGE_BOOKKEEP);
+	}
+	spin_unlock(&evf_mgr->ev_fence_lock);
 	return 0;
 }
 
@@ -214,13 +251,6 @@ void amdgpu_eviction_fence_detach(struct amdgpu_eviction_fence_mgr *evf_mgr,
 				  struct amdgpu_bo *bo)
 {
 	struct dma_fence *stub = dma_fence_get_stub();
-	struct amdgpu_eviction_fence *ev_fence;
-
-	spin_lock(&evf_mgr->ev_fence_lock);
-	ev_fence = evf_mgr->ev_fence;
-	spin_unlock(&evf_mgr->ev_fence_lock);
-	if (!ev_fence)
-		return;
 
 	dma_resv_replace_fences(bo->tbo.base.resv, evf_mgr->ev_fence_ctx,
 				stub, DMA_RESV_USAGE_BOOKKEEP);
@@ -229,11 +259,23 @@ void amdgpu_eviction_fence_detach(struct amdgpu_eviction_fence_mgr *evf_mgr,
 
 int amdgpu_eviction_fence_init(struct amdgpu_eviction_fence_mgr *evf_mgr)
 {
+	struct amdgpu_eviction_fence *ev_fence;
 
 	/* This needs to be done one time per open */
 	atomic_set(&evf_mgr->ev_fence_seq, 0);
 	evf_mgr->ev_fence_ctx = dma_fence_context_alloc(1);
+	spin_lock_init(&evf_mgr->ev_fence_lock);
 
-	INIT_DELAYED_WORK(&evf_mgr->eviction_work, amdgpu_eviction_fence_eviction_worker);
+	ev_fence = amdgpu_eviction_fence_create(evf_mgr);
+	if (!ev_fence) {
+		DRM_ERROR("Failed to craete eviction fence\n");
+		return -ENOMEM;
+	}
+
+	spin_lock(&evf_mgr->ev_fence_lock);
+	evf_mgr->ev_fence = ev_fence;
+	spin_unlock(&evf_mgr->ev_fence_lock);
+
+	INIT_DELAYED_WORK(&evf_mgr->suspend_work, amdgpu_eviction_fence_suspend_worker);
 	return 0;
 }
