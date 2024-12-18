@@ -39,6 +39,8 @@ stages:
     - echo "Checking $IMAGE_NAME:$IMAGE_TAG"
     - crane auth login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - crane manifest $CI_REGISTRY_IMAGE/$IMAGE_NAME:$IMAGE_TAG
+  # For now disable auto-check
+  when: manual
 
 .build-docker-image:
   stage: build-image
@@ -57,7 +59,9 @@ stages:
       --single-snapshot
       --build-arg DISTRO_BASE=$IMAGE_DISTRO_BASE
       --build-arg DISTRO_TAG=$IMAGE_DISTRO_TAG
-  when: on_failure
+  # For now do not enable auto-build on check failure
+  # when: on_failure
+  when: manual
 
 .use-docker-image:
   image:
@@ -80,18 +84,44 @@ build-debian-kernel-builder:
   extends:
     - .build-docker-image
     - .prep-debian-kernel-builder
-  needs:
-    - check-debian-kernel-builder
+  # For now do not enable auto-build on check failure
+  # needs:
+  #   - check-debian-kernel-builder
 
 .use-debian-kernel-builder:
   extends:
     - .use-docker-image
     - .prep-debian-kernel-builder
 
+.prep-archlinux-kernel-builder:
+  variables:
+    IMAGE_DISTRO_BASE: archlinux
+    IMAGE_DISTRO_TAG: base-devel
+    IMAGE_NAME: archlinux-kernel-builder
+    IMAGE_TAG: "2024-12-02"
+
+check-archlinux-kernel-builder:
+  extends:
+    - .check-docker-image
+    - .prep-archlinux-kernel-builder
+
+build-archlinux-kernel-builder:
+  extends:
+    - .build-docker-image
+    - .prep-archlinux-kernel-builder
+  # For now do not enable auto-build on check failure
+  # needs:
+  #   - check-archlinux-kernel-builder
+
+.use-archlinux-kernel-builder:
+  extends:
+    - .use-docker-image
+    - .prep-archlinux-kernel-builder
+
 build-kernel-neptune:
   stage: build-kernel
   extends:
-    - .use-debian-kernel-builder
+    - .use-archlinux-kernel-builder
   rules:
     - if: $CI_PIPELINE_SOURCE != 'merge_request_event' && $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH !~ /-integration$/
       when: manual
@@ -100,23 +130,24 @@ build-kernel-neptune:
   variables:
     BUILD_DIR: build/neptune
   script:
-    - mkdir -p $BUILD_DIR
+    # Running makepkg as root is not allowed
+    - kmake="sudo -u builder ZSTD_CLEVEL=19 make -j $(nproc) O=$BUILD_DIR"
     # Prepare kernel config
+    - mkdir -p $BUILD_DIR
+    - chown builder:builder $BUILD_DIR
     - |
-      ./scripts/kconfig/merge_config.sh -m -O $BUILD_DIR \
+      sudo -u builder ./scripts/kconfig/merge_config.sh -m -O $BUILD_DIR \
         ci/kernel-config/neptune/config \
         ci/kernel-config/neptune/config-neptune
-    - make O=$BUILD_DIR olddefconfig
-    - cp $BUILD_DIR/.config kernel_config_neptune
-    # Build kernel
-    - make O=$BUILD_DIR -j $(nproc)
-    - strip -v --strip-debug $BUILD_DIR/vmlinux
-    - ZSTD_CLEVEL=19 make O=$BUILD_DIR -j $(nproc) INSTALL_MOD_STRIP=1 tar-pkg
-    - mv $BUILD_DIR/linux-*.tar .
+    - $kmake olddefconfig
+    # Build kernel, including the Arch package
+    - $kmake pacman-pkg PACMAN_PKGBASE=linux-integration PACMAN_EXTRAPACKAGES=""
+    - mv $BUILD_DIR/linux-*.pkg.tar.zst .
+    - mv $BUILD_DIR/.config kernel_config_neptune
   artifacts:
     paths:
       - kernel_config_neptune
-      - linux-*.tar
+      - linux-*.pkg.tar.zst
 
 build-kernel-qemu:
   stage: build-kernel
