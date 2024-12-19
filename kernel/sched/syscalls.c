@@ -274,7 +274,7 @@ bool update_other_load_avgs(struct rq *rq)
 
 	return update_rt_rq_load_avg(now, rq, curr_class == &rt_sched_class) |
 		update_dl_rq_load_avg(now, rq, curr_class == &dl_sched_class) |
-		update_hw_load_avg(now, rq, hw_pressure) |
+		update_hw_load_avg(rq_clock_task(rq), rq, hw_pressure) |
 		update_irq_load_avg(rq, 0);
 }
 

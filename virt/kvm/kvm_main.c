@@ -5575,6 +5575,7 @@ __visible bool kvm_rebooting;
 EXPORT_SYMBOL_GPL(kvm_rebooting);
 
 static DEFINE_PER_CPU(bool, hardware_enabled);
+static DEFINE_MUTEX(kvm_usage_lock);
 static int kvm_usage_count;
 
 static int __hardware_enable_nolock(void)
@@ -5607,10 +5608,10 @@ static int kvm_online_cpu(unsigned int cpu)
 	 * be enabled. Otherwise running VMs would encounter unrecoverable
 	 * errors when scheduled to this CPU.
 	 */
-	mutex_lock(&kvm_lock);
+	mutex_lock(&kvm_usage_lock);
 	if (kvm_usage_count)
 		ret = __hardware_enable_nolock();
-	mutex_unlock(&kvm_lock);
+	mutex_unlock(&kvm_usage_lock);
 	return ret;
 }
 
@@ -5630,10 +5631,10 @@ static void hardware_disable_nolock(void *junk)
 
 static int kvm_offline_cpu(unsigned int cpu)
 {
-	mutex_lock(&kvm_lock);
+	mutex_lock(&kvm_usage_lock);
 	if (kvm_usage_count)
 		hardware_disable_nolock(NULL);
-	mutex_unlock(&kvm_lock);
+	mutex_unlock(&kvm_usage_lock);
 	return 0;
 }
 
@@ -5649,9 +5650,9 @@ static void hardware_disable_all_nolock(void)
 static void hardware_disable_all(void)
 {
 	cpus_read_lock();
-	mutex_lock(&kvm_lock);
+	mutex_lock(&kvm_usage_lock);
 	hardware_disable_all_nolock();
-	mutex_unlock(&kvm_lock);
+	mutex_unlock(&kvm_usage_lock);
 	cpus_read_unlock();
 }
 
@@ -5682,7 +5683,7 @@ static int hardware_enable_all(void)
 	 * enable hardware multiple times.
 	 */
 	cpus_read_lock();
-	mutex_lock(&kvm_lock);
+	mutex_lock(&kvm_usage_lock);
 
 	r = 0;
 
@@ -5696,7 +5697,7 @@ static int hardware_enable_all(void)
 		}
 	}
 
-	mutex_unlock(&kvm_lock);
+	mutex_unlock(&kvm_usage_lock);
 	cpus_read_unlock();
 
 	return r;
@@ -5724,13 +5725,13 @@ static int kvm_suspend(void)
 {
 	/*
 	 * Secondary CPUs and CPU hotplug are disabled across the suspend/resume
-	 * callbacks, i.e. no need to acquire kvm_lock to ensure the usage count
-	 * is stable.  Assert that kvm_lock is not held to ensure the system
-	 * isn't suspended while KVM is enabling hardware.  Hardware enabling
-	 * can be preempted, but the task cannot be frozen until it has dropped
-	 * all locks (userspace tasks are frozen via a fake signal).
+	 * callbacks, i.e. no need to acquire kvm_usage_lock to ensure the usage
+	 * count is stable.  Assert that kvm_usage_lock is not held to ensure
+	 * the system isn't suspended while KVM is enabling hardware.  Hardware
+	 * enabling can be preempted, but the task cannot be frozen until it has
+	 * dropped all locks (userspace tasks are frozen via a fake signal).
 	 */
-	lockdep_assert_not_held(&kvm_lock);
+	lockdep_assert_not_held(&kvm_usage_lock);
 	lockdep_assert_irqs_disabled();
 
 	if (kvm_usage_count)
@@ -5740,7 +5741,7 @@ static int kvm_suspend(void)
 
 static void kvm_resume(void)
 {
-	lockdep_assert_not_held(&kvm_lock);
+	lockdep_assert_not_held(&kvm_usage_lock);
 	lockdep_assert_irqs_disabled();
 
 	if (kvm_usage_count)
@@ -6572,106 +6573,3 @@ void kvm_exit(void)
 	kvm_irqfd_exit();
 }
 EXPORT_SYMBOL_GPL(kvm_exit);
-
-struct kvm_vm_worker_thread_context {
-	struct kvm *kvm;
-	struct task_struct *parent;
-	struct completion init_done;
-	kvm_vm_thread_fn_t thread_fn;
-	uintptr_t data;
-	int err;
-};
-
-static int kvm_vm_worker_thread(void *context)
-{
-	/*
-	 * The init_context is allocated on the stack of the parent thread, so
-	 * we have to locally copy anything that is needed beyond initialization
-	 */
-	struct kvm_vm_worker_thread_context *init_context = context;
-	struct task_struct *parent;
-	struct kvm *kvm = init_context->kvm;
-	kvm_vm_thread_fn_t thread_fn = init_context->thread_fn;
-	uintptr_t data = init_context->data;
-	int err;
-
-	err = kthread_park(current);
-	/* kthread_park(current) is never supposed to return an error */
-	WARN_ON(err != 0);
-	if (err)
-		goto init_complete;
-
-	err = cgroup_attach_task_all(init_context->parent, current);
-	if (err) {
-		kvm_err("%s: cgroup_attach_task_all failed with err %d\n",
-			__func__, err);
-		goto init_complete;
-	}
-
-	set_user_nice(current, task_nice(init_context->parent));
-
-init_complete:
-	init_context->err = err;
-	complete(&init_context->init_done);
-	init_context = NULL;
-
-	if (err)
-		goto out;
-
-	/* Wait to be woken up by the spawner before proceeding. */
-	kthread_parkme();
-
-	if (!kthread_should_stop())
-		err = thread_fn(kvm, data);
-
-out:
-	/*
-	 * Move kthread back to its original cgroup to prevent it lingering in
-	 * the cgroup of the VM process, after the latter finishes its
-	 * execution.
-	 *
-	 * kthread_stop() waits on the 'exited' completion condition which is
-	 * set in exit_mm(), via mm_release(), in do_exit(). However, the
-	 * kthread is removed from the cgroup in the cgroup_exit() which is
-	 * called after the exit_mm(). This causes the kthread_stop() to return
-	 * before the kthread actually quits the cgroup.
-	 */
-	rcu_read_lock();
-	parent = rcu_dereference(current->real_parent);
-	get_task_struct(parent);
-	rcu_read_unlock();
-	cgroup_attach_task_all(parent, current);
-	put_task_struct(parent);
-
-	return err;
-}
-
-int kvm_vm_create_worker_thread(struct kvm *kvm, kvm_vm_thread_fn_t thread_fn,
-				uintptr_t data, const char *name,
-				struct task_struct **thread_ptr)
-{
-	struct kvm_vm_worker_thread_context init_context = {};
-	struct task_struct *thread;
-
-	*thread_ptr = NULL;
-	init_context.kvm = kvm;
-	init_context.parent = current;
-	init_context.thread_fn = thread_fn;
-	init_context.data = data;
-	init_completion(&init_context.init_done);
-
-	thread = kthread_run(kvm_vm_worker_thread, &init_context,
-			     "%s-%d", name, task_pid_nr(current));
-	if (IS_ERR(thread))
-		return PTR_ERR(thread);
-
-	/* kthread_run is never supposed to return NULL */
-	WARN_ON(thread == NULL);
-
-	wait_for_completion(&init_context.init_done);
-
-	if (!init_context.err)
-		*thread_ptr = thread;
-
-	return init_context.err;
-}
