@@ -91,6 +91,10 @@ CONFIG_HYPERVISOR_GUEST=n
 CONFIG_X86_AMD_PSTATE=n
 CONFIG_HAVE_RUST=n
 
+# This has been disabled upstream since 6.11.8-arch1
+# See: https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/commit/1a06ca984333093fb12cbbff275da31fa2bc5f6c
+CONFIG_ZSWAP_DEFAULT_ON=y
+
 # Build as module to experiment with toggling
 CONFIG_TCG_TPM=m
 
