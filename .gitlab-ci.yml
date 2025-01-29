@@ -139,6 +139,9 @@ build-kernel-neptune:
       sudo -u builder ./scripts/kconfig/merge_config.sh -m -O $BUILD_DIR \
         ci/kernel-config/neptune/config \
         ci/kernel-config/neptune/config-neptune
+    - |
+      sudo -u builder ./scripts/config --file $BUILD_DIR/.config \
+        --enable MODULE_COMPRESS --enable MODULE_COMPRESS_ZSTD --enable MODULE_COMPRESS_ALL
     - $kmake olddefconfig
     # Build kernel, including the Arch package
     - $kmake pacman-pkg PACMAN_PKGBASE=linux-next PACMAN_EXTRAPACKAGES=""
