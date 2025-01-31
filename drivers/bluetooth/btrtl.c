@@ -1580,6 +1580,9 @@ int btrtl_early_suspend(struct hci_dev *hdev)
 	if (!btrealtek_test_flag(hdev, REALTEK_CAN_IGNORE_BT_DIS))
 		return -EOPNOTSUPP;
 
+	if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
+		return 0;
+
 	ret = btrtl_vendor_read_reg16_unlocked(hdev, RTL_IGNORE_MASK, buf);
 	if (ret)
 		return ret;
@@ -1602,6 +1605,9 @@ int btrtl_late_resume(struct hci_dev *hdev)
 
 	if (!btrealtek_test_flag(hdev, REALTEK_CAN_IGNORE_BT_DIS))
 		return -EOPNOTSUPP;
+
+	if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
+		return 0;
 
 	ret = btrtl_vendor_read_reg16_unlocked(hdev, RTL_IGNORE_MASK, buf);
 	if (ret)
