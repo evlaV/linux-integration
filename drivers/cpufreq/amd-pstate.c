@@ -209,10 +209,8 @@ static int amd_pstate_set_energy_pref_index(struct amd_cpudata *cpudata,
 	int epp = -EINVAL;
 	int ret;
 
-	if (!pref_index) {
-		pr_debug("EPP pref_index is invalid\n");
-		return -EINVAL;
-	}
+	if (!pref_index)
+		epp = cpudata->epp_default;
 
 	if (epp == -EINVAL)
 		epp = epp_values[pref_index];
@@ -1198,8 +1196,6 @@ static int amd_pstate_epp_cpu_init(struct cpufreq_policy *policy)
 
 	policy->driver_data = cpudata;
 
-	cpudata->epp_cached = amd_pstate_get_epp(cpudata, 0);
-
 	policy->min = policy->cpuinfo.min_freq;
 	policy->max = policy->cpuinfo.max_freq;
 
@@ -1208,10 +1204,13 @@ static int amd_pstate_epp_cpu_init(struct cpufreq_policy *policy)
 	 * the default cpufreq governor is neither powersave nor performance.
 	 */
 	if (amd_pstate_acpi_pm_profile_server() ||
-	    amd_pstate_acpi_pm_profile_undefined())
+	    amd_pstate_acpi_pm_profile_undefined()) {
 		policy->policy = CPUFREQ_POLICY_PERFORMANCE;
-	else
+		cpudata->epp_default = amd_pstate_get_epp(cpudata, 0);
+	} else {
 		policy->policy = CPUFREQ_POLICY_POWERSAVE;
+		cpudata->epp_default = AMD_CPPC_EPP_BALANCE_PERFORMANCE;
+	}
 
 	if (boot_cpu_has(X86_FEATURE_CPPC)) {
 		ret = rdmsrl_on_cpu(cpudata->cpu, MSR_AMD_CPPC_REQ, &value);
@@ -1225,6 +1224,10 @@ static int amd_pstate_epp_cpu_init(struct cpufreq_policy *policy)
 		WRITE_ONCE(cpudata->cppc_cap1_cached, value);
 	}
 	amd_pstate_boost_init(cpudata);
+
+	ret = amd_pstate_set_epp(cpudata, cpudata->epp_default);
+	if (ret)
+		return ret;
 
 	return 0;
 
