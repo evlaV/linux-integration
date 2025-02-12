@@ -1012,6 +1012,7 @@ void amdgpu_dpm_thermal_work_handler(struct work_struct *work)
 	if (!adev->pm.dpm_enabled)
 		return;
 
+	mutex_lock(&adev->pm.mutex);
 	if (!pp_funcs->read_sensor(adev->powerplay.pp_handle,
 				   AMDGPU_PP_SENSOR_GPU_TEMP,
 				   (void *)&temp,
@@ -1033,4 +1034,5 @@ void amdgpu_dpm_thermal_work_handler(struct work_struct *work)
 	adev->pm.dpm.state = dpm_state;
 
 	amdgpu_legacy_dpm_compute_clocks(adev->powerplay.pp_handle);
+	mutex_unlock(&adev->pm.mutex);
 }
