@@ -5,6 +5,7 @@
  *  Copyright (C) 2015 Endless Mobile, Inc.
  */
 
+#include "linux/bitmap.h"
 #include <linux/module.h>
 #include <linux/firmware.h>
 #include <asm/unaligned.h>
@@ -1576,10 +1577,13 @@ int btrtl_early_suspend(struct hci_dev *hdev)
 	int ret = 0;
 	u16 ignore_mask;
 	u8 buf[2];
+	u64 flags;
 
 	if (!btrealtek_test_flag(hdev, REALTEK_CAN_IGNORE_BT_DIS))
 		return -EOPNOTSUPP;
 
+	bitmap_to_arr64(&flags, hdev->dev_flags, min(64, __HCI_NUM_FLAGS));
+	printk(KERN_INFO "%s(): BOB_DEBUG: flags=0x%llx\n", __func__, flags);
 	if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
 		return 0;
 
@@ -1602,10 +1606,13 @@ int btrtl_late_resume(struct hci_dev *hdev)
 	int ret = 0;
 	u16 ignore_mask;
 	u8 buf[2];
+	u64 flags;
 
 	if (!btrealtek_test_flag(hdev, REALTEK_CAN_IGNORE_BT_DIS))
 		return -EOPNOTSUPP;
 
+	bitmap_to_arr64(&flags, hdev->dev_flags, min(64, __HCI_NUM_FLAGS));
+	printk(KERN_INFO "%s(): BOB_DEBUG: flags=0x%llx\n", __func__, flags);
 	if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
 		return 0;
 
