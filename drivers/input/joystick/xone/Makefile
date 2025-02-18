@@ -1,0 +1,12 @@
+obj-$(CONFIG_JOYSTICK_XONE_WIRED) += xone-wired.o
+obj-$(CONFIG_JOYSTICK_XONE_DONGLE) += xone-dongle.o
+obj-$(CONFIG_JOYSTICK_XONE_GIP) += xone-gip.o xone-gip-gamepad.o xone-gip-headset.o xone-gip-chatpad.o xone-gip-madcatz-glam.o xone-gip-madcatz-strat.o xone-gip-pdp-jaguar.o
+xone-wired-y += wired.o
+xone-dongle-y += dongle.o mt76.o
+xone-gip-y += bus.o protocol.o auth.o crypto.o common.o
+xone-gip-gamepad-y += gamepad.o
+xone-gip-headset-y += headset.o
+xone-gip-chatpad-y += chatpad.o
+xone-gip-madcatz-glam-y += madcatz_glam.o
+xone-gip-madcatz-strat-y += madcatz_strat.o
+xone-gip-pdp-jaguar-y += pdp_jaguar.o
