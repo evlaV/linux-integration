@@ -113,3 +113,6 @@ CONFIG_SCHED_CLASS_EXT=y
 
 # Disable call depth tracking speculative execution vulnerability mitigation
 CONFIG_CALL_DEPTH_TRACKING=n
+CONFIG_JOYSTICK_XONE_GIP=m
+CONFIG_JOYSTICK_XONE_DONGLE=m
+CONFIG_JOYSTICK_XONE_WIRED=m
