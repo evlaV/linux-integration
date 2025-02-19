@@ -1600,7 +1600,7 @@ static int sdma_v7_0_set_powergating_state(struct amdgpu_ip_block *ip_block,
 	return 0;
 }
 
-static void sdma_v7_0_get_clockgating_state(void *handle, u64 *flags)
+static void sdma_v7_0_get_clockgating_state(struct amdgpu_ip_block *ip_block, u64 *flags)
 {
 }
 
