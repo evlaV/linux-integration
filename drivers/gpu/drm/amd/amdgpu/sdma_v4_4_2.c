@@ -107,6 +107,7 @@ static void sdma_v4_4_2_set_vm_pte_funcs(struct amdgpu_device *adev);
 static void sdma_v4_4_2_set_irq_funcs(struct amdgpu_device *adev);
 static void sdma_v4_4_2_set_ras_funcs(struct amdgpu_device *adev);
 static void sdma_v4_4_2_set_engine_reset_funcs(struct amdgpu_device *adev);
+static int  sdma_v4_4_2_init_sysfs_reset_mask(struct amdgpu_device *adev);
 
 static u32 sdma_v4_4_2_get_reg_offset(struct amdgpu_device *adev,
 		u32 instance, u32 offset)
@@ -1366,6 +1367,7 @@ static int sdma_v4_4_2_process_ras_data_cb(struct amdgpu_device *adev,
 static int sdma_v4_4_2_late_init(struct amdgpu_ip_block *ip_block)
 {
 	struct amdgpu_device *adev = ip_block->adev;
+	int r;
 #if 0
 	struct ras_ih_if ih_info = {
 		.cb = sdma_v4_4_2_process_ras_data_cb,
@@ -1374,7 +1376,12 @@ static int sdma_v4_4_2_late_init(struct amdgpu_ip_block *ip_block)
 	if (!amdgpu_persistent_edc_harvesting_supported(adev))
 		amdgpu_ras_reset_error_count(adev, AMDGPU_RAS_BLOCK__SDMA);
 
-	return 0;
+	/* The initialization is done in the late_init stage to ensure that the SMU
+	 * initialization and capability setup are completed before we check the SDMA
+	 * reset capability
+	 */
+	r = sdma_v4_4_2_init_sysfs_reset_mask(adev);
+	return r;
 }
 
 static int sdma_v4_4_2_sw_init(struct amdgpu_ip_block *ip_block)
@@ -1481,10 +1488,6 @@ static int sdma_v4_4_2_sw_init(struct amdgpu_ip_block *ip_block)
 		}
 	}
 
-	/* TODO: Add queue reset mask when FW fully supports it */
-	adev->sdma.supported_reset =
-		amdgpu_get_soft_full_reset_mask(&adev->sdma.instance[0].ring);
-
 	if (amdgpu_sdma_ras_sw_init(adev)) {
 		dev_err(adev->dev, "fail to initialize sdma ras block\n");
 		return -EINVAL;
@@ -1497,9 +1500,6 @@ static int sdma_v4_4_2_sw_init(struct amdgpu_ip_block *ip_block)
 	else
 		DRM_ERROR("Failed to allocated memory for SDMA IP Dump\n");
 
-	r = amdgpu_sdma_sysfs_reset_mask_init(adev);
-	if (r)
-		return r;
 	/* Initialize guilty flags for GFX and PAGE queues */
 	adev->sdma.gfx_guilty = false;
 	adev->sdma.page_guilty = false;
@@ -2326,6 +2326,45 @@ static void sdma_v4_4_2_set_vm_pte_funcs(struct amdgpu_device *adev)
 		adev->vm_manager.vm_pte_scheds[i] = sched;
 	}
 	adev->vm_manager.vm_pte_num_scheds = adev->sdma.num_instances;
+}
+
+/**
+ * sdma_v4_4_2_init_sysfs_reset_mask - Initialize sysfs reset mask for SDMA
+ * @adev: Pointer to the AMDGPU device structure
+ *
+ * This function initializes the sysfs reset mask for SDMA and sets the supported
+ * reset types based on the IP version and firmware versions.
+ *
+ * Returns: 0 on success, or a negative error code on failure.
+ */
+static int sdma_v4_4_2_init_sysfs_reset_mask(struct amdgpu_device *adev)
+{
+	int r = 0;
+
+	/* Set the supported reset types */
+	adev->sdma.supported_reset =
+		amdgpu_get_soft_full_reset_mask(&adev->sdma.instance[0].ring);
+	/*
+	 * the user queue relies on MEC fw and pmfw when the sdma queue do reset.
+	 * it needs to check both of them at here to skip old mec and pmfw.
+	 */
+	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	case IP_VERSION(9, 4, 3):
+	case IP_VERSION(9, 4, 4):
+		if ((adev->gfx.mec_fw_version >= 0xb0) && amdgpu_dpm_reset_sdma_is_supported(adev))
+			adev->sdma.supported_reset |= AMDGPU_RESET_TYPE_PER_QUEUE;
+		break;
+	case IP_VERSION(9, 4, 5):
+		/*TODO: enable the queue reset flag until fw supported */
+	default:
+		break;
+	}
+
+	/* Initialize the sysfs reset mask */
+	r = amdgpu_sdma_sysfs_reset_mask_init(adev);
+
+	return r;
+
 }
 
 const struct amdgpu_ip_block_version sdma_v4_4_2_ip_block = {
