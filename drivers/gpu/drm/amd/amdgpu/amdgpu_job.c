@@ -151,14 +151,16 @@ static enum drm_gpu_sched_stat amdgpu_job_timedout(struct drm_sched_job *s_job)
 		else
 			is_guilty = true;
 
+		if (is_guilty)
+			dma_fence_set_error(&s_job->s_fence->finished, -ETIME);
+
 		r = amdgpu_ring_reset(ring, job->vmid);
 		if (!r) {
 			if (amdgpu_ring_sched_ready(ring))
 				drm_sched_stop(&ring->sched, s_job);
-			atomic_inc(&ring->adev->gpu_reset_counter);
 			if (is_guilty) {
+				atomic_inc(&ring->adev->gpu_reset_counter);
 				amdgpu_fence_driver_force_completion(ring);
-				dma_fence_set_error(&s_job->s_fence->finished, -ETIME);
 			}
 			if (amdgpu_ring_sched_ready(ring))
 				drm_sched_start(&ring->sched, 0);
