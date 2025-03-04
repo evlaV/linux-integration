@@ -289,8 +289,11 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 	queue->userq_prop = userq_props;
 
 	r = pm_runtime_get_sync(adev_to_drm(adev)->dev);
-	if (r)
+	if (r < 0) {
+		dev_err(adev->dev, "pm_runtime_get_sync() failed for userqueue mqd create\n");
+		pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
 		goto free_mqd;
+	}
 
 	r = mqd_hw_default->init_mqd(adev, (void *)queue->mqd.cpu_ptr, userq_props);
 	if (r) {
