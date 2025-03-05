@@ -168,4 +168,6 @@ obj-$(INTEL_ISH_FIRMWARE_DOWNLOADER)	+= intel-ish-hid/
 
 obj-$(CONFIG_AMD_SFH_HID)       += amd-sfh-hid/
 
+obj-$(CONFIG_ZOTAC_ZONE_HID)  += zotac-zone-hid/
+
 obj-$(CONFIG_SURFACE_HID_CORE)  += surface-hid/
