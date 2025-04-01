@@ -654,6 +654,7 @@ int main(int argc, char *argv[])
 			break;
 		case '?':
 			usbipd_help();
+			/* fallthrough */
 		default:
 			goto err_out;
 		}
@@ -672,12 +673,10 @@ int main(int argc, char *argv[])
 		rc = 0;
 		break;
 	case cmd_help:
-		usbipd_help();
 		rc = 0;
-		break;
+		/* fallthrough */
 	default:
 		usbipd_help();
-		goto err_out;
 	}
 
 err_out:
