@@ -12739,6 +12739,8 @@ F:	drivers/platform/x86/lenovo-wmi-gamezone.c
 F:	drivers/platform/x86/lenovo-wmi-gamezone.h
 F:	drivers/platform/x86/lenovo-wmi-helpers.c
 F:	drivers/platform/x86/lenovo-wmi-helpers.h
+F:	drivers/platform/x86/lenovo-wmi-other.c
+F:	drivers/platform/x86/lenovo-wmi-other.h
 
 LETSKETCH HID TABLET DRIVER
 M:	Hans de Goede <hdegoede@redhat.com>
