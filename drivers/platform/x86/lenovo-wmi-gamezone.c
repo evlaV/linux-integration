@@ -401,9 +401,9 @@ static struct wmi_driver lwmi_gz_driver = {
 
 module_wmi_driver(lwmi_gz_driver);
 
-MODULE_IMPORT_NS("LENOVO_WMI_EVENTS");
-MODULE_IMPORT_NS("LENOVO_WMI_HELPERS");
-MODULE_IMPORT_NS("LENOVO_WMI_OTHER");
+MODULE_IMPORT_NS(LENOVO_WMI_EVENTS);
+MODULE_IMPORT_NS(LENOVO_WMI_HELPERS);
+MODULE_IMPORT_NS(LENOVO_WMI_OTHER);
 MODULE_DEVICE_TABLE(wmi, lwmi_gz_id_table);
 MODULE_AUTHOR("Derek J. Clark <derekjohn.clark@gmail.com>");
 MODULE_DESCRIPTION("Lenovo GameZone WMI Driver");

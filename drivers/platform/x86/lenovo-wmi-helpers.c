@@ -67,7 +67,7 @@ int lwmi_dev_evaluate_int(struct wmi_device *wdev, u8 instance, u32 method_id,
 	}
 	return 0;
 };
-EXPORT_SYMBOL_NS_GPL(lwmi_dev_evaluate_int, "LENOVO_WMI_HELPERS");
+EXPORT_SYMBOL_NS_GPL(lwmi_dev_evaluate_int, LENOVO_WMI_HELPERS);
 
 MODULE_AUTHOR("Derek J. Clark <derekjohn.clark@gmail.com>");
 MODULE_DESCRIPTION("Lenovo WMI Helpers Driver");

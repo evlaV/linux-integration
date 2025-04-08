@@ -118,7 +118,7 @@ int lwmi_om_register_notifier(struct notifier_block *nb)
 {
 	return blocking_notifier_chain_register(&om_chain_head, nb);
 }
-EXPORT_SYMBOL_NS_GPL(lwmi_om_register_notifier, "LENOVO_WMI_OTHER");
+EXPORT_SYMBOL_NS_GPL(lwmi_om_register_notifier, LENOVO_WMI_OTHER);
 
 /**
  * lwmi_om_unregister_notifier() - Remove a notifier from the blocking notifier
@@ -134,7 +134,7 @@ int lwmi_om_unregister_notifier(struct notifier_block *nb)
 {
 	return blocking_notifier_chain_unregister(&om_chain_head, nb);
 }
-EXPORT_SYMBOL_NS_GPL(lwmi_om_unregister_notifier, "LENOVO_WMI_OTHER");
+EXPORT_SYMBOL_NS_GPL(lwmi_om_unregister_notifier, LENOVO_WMI_OTHER);
 
 /**
  * devm_lwmi_om_unregister_notifier() - Remove a notifier from the blocking
@@ -175,10 +175,9 @@ int devm_lwmi_om_register_notifier(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return devm_add_action_or_reset(dev, devm_lwmi_om_unregister_notifier,
-					nb);
+	return devm_add_action_or_reset(dev, devm_lwmi_om_unregister_notifier, nb);
 }
-EXPORT_SYMBOL_NS_GPL(devm_lwmi_om_register_notifier, "LENOVO_WMI_OTHER");
+EXPORT_SYMBOL_NS_GPL(devm_lwmi_om_register_notifier, LENOVO_WMI_OTHER);
 
 /**
  * lwmi_om_notifier_call() - Call functions for the notifier call chain.
@@ -669,8 +668,8 @@ static struct wmi_driver lwmi_other_driver = {
 
 module_wmi_driver(lwmi_other_driver);
 
-MODULE_IMPORT_NS("LENOVO_WMI_CD01");
-MODULE_IMPORT_NS("LENOVO_WMI_HELPERS");
+MODULE_IMPORT_NS(LENOVO_WMI_CD01);
+MODULE_IMPORT_NS(LENOVO_WMI_HELPERS);
 MODULE_DEVICE_TABLE(wmi, lwmi_other_id_table);
 MODULE_AUTHOR("Derek J. Clark <derekjohn.clark@gmail.com>");
 MODULE_DESCRIPTION("Lenovo Other Mode WMI Driver");

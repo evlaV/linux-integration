@@ -158,7 +158,7 @@ int lwmi_cd01_match(struct device *dev, void *data)
 {
 	return dev->driver == &lwmi_cd01_driver.driver;
 }
-EXPORT_SYMBOL_NS_GPL(lwmi_cd01_match, "LENOVO_WMI_CD01");
+EXPORT_SYMBOL_NS_GPL(lwmi_cd01_match, LENOVO_WMI_CD01);
 
 module_wmi_driver(lwmi_cd01_driver);
 

@@ -21,7 +21,7 @@
 
 #define THERMAL_MODE_EVENT_GUID "D320289E-8FEA-41E0-86F9-911D83151B5F"
 
-#define LWMI_EVENT_DEVICE(guid, type)                        \
+#define LWMI_EVENT_DEVICE(guid, type)                              \
 	.guid_string = (guid), .context = &(enum lwmi_events_type) \
 	{                                                          \
 		type                                               \
@@ -47,7 +47,7 @@ int lwmi_events_register_notifier(struct notifier_block *nb)
 {
 	return blocking_notifier_chain_register(&events_chain_head, nb);
 }
-EXPORT_SYMBOL_NS_GPL(lwmi_events_register_notifier, "LENOVO_WMI_EVENTS");
+EXPORT_SYMBOL_NS_GPL(lwmi_events_register_notifier, LENOVO_WMI_EVENTS);
 
 /**
  * lwmi_events_unregister_notifier() - Remove a notifier from the notifier
@@ -63,7 +63,7 @@ int lwmi_events_unregister_notifier(struct notifier_block *nb)
 {
 	return blocking_notifier_chain_unregister(&events_chain_head, nb);
 }
-EXPORT_SYMBOL_NS_GPL(lwmi_events_unregister_notifier, "LENOVO_WMI_EVENTS");
+EXPORT_SYMBOL_NS_GPL(lwmi_events_unregister_notifier, LENOVO_WMI_EVENTS);
 
 /**
  * devm_lwmi_events_unregister_notifier() - Remove a notifier from the notifier
@@ -105,7 +105,7 @@ int devm_lwmi_events_register_notifier(struct device *dev,
 
 	return devm_add_action_or_reset(dev, devm_lwmi_events_unregister_notifier, nb);
 }
-EXPORT_SYMBOL_NS_GPL(devm_lwmi_events_register_notifier, "LENOVO_WMI_EVENTS");
+EXPORT_SYMBOL_NS_GPL(devm_lwmi_events_register_notifier, LENOVO_WMI_EVENTS);
 
 /**
  * lwmi_events_notify() - Call functions for the notifier call chain.
