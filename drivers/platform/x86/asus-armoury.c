@@ -1195,7 +1195,7 @@ static void __exit asus_fw_exit(void)
 module_init(asus_fw_init);
 module_exit(asus_fw_exit);
 
-MODULE_IMPORT_NS("ASUS_WMI");
+MODULE_IMPORT_NS(ASUS_WMI);
 MODULE_AUTHOR("Luke Jones <luke@ljones.dev>");
 MODULE_DESCRIPTION("ASUS BIOS Configuration Driver");
 MODULE_LICENSE("GPL");
