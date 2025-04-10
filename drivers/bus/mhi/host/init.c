@@ -1173,9 +1173,8 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 		/*
 		 * Allocate RDDM table for debugging purpose if specified
 		 */
-		if (!mhi_cntrl->rddm_image)
-			mhi_alloc_bhie_table(mhi_cntrl, &mhi_cntrl->rddm_image,
-					     mhi_cntrl->rddm_size);
+		mhi_alloc_bhie_table(mhi_cntrl, &mhi_cntrl->rddm_image,
+				     mhi_cntrl->rddm_size);
 		if (mhi_cntrl->rddm_image) {
 			ret = mhi_rddm_prepare(mhi_cntrl,
 					       mhi_cntrl->rddm_image);
@@ -1199,13 +1198,10 @@ error_dev_ctxt:
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(mhi_prepare_for_mhi_fw_load_handlerpower_up);
+EXPORT_SYMBOL_GPL(mhi_prepare_for_power_up);
 
 void mhi_unprepare_after_power_down(struct mhi_controller *mhi_cntrl)
 {
-	pr_info("[debug] %s: %d\n", __func__, mhi_cntrl->pm_state);
-	dump_stack();
-
 	if (mhi_cntrl->fbc_image) {
 		mhi_free_bhie_table(mhi_cntrl, mhi_cntrl->fbc_image);
 		mhi_cntrl->fbc_image = NULL;
@@ -1216,18 +1212,12 @@ void mhi_unprepare_after_power_down(struct mhi_controller *mhi_cntrl)
 		mhi_cntrl->rddm_image = NULL;
 	}
 
-	mhi_partial_unprepare_after_power_down(mhi_cntrl);
-}
-EXPORT_SYMBOL_GPL(mhi_unprepare_after_power_down);
-
-void mhi_partial_unprepare_after_power_down(struct mhi_controller *mhi_cntrl)
-{
 	mhi_cntrl->bhi = NULL;
 	mhi_cntrl->bhie = NULL;
 
 	mhi_deinit_dev_ctxt(mhi_cntrl);
 }
-EXPORT_SYMBOL_GPL(mhi_partial_unprepare_after_power_down);
+EXPORT_SYMBOL_GPL(mhi_unprepare_after_power_down);
 
 static void mhi_release_device(struct device *dev)
 {

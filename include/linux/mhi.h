@@ -663,12 +663,6 @@ void mhi_power_down_keep_dev(struct mhi_controller *mhi_cntrl, bool graceful);
 void mhi_unprepare_after_power_down(struct mhi_controller *mhi_cntrl);
 
 /**
- * mhi_partial_unprepare_after_power_down - Free any allocated memory after power down partially
- * @mhi_cntrl: MHI controller
- */
-void mhi_partial_unprepare_after_power_down(struct mhi_controller *mhi_cntrl);
-
-/**
  * mhi_pm_suspend - Move MHI into a suspended state
  * @mhi_cntrl: MHI controller
  */
