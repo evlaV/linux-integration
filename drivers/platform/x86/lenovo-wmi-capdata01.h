@@ -23,6 +23,7 @@ struct cd01_list {
 	struct capdata01 data[];
 };
 
+struct capdata01 *lwmi_cd01_get_data(struct device *dev, u32 attribute_id);
 int lwmi_cd01_match(struct device *dev, void *data);
 
 #endif /* !_LENOVO_WMI_CAPDATA01_H_ */
