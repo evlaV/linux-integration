@@ -19,6 +19,7 @@
 #include <linux/export.h>
 #include <linux/gfp_types.h>
 #include <linux/module.h>
+#include <linux/notifier.h>
 #include <linux/overflow.h>
 #include <linux/types.h>
 #include <linux/wmi.h>
@@ -27,7 +28,12 @@
 
 #define LENOVO_CAPABILITY_DATA_01_GUID "7A8F5407-CB67-4D6E-B547-39B3BE018154"
 
+#define ACPI_AC_NOTIFY_STATUS 0x80
+
+static DEFINE_MUTEX(list_mutex);
+
 struct lwmi_cd01_priv {
+	struct notifier_block acpi_nb; /* ACPI events */
 	struct wmi_device *wdev;
 	struct cd01_list *list;
 };
@@ -36,24 +42,20 @@ struct lwmi_cd01_priv {
  * lwmi_cd01_component_bind() - Bind component to master device.
  * @cd01_dev: Pointer to the lenovo-wmi-capdata01 driver parent device.
  * @om_dev: Pointer to the lenovo-wmi-other driver parent device.
- * @data: capdata01_list object pointer used to return the capability data.
+ * @data: device struct pointer used to return cd01_dev.
  *
  * On lenovo-wmi-other's master bind, provide a pointer to the local capdata01
- * list. This is used to look up attribute data by the lenovo-wmi-other driver.
+ * parent device. This is used to call lwmi_cd01_get_data to look up attribute
+ * data by the lenovo-wmi-other driver.
  *
- * Return: 0 on success, or on error.
+ * Return: 0 on success, or an error.
  */
 static int lwmi_cd01_component_bind(struct device *cd01_dev,
 				    struct device *om_dev, void *data)
 {
-	struct lwmi_cd01_priv *priv = dev_get_drvdata(cd01_dev);
-	struct cd01_list **cd01_list = data;
+	struct device **tmp_dev = data;
 
-	if (!priv->list)
-		return -ENODEV;
-
-	*cd01_list = priv->list;
-
+	*tmp_dev = cd01_dev;
 	return 0;
 }
 
@@ -62,31 +64,44 @@ static const struct component_ops lwmi_cd01_component_ops = {
 };
 
 /**
+ * lwmi_cd01_get_data - Get the data of the specified attribute
+ * @dev: The lenovo-wmi-capdata01 parent device.
+ * @tunable_attr: The attribute to be populated.
+ *
+ * Retrieves the capability data 01 struct pointer for the given
+ * attribute for its specified thermal mode.
+ *
+ * Return: Either a pointer to capability data, or NULL.
+ */
+struct capdata01 *lwmi_cd01_get_data(struct device *dev, u32 attribute_id)
+{
+	struct lwmi_cd01_priv *priv = dev_get_drvdata(dev);
+	int idx;
+
+	guard(mutex)(&list_mutex);
+	for (idx = 0; idx < priv->list->count; idx++) {
+		if (priv->list->data[idx].id != attribute_id)
+			continue;
+		return &priv->list->data[idx];
+	}
+	return NULL;
+}
+EXPORT_SYMBOL_NS_GPL(lwmi_cd01_get_data, "LENOVO_WMI_CD01");
+
+/**
  * lwmi_cd01_setup() - Cache all WMI data block information
  * @priv: lenovo-wmi-capdata01 driver data.
  *
- * Allocate a cd01_list struct large enough to contain data from all WMI data
- * blocks provided by the interface. Then loop through each data block and
- * cache the data.
+ * Loop through each wmi data block and cache the data.
  *
- * Return: 0 on success, or on error.
+ * Return: 0 on success, or an error.
  */
-static int lwmi_cd01_setup(struct lwmi_cd01_priv *priv)
+static int lwmi_cd01_cache(struct lwmi_cd01_priv *priv)
 {
-	struct cd01_list *list;
-	size_t list_size;
-	int count, idx;
+	int idx;
 
-	count = wmidev_instance_count(priv->wdev);
-	list_size = struct_size(list, data, count);
-
-	list = devm_kzalloc(&priv->wdev->dev, list_size, GFP_KERNEL);
-	if (!list)
-		return -ENOMEM;
-
-	list->count = count;
-
-	for (idx = 0; idx < count; idx++) {
+	guard(mutex)(&list_mutex);
+	for (idx = 0; idx < priv->list->count; idx++) {
 		union acpi_object *ret_obj __free(kfree) = NULL;
 
 		ret_obj = wmidev_block_query(priv->wdev, idx);
@@ -97,13 +112,95 @@ static int lwmi_cd01_setup(struct lwmi_cd01_priv *priv)
 		    ret_obj->buffer.length < sizeof(struct capdata01))
 			continue;
 
-		memcpy(&list->data[idx], ret_obj->buffer.pointer,
+		memcpy(&priv->list->data[idx], ret_obj->buffer.pointer,
 		       ret_obj->buffer.length);
 	}
 
+	return 0;
+}
+
+/**
+ * lwmi_cd01_alloc() - Allocate a cd01_list struct in drvdata
+ * @priv: lenovo-wmi-capdata01 driver data.
+ *
+ * Allocate a cd01_list struct large enough to contain data from all WMI data
+ * blocks provided by the interface.
+ *
+ * Return: 0 on success, or an error.
+ */
+static int lwmi_cd01_alloc(struct lwmi_cd01_priv *priv)
+{
+	struct cd01_list *list;
+	size_t list_size;
+	int count;
+
+	count = wmidev_instance_count(priv->wdev);
+	list_size = struct_size(list, data, count);
+
+	guard(mutex)(&list_mutex);
+	list = devm_kzalloc(&priv->wdev->dev, list_size, GFP_KERNEL);
+	if (!list)
+		return -ENOMEM;
+
+	list->count = count;
 	priv->list = list;
 
 	return 0;
+}
+
+/**
+ * lwmi_cd01_setup() - Cache all WMI data block information
+ * @priv: lenovo-wmi-capdata01 driver data.
+ *
+ * Allocate a cd01_list struct large enough to contain data from all WMI data
+ * blocks provided by the interface. Then loop through each data block and
+ * cache the data.
+ *
+ * Return: 0 on success, or an error.
+ */
+static int lwmi_cd01_setup(struct lwmi_cd01_priv *priv)
+{
+	int ret;
+
+	ret = lwmi_cd01_alloc(priv);
+	if (ret)
+		return ret;
+
+	return lwmi_cd01_cache(priv);
+}
+
+/**
+ * lwmi_cd01_notifier_call() - Call method for lenovo-wmi-capdata01 driver notifier.
+ * block call chain.
+ * @nb: The notifier_block registered to lenovo-wmi-events driver.
+ * @action: Unused.
+ * @data: The ACPI event.
+ *
+ * For LWMI_EVENT_THERMAL_MODE, set current_mode and notify platform_profile
+ * of a change.
+ *
+ * Return: notifier_block status.
+ */
+static int lwmi_cd01_notifier_call(struct notifier_block *nb, unsigned long action,
+				   void *data)
+{
+	struct acpi_bus_event *event = (struct acpi_bus_event *)data;
+	struct lwmi_cd01_priv *priv;
+	int ret;
+
+
+	priv = container_of(nb, struct lwmi_cd01_priv, acpi_nb);
+
+	switch (event->type) {
+	case ACPI_AC_NOTIFY_STATUS:
+		ret = lwmi_cd01_cache(priv);
+		if (ret)
+			return NOTIFY_BAD;
+
+		return NOTIFY_OK;
+	default:
+		return NOTIFY_DONE;
+	}
 }
 
 static int lwmi_cd01_probe(struct wmi_device *wdev, const void *context)
@@ -122,6 +219,9 @@ static int lwmi_cd01_probe(struct wmi_device *wdev, const void *context)
 	ret = lwmi_cd01_setup(priv);
 	if (ret)
 		return ret;
+
+	priv->acpi_nb.notifier_call = lwmi_cd01_notifier_call;
+	register_acpi_notifier(&priv->acpi_nb);
 
 	return component_add(&wdev->dev, &lwmi_cd01_component_ops);
 }
