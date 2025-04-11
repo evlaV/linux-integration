@@ -74,11 +74,11 @@ enum attribute_property {
 struct lwmi_om_priv {
 	struct component_master_ops *ops;
 	/* *cd01_list is only valid after master bind and while capdata01 exists */
-	struct cd01_list *cd01_list;
 	struct device *fw_attr_dev;
 	struct kset *fw_attr_kset;
 	struct notifier_block nb;
 	struct wmi_device *wdev;
+	struct device *cd01_dev;
 	int ida_id;
 };
 
@@ -193,7 +193,8 @@ static int lwmi_om_notifier_call(enum thermal_mode *mode)
 {
 	int ret;
 
-	ret = blocking_notifier_call_chain(&om_chain_head, LWMI_GZ_GET_THERMAL_MODE, &mode);
+	ret = blocking_notifier_call_chain(&om_chain_head,
+					   LWMI_GZ_GET_THERMAL_MODE, &mode);
 	if ((ret & ~NOTIFY_STOP_MASK) != NOTIFY_OK)
 		return -EINVAL;
 
@@ -214,28 +215,6 @@ static ssize_t int_type_show(struct kobject *kobj, struct kobj_attribute *kattr,
 			     char *buf)
 {
 	return sysfs_emit(buf, "integer\n");
-}
-
-/**
- * attr_capdata01_get - Get the data of the specified attribute
- * @tunable_attr: The attribute to be populated.
- *
- * Retrieves the capability data 01 struct pointer for the given
- * attribute for its specified thermal mode.
- *
- * Return: Either a pointer to capability data, or NULL.
- */
-static struct capdata01 *attr_capdata01_get_data(struct lwmi_om_priv *priv,
-						 u32 attribute_id)
-{
-	int idx;
-
-	for (idx = 0; idx < priv->cd01_list->count; idx++) {
-		if (priv->cd01_list->data[idx].id != attribute_id)
-			continue;
-		return &priv->cd01_list->data[idx];
-	}
-	return NULL;
 }
 
 /**
@@ -269,10 +248,11 @@ static ssize_t attr_capdata01_show(struct kobject *kobj,
 	attribute_id =
 		FIELD_PREP(LWMI_ATTR_DEV_ID_MASK, tunable_attr->device_id) |
 		FIELD_PREP(LWMI_ATTR_FEAT_ID_MASK, tunable_attr->feature_id) |
-		FIELD_PREP(LWMI_ATTR_MODE_ID_MASK, LWMI_GZ_THERMAL_MODE_CUSTOM) |
+		FIELD_PREP(LWMI_ATTR_MODE_ID_MASK,
+			   LWMI_GZ_THERMAL_MODE_CUSTOM) |
 		FIELD_PREP(LWMI_ATTR_TYPE_ID_MASK, tunable_attr->type_id);
 
-	capdata = attr_capdata01_get_data(priv, attribute_id);
+	capdata = lwmi_cd01_get_data(priv->cd01_dev, attribute_id);
 
 	if (!capdata)
 		return -ENODEV;
@@ -342,7 +322,7 @@ static ssize_t attr_current_value_store(struct kobject *kobj,
 		FIELD_PREP(LWMI_ATTR_MODE_ID_MASK, mode) |
 		FIELD_PREP(LWMI_ATTR_TYPE_ID_MASK, tunable_attr->type_id);
 
-	capdata = attr_capdata01_get_data(priv, attribute_id);
+	capdata = lwmi_cd01_get_data(priv->cd01_dev, attribute_id);
 
 	if (!capdata)
 		return -ENODEV;
@@ -530,14 +510,16 @@ static int lwmi_om_fw_attr_add(struct lwmi_om_priv *priv)
 		goto err_free_ida;
 	}
 
-	priv->fw_attr_kset = kset_create_and_add("attributes", NULL, &priv->fw_attr_dev->kobj);
+	priv->fw_attr_kset = kset_create_and_add("attributes", NULL,
+						 &priv->fw_attr_dev->kobj);
 	if (!priv->fw_attr_kset) {
 		err = -ENOMEM;
 		goto err_destroy_classdev;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(cd01_attr_groups) - 1; i++) {
-		err = sysfs_create_group(&priv->fw_attr_kset->kobj, cd01_attr_groups[i].attr_group);
+		err = sysfs_create_group(&priv->fw_attr_kset->kobj,
+					 cd01_attr_groups[i].attr_group);
 		if (err)
 			goto err_remove_groups;
 
@@ -547,7 +529,8 @@ static int lwmi_om_fw_attr_add(struct lwmi_om_priv *priv)
 
 err_remove_groups:
 	while (i--)
-		sysfs_remove_group(&priv->fw_attr_kset->kobj, cd01_attr_groups[i].attr_group);
+		sysfs_remove_group(&priv->fw_attr_kset->kobj,
+				   cd01_attr_groups[i].attr_group);
 
 	kset_unregister(priv->fw_attr_kset);
 
@@ -566,7 +549,8 @@ err_free_ida:
 static void lwmi_om_fw_attr_remove(struct lwmi_om_priv *priv)
 {
 	for (unsigned int i = 0; i < ARRAY_SIZE(cd01_attr_groups) - 1; i++)
-		sysfs_remove_group(&priv->fw_attr_kset->kobj, cd01_attr_groups[i].attr_group);
+		sysfs_remove_group(&priv->fw_attr_kset->kobj,
+				   cd01_attr_groups[i].attr_group);
 
 	kset_unregister(priv->fw_attr_kset);
 	device_unregister(priv->fw_attr_dev);
@@ -587,16 +571,16 @@ static void lwmi_om_fw_attr_remove(struct lwmi_om_priv *priv)
 static int lwmi_om_master_bind(struct device *dev)
 {
 	struct lwmi_om_priv *priv = dev_get_drvdata(dev);
-	struct cd01_list *tmp_list;
+	struct device *tmp_dev;
 	int ret;
 
-	ret = component_bind_all(dev, &tmp_list);
+	ret = component_bind_all(dev, &tmp_dev);
 	if (ret)
 		return ret;
 
-	priv->cd01_list = tmp_list;
+	priv->cd01_dev = tmp_dev;
 
-	if (!priv->cd01_list)
+	if (!priv->cd01_dev)
 		return -ENODEV;
 
 	return lwmi_om_fw_attr_add(priv);
