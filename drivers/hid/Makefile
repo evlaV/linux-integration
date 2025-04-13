@@ -173,3 +173,5 @@ obj-$(CONFIG_ZOTAC_ZONE_HID)  += zotac-zone-hid/
 obj-$(CONFIG_ASUS_ALLY_HID)  += asus-ally-hid/
 
 obj-$(CONFIG_SURFACE_HID_CORE)  += surface-hid/
+
+obj-$(CONFIG_LENOVO_LEGOS_HID)  += lenovo-legos-hid/
