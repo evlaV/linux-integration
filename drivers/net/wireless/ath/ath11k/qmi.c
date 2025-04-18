@@ -1980,31 +1980,54 @@ static int ath11k_qmi_alloc_target_mem_chunk(struct ath11k_base *ab)
 	int i;
 	struct target_mem_chunk *chunk;
 
+	pr_info("[debug] %s: %d\n", __func__, __LINE__);
 	ab->qmi.target_mem_delayed = false;
 
 	for (i = 0; i < ab->qmi.mem_seg_count; i++) {
+		pr_info("\t[debug] %s %u\n", __func__, i);
+
 		chunk = &ab->qmi.target_mem[i];
 
 		/* Firmware reloads in coldboot/firmware recovery.
 		 * in such case, no need to allocate memory for FW again.
 		 */
 		if (chunk->vaddr) {
+			pr_info("[debug] %s: chunk->vaddr %x\n",
+				__func__, (unsigned int)ab->qmi.target_mem[i].vaddr);
 			if (chunk->prev_type == chunk->type &&
-			    chunk->prev_size == chunk->size)
+			    chunk->prev_size == chunk->size) {
+				pr_info("[debug] %s: skip size: %u pre_size: %u\n",
+					__func__, chunk->size, chunk->prev_size);
 				continue;
+			}
+//			else if (ab->qmi.mem_seg_count <= ATH11K_QMI_FW_MEM_REQ_SEGMENT_CNT) {
+//				pr_info("[debug] %s: size didn't match return 0 size: %u pre_size: %u\n",
+//					__func__, chunk->size, chunk->prev_size);
+//				ath11k_dbg(ab, ATH11K_DBG_QMI,
+//					   "dma allocation failed (%d B type %u), will try later with small size\n",
+//					    chunk->size,
+//					    chunk->type);
+//				ab->qmi.target_mem_delayed = true;
+//				return 0;
+//			}
 
+			pr_info("[debug] %s: free chunk->vaddr %x\n",
+				__func__, (unsigned int)chunk->vaddr);
 			/* cannot reuse the existing chunk */
 			dma_free_coherent(ab->dev, chunk->prev_size,
 					  chunk->vaddr, chunk->paddr);
 			chunk->vaddr = NULL;
 		}
 
+		pr_info("[debug] **dma_alloc_coherent**\n");
 		chunk->vaddr = dma_alloc_coherent(ab->dev,
 						  chunk->size,
 						  &chunk->paddr,
 						  GFP_KERNEL | __GFP_NOWARN);
 		if (!chunk->vaddr) {
+			pr_info("[debug] failed\n");
 			if (ab->qmi.mem_seg_count <= ATH11K_QMI_FW_MEM_REQ_SEGMENT_CNT) {
+				pr_info("[debug] try with smaller chunks\n");
 				ath11k_dbg(ab, ATH11K_DBG_QMI,
 					   "dma allocation failed (%d B type %u), will try later with small size\n",
 					    chunk->size,
@@ -2014,6 +2037,7 @@ static int ath11k_qmi_alloc_target_mem_chunk(struct ath11k_base *ab)
 				return 0;
 			}
 
+			pr_info("[debug] -EINVAL failed to allocate memory\n");
 			ath11k_err(ab, "failed to allocate dma memory for qmi (%d B type %u)\n",
 				   chunk->size,
 				   chunk->type);
