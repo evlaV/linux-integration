@@ -22,19 +22,16 @@ imported_device_init(struct usbip_imported_device *idev, char *busid)
 {
 	struct udev_device *sudev;
 
-	sudev = udev_device_new_from_subsystem_sysname(udev_context,
-						       "usb", busid);
+	sudev = udev_device_new_from_subsystem_sysname(udev_context, "usb", busid);
 	if (!sudev) {
 		dbg("udev_device_new_from_subsystem_sysname failed: %s", busid);
-		goto err;
+		return NULL;
 	}
+
 	read_usb_device(sudev, &idev->udev);
 	udev_device_unref(sudev);
 
 	return idev;
-
-err:
-	return NULL;
 }
 
 static int parse_status(const char *value)
@@ -55,17 +52,15 @@ static int parse_status(const char *value)
 		struct usbip_imported_device *idev;
 		char hub[3];
 
-		ret = sscanf(c, "%2s  %d %d %d %x %u %31s\n",
-				hub, &port, &status, &speed,
-				&devid, &sockfd, lbusid);
-
+		ret = sscanf(c, "%2s  %d %d %d %x %u %31s\n", hub, &port,
+			     &status, &speed, &devid, &sockfd, lbusid);
 		if (ret < 5) {
 			dbg("sscanf failed: %d", ret);
 			BUG();
 		}
 
 		dbg("hub %s port %d status %d speed %d devid %x",
-				hub, port, status, speed, devid);
+		    hub, port, status, speed, devid);
 		dbg("sockfd %u lbusid %s", sockfd, lbusid);
 
 		/* if a device is connected, look at it */
@@ -164,9 +159,9 @@ static int get_ncontrollers(void)
 		return -1;
 
 	n = scandir(udev_device_get_syspath(platform), &namelist, vhci_hcd_filter, NULL);
-	if (n < 0)
+	if (n < 0) {
 		err("scandir failed");
-	else {
+	} else {
 		for (int i = 0; i < n; i++)
 			free(namelist[i]);
 		free(namelist);
@@ -335,16 +330,15 @@ err:
 int usbip_vhci_get_free_port(uint32_t speed)
 {
 	for (int i = 0; i < vhci_driver->nports; i++) {
-
 		switch (speed) {
-		case	USB_SPEED_SUPER:
+		case USB_SPEED_SUPER:
 			if (vhci_driver->idev[i].hub != HUB_SPEED_SUPER)
 				continue;
-		break;
+			break;
 		default:
 			if (vhci_driver->idev[i].hub != HUB_SPEED_HIGH)
 				continue;
-		break;
+			break;
 		}
 
 		if (vhci_driver->idev[i].status == VDEV_ST_NULL)
@@ -355,7 +349,7 @@ int usbip_vhci_get_free_port(uint32_t speed)
 }
 
 int usbip_vhci_attach_device2(uint8_t port, int sockfd, uint32_t devid,
-		uint32_t speed) {
+			      uint32_t speed) {
 	char buff[200]; /* what size should be ? */
 	char attach_attr_path[SYSFS_PATH_MAX];
 	char attr_attach[] = "attach";
@@ -363,7 +357,7 @@ int usbip_vhci_attach_device2(uint8_t port, int sockfd, uint32_t devid,
 	int ret;
 
 	snprintf(buff, sizeof(buff), "%u %d %u %u",
-			port, sockfd, devid, speed);
+		 port, sockfd, devid, speed);
 	dbg("writing: %s", buff);
 
 	path = udev_device_get_syspath(vhci_driver->hc_device);
