@@ -549,7 +549,7 @@ static irqreturn_t ath11k_pcic_ext_interrupt_handler(int irq, void *arg)
 	if (!test_bit(ATH11K_FLAG_EXT_IRQ_ENABLED, &ab->dev_flags))
 		return IRQ_HANDLED;
 
-	ath11k_dbg(irq_grp->ab, ATH11K_DBG_PCI, "ext irq %d\n", irq);
+//	ath11k_dbg(irq_grp->ab, ATH11K_DBG_PCI, "ext irq %d\n", irq);
 
 	/* last interrupt received for this group */
 	irq_grp->timestamp = jiffies;

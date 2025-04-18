@@ -1876,6 +1876,7 @@ static int ath11k_qmi_respond_fw_mem_request(struct ath11k_base *ab)
 	int ret = 0, i;
 	bool delayed;
 
+	pr_info("[debug] %s \n", __func__);
 	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
@@ -1890,11 +1891,13 @@ static int ath11k_qmi_respond_fw_mem_request(struct ath11k_base *ab)
 	if (!(ab->hw_params.fixed_mem_region ||
 	      test_bit(ATH11K_FLAG_FIXED_MEM_RGN, &ab->dev_flags)) &&
 	      ab->qmi.target_mem_delayed) {
+		pr_info("[debug] %s: delayed = true\n", __func__);
 		delayed = true;
 		ath11k_dbg(ab, ATH11K_DBG_QMI, "delays mem_request %d\n",
 			   ab->qmi.mem_seg_count);
 		memset(req, 0, sizeof(*req));
 	} else {
+		pr_info("[debug] %s: delayed = false mem_seg_count: %u\n", __func__, ab->qmi.mem_seg_count);
 		delayed = false;
 		req->mem_seg_len = ab->qmi.mem_seg_count;
 
@@ -1936,6 +1939,7 @@ static int ath11k_qmi_respond_fw_mem_request(struct ath11k_base *ab)
 	}
 
 	if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
+		pr_info("[debug] %s: expected error response\n", __func__);
 		/* the error response is expected when
 		 * target_mem_delayed is true.
 		 */
@@ -1956,17 +1960,23 @@ static void ath11k_qmi_free_target_mem_chunk(struct ath11k_base *ab)
 {
 	int i;
 
+	pr_info("\t[debug] %s %u\n", __func__, ab->qmi.mem_seg_count);
 	for (i = 0; i < ab->qmi.mem_seg_count; i++) {
-		if (!ab->qmi.target_mem[i].anyaddr)
+		pr_info("\t[debug] %s %u\n", __func__, i);
+
+		if (!ab->qmi.target_mem[i].anyaddr) {
+			pr_info("\t[debug] %s %u skip %x\n", __func__, ab->qmi.target_mem[i].prev_size, (unsigned int)ab->qmi.target_mem[i].vaddr);
 			continue;
+		}
 
 		if (ab->hw_params.fixed_mem_region ||
 		    test_bit(ATH11K_FLAG_FIXED_MEM_RGN, &ab->dev_flags)) {
 			iounmap(ab->qmi.target_mem[i].iaddr);
 			ab->qmi.target_mem[i].iaddr = NULL;
+			pr_info("\t[debug] %s %u skipp %x\n", __func__, ab->qmi.target_mem[i].prev_size, (unsigned int)ab->qmi.target_mem[i].vaddr);
 			continue;
 		}
-
+		pr_info("\t[debug] %s %u dma_free_coherent %x\n", __func__, ab->qmi.target_mem[i].prev_size, (unsigned int)ab->qmi.target_mem[i].vaddr);
 		dma_free_coherent(ab->dev,
 				  ab->qmi.target_mem[i].prev_size,
 				  ab->qmi.target_mem[i].vaddr,
@@ -1980,35 +1990,56 @@ static int ath11k_qmi_alloc_target_mem_chunk(struct ath11k_base *ab)
 	int i;
 	struct target_mem_chunk *chunk;
 
+	pr_info("\t[debug] %s %u target_mem_delayed: %d\n", __func__, ab->qmi.mem_seg_count, ab->qmi.target_mem_delayed);
 	ab->qmi.target_mem_delayed = false;
 
 	for (i = 0; i < ab->qmi.mem_seg_count; i++) {
 		chunk = &ab->qmi.target_mem[i];
 
+		pr_info("\t[debug] %s %u\n", __func__, i);
+
 		/* Firmware reloads in coldboot/firmware recovery.
 		 * in such case, no need to allocate memory for FW again.
 		 */
 		if (chunk->vaddr) {
+			pr_info("\t[debug] %s: reusable or not reuseable %x\n", __func__, (unsigned int)chunk->vaddr);
 			if (chunk->prev_type == chunk->type &&
-			    chunk->prev_size == chunk->size)
+			    chunk->prev_size == chunk->size) {
+				pr_info("\t[debug] %s %u reuse %u %u %u %x\n", __func__, chunk->size,
+					chunk->prev_type, chunk->type, chunk->prev_size, (unsigned int)ab->qmi.target_mem[i].vaddr);
 				continue;
+			} else if (ab->qmi.mem_seg_count <= ATH11K_QMI_FW_MEM_REQ_SEGMENT_CNT) {
+				ath11k_dbg(ab, ATH11K_DBG_QMI,
+					   "dma allocation failed (%d B type %u), will try later with small size\n",
+					    chunk->size,
+					    chunk->type);
+				pr_info("\t[debug] %s size didn't match. delay\n", __func__);
+				ab->qmi.target_mem_delayed = true;
+				return 0;
+			}
 
+			pr_info("\t[debug] %s %u cannot reuse %u %u %u %x\n", __func__, chunk->size,
+				chunk->prev_type, chunk->type, chunk->prev_size, (unsigned int)ab->qmi.target_mem[i].vaddr);
 			/* cannot reuse the existing chunk */
 			dma_free_coherent(ab->dev, chunk->prev_size,
 					  chunk->vaddr, chunk->paddr);
 			chunk->vaddr = NULL;
+		} else {
+			pr_info("\t[debug] %s: vaddr is null\n", __func__);
 		}
-
 		chunk->vaddr = dma_alloc_coherent(ab->dev,
 						  chunk->size,
 						  &chunk->paddr,
 						  GFP_KERNEL | __GFP_NOWARN);
+		pr_info("\t[debug] %s %u **dma_alloc_coherent** %u %x\n", __func__, chunk->size,
+			chunk->type, (unsigned int)chunk->vaddr);
 		if (!chunk->vaddr) {
 			if (ab->qmi.mem_seg_count <= ATH11K_QMI_FW_MEM_REQ_SEGMENT_CNT) {
 				ath11k_dbg(ab, ATH11K_DBG_QMI,
 					   "dma allocation failed (%d B type %u), will try later with small size\n",
 					    chunk->size,
 					    chunk->type);
+				pr_info("\t[debug] %s free and return\n", __func__);
 				ath11k_qmi_free_target_mem_chunk(ab);
 				ab->qmi.target_mem_delayed = true;
 				return 0;
@@ -2017,12 +2048,16 @@ static int ath11k_qmi_alloc_target_mem_chunk(struct ath11k_base *ab)
 			ath11k_err(ab, "failed to allocate dma memory for qmi (%d B type %u)\n",
 				   chunk->size,
 				   chunk->type);
+			pr_info("failed to allocate dma memory for qmi (%d B type %u)\n",
+				   chunk->size, chunk->type);
+			pr_info("\t[debug] %s failed returnnnnnnnnnn\n", __func__);
 			return -EINVAL;
 		}
 		chunk->prev_type = chunk->type;
 		chunk->prev_size = chunk->size;
 	}
 
+	pr_info("\t[debug] %s return\n", __func__);
 	return 0;
 }
 
@@ -2034,6 +2069,7 @@ static int ath11k_qmi_assign_target_mem_chunk(struct ath11k_base *ab)
 	u32 host_ddr_sz;
 	int i, idx, ret;
 
+	pr_info("\t[debug] %s\n", __func__);
 	for (i = 0, idx = 0; i < ab->qmi.mem_seg_count; i++) {
 		switch (ab->qmi.target_mem[i].type) {
 		case HOST_DDR_REGION_TYPE:
@@ -2927,6 +2963,7 @@ ath11k_qmi_driver_event_post(struct ath11k_qmi *qmi,
 {
 	struct ath11k_qmi_driver_event *event;
 
+	pr_info("[debug] %s: RUN event_work\n", __func__);
 	event = kzalloc(sizeof(*event), GFP_ATOMIC);
 	if (!event)
 		return -ENOMEM;
@@ -3027,6 +3064,7 @@ static void ath11k_qmi_msg_mem_request_cb(struct qmi_handle *qmi_hdl,
 	const struct qmi_wlanfw_request_mem_ind_msg_v01 *msg = data;
 	int i, ret;
 
+	pr_info("\n[debug] %s\n", __func__);
 	ath11k_dbg(ab, ATH11K_DBG_QMI, "firmware request memory request\n");
 
 	if (msg->mem_seg_len == 0 ||
@@ -3045,6 +3083,7 @@ static void ath11k_qmi_msg_mem_request_cb(struct qmi_handle *qmi_hdl,
 
 	if (ab->hw_params.fixed_mem_region ||
 	    test_bit(ATH11K_FLAG_FIXED_MEM_RGN, &ab->dev_flags)) {
+		pr_info("[debug] %s assign\n", __func__);
 		ret = ath11k_qmi_assign_target_mem_chunk(ab);
 		if (ret) {
 			ath11k_warn(ab, "failed to assign qmi target memory: %d\n",
@@ -3052,6 +3091,7 @@ static void ath11k_qmi_msg_mem_request_cb(struct qmi_handle *qmi_hdl,
 			return;
 		}
 	} else {
+		pr_info("[debug] %s alloc\n", __func__);
 		ret = ath11k_qmi_alloc_target_mem_chunk(ab);
 		if (ret) {
 			ath11k_warn(ab, "failed to allocate qmi target memory: %d\n",
@@ -3211,6 +3251,7 @@ static void ath11k_qmi_driver_event_work(struct work_struct *work)
 	struct ath11k_base *ab = qmi->ab;
 	int ret;
 
+	pr_info("[debug] %s -----------------\n", __func__);
 	spin_lock(&qmi->event_lock);
 	while (!list_empty(&qmi->event_list)) {
 		event = list_first_entry(&qmi->event_list,
@@ -3237,6 +3278,11 @@ static void ath11k_qmi_driver_event_work(struct work_struct *work)
 				ath11k_core_pre_reconfigure_recovery(ab);
 			break;
 		case ATH11K_QMI_EVENT_REQUEST_MEM:
+
+
+			pr_info("[debug] %s: ATH11K_QMI_EVENT_REQUEST_MEM\n", __func__);
+
+
 			ret = ath11k_qmi_event_mem_request(qmi);
 			if (ret < 0)
 				set_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags);
@@ -3349,6 +3395,8 @@ int ath11k_qmi_init_service(struct ath11k_base *ab)
 
 void ath11k_qmi_deinit_service(struct ath11k_base *ab)
 {
+	pr_info("[debug] %s\n", __func__);
+	dump_stack();
 	qmi_handle_release(&ab->qmi.handle);
 	cancel_work_sync(&ab->qmi.event_work);
 	destroy_workqueue(ab->qmi.event_wq);
@@ -3359,6 +3407,8 @@ EXPORT_SYMBOL(ath11k_qmi_deinit_service);
 
 void ath11k_qmi_free_resource(struct ath11k_base *ab)
 {
+	pr_info("[debug] %s\n", __func__);
+	dump_stack();
 	ath11k_qmi_free_target_mem_chunk(ab);
 	ath11k_qmi_m3_free(ab);
 }

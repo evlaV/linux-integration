@@ -105,9 +105,7 @@ static inline void ath11k_dbg_dump(struct ath11k_base *ab,
 
 #define ath11k_dbg(ar, dbg_mask, fmt, ...)			\
 do {								\
-	if ((ath11k_debug_mask & dbg_mask) ||			\
-	    trace_ath11k_log_dbg_enabled())			\
-		__ath11k_dbg(ar, dbg_mask, fmt, ##__VA_ARGS__);	\
+	__ath11k_dbg(ar, dbg_mask, fmt, ##__VA_ARGS__);		\
 } while (0)
-
+//pr_info(fmt, ##__VA_ARGS__)
 #endif /* _ATH11K_DEBUG_H_ */

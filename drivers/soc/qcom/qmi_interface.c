@@ -395,6 +395,7 @@ static void qmi_invoke_handler(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
 	void *dest;
 	int ret;
 
+	pr_info("[debug] %s\n", __func__);
 	if (!qmi->handlers)
 		return;
 
@@ -414,8 +415,10 @@ static void qmi_invoke_handler(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
 	ret = qmi_decode_message(buf, len, handler->ei, dest);
 	if (ret < 0)
 		pr_err("failed to decode incoming message\n");
-	else
+	else {
+		pr_info("[debug] invoking handler %d\n", handler->msg_id);
 		handler->fn(qmi, sq, txn, dest);
+	}
 
 	kfree(dest);
 }
@@ -478,6 +481,7 @@ static void qmi_handle_message(struct qmi_handle *qmi,
 	struct qmi_txn *txn = NULL;
 	int ret;
 
+	pr_info("[debug] %s\n", __func__);
 	if (len < sizeof(*hdr)) {
 		pr_err("ignoring short QMI packet\n");
 		return;
@@ -529,6 +533,7 @@ static void qmi_data_ready_work(struct work_struct *work)
 	struct kvec iv;
 	ssize_t msglen;
 
+	pr_info("[debug] %s +++++++++++++\n", __func__);
 	for (;;) {
 		iv.iov_base = qmi->recv_buf;
 		iv.iov_len = qmi->recv_buf_size;
@@ -570,6 +575,7 @@ static void qmi_data_ready(struct sock *sk)
 {
 	struct qmi_handle *qmi = sk->sk_user_data;
 
+	pr_info("[debug] %s RUN QMI WORK\n", __func__);
 	trace_sk_data_ready(sk);
 
 	/*
@@ -624,6 +630,7 @@ int qmi_handle_init(struct qmi_handle *qmi, size_t recv_buf_size,
 {
 	int ret;
 
+	pr_info("[debug] %s: \n", __func__);
 	mutex_init(&qmi->txn_lock);
 	mutex_init(&qmi->sock_lock);
 

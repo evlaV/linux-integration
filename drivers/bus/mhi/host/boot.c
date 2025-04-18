@@ -584,7 +584,10 @@ skip_req_fw:
 	 * device transitioning into MHI READY state
 	 */
 	if (fw_load_type == MHI_FW_LOAD_FBC) {
+		pr_info("%s firmware %s\n", __func__, fw_name);
 		if (mhi_cntrl->fbc_image && fw_sz != mhi_cntrl->prev_fw_sz) {
+			pr_info("%s Firmware changed, new: %u prev: %u\n",
+				__func__, fw_sz, mhi_cntrl->prev_fw_sz);
 			mhi_free_bhie_table(mhi_cntrl, mhi_cntrl->fbc_image);
 			mhi_cntrl->fbc_image = NULL;
 		}
