@@ -32,7 +32,8 @@ static bool early_console_keep;
 #ifdef XDBC_TRACE
 #define	xdbc_trace	trace_printk
 #else
-static inline void xdbc_trace(const char *fmt, ...) { }
+//static inline void xdbc_trace(const char *fmt, ...) { }
+#define xdbc_trace(fmt, ...) pr_info("%s(): BOB_DEBUG: " fmt, __func__, ##__VA_ARGS__)
 #endif /* XDBC_TRACE */
 
 static void __iomem * __init xdbc_map_pci_mmio(u32 bus, u32 dev, u32 func)
@@ -56,6 +57,9 @@ static void __iomem * __init xdbc_map_pci_mmio(u32 bus, u32 dev, u32 func)
 	sz64	= sz & PCI_BASE_ADDRESS_MEM_MASK;
 	mask64	= PCI_BASE_ADDRESS_MEM_MASK;
 
+	pr_info("%s(): BOB_DEBUG: val64=0x%llx sz64=0x%llx mask64=0x%llx\n",
+		__func__, val64, sz64, mask64);
+
 	if ((val & PCI_BASE_ADDRESS_MEM_TYPE_MASK) == PCI_BASE_ADDRESS_MEM_TYPE_64) {
 		val = read_pci_config(bus, dev, func, PCI_BASE_ADDRESS_0 + 4);
 		write_pci_config(bus, dev, func, PCI_BASE_ADDRESS_0 + 4, ~0);
@@ -65,6 +69,8 @@ static void __iomem * __init xdbc_map_pci_mmio(u32 bus, u32 dev, u32 func)
 		val64	|= (u64)val << 32;
 		sz64	|= (u64)sz << 32;
 		mask64	|= ~0ULL << 32;
+		pr_info("%s(): BOB_DEBUG: Type64: val64=0x%llx sz64=0x%llx mask64=0x%llx\n",
+			__func__, val64, sz64, mask64);
 	}
 
 	sz64 &= mask64;
@@ -83,8 +89,11 @@ static void __iomem * __init xdbc_map_pci_mmio(u32 bus, u32 dev, u32 func)
 		write_pci_config_byte(bus, dev, func, PCI_COMMAND, byte);
 	}
 
+	/* DEBUG: limit to 1 page */
+	sz64 = PAGE_SIZE;
 	xdbc.xhci_start = val64;
 	xdbc.xhci_length = sz64;
+	pr_info("%s(): BOB_DEBUG: early_ioremap(0x%llx, 0x%llx)", __func__, val64, sz64);
 	base = early_ioremap(val64, sz64);
 
 	return base;
@@ -634,6 +643,11 @@ int __init early_xdbc_parse_parameter(char *s, int keep_early)
 	xdbc.dev	= dev;
 	xdbc.func	= func;
 
+	/*
+		BOB_DEBUG: TODO: map first page only to read extended capability registers
+		and find teh XHCI_EXT_CAPS_DEBUG register. 
+		Confirm that extended caps space is only 4096 bytes. 
+	 */
 	/* Map the IO memory: */
 	xdbc.xhci_base = xdbc_map_pci_mmio(bus, dev, func);
 	if (!xdbc.xhci_base)
@@ -649,6 +663,7 @@ int __init early_xdbc_parse_parameter(char *s, int keep_early)
 
 		return -ENODEV;
 	}
+	pr_notice("%s(): BOB_DEBUG: xdbg_reg=0x%x\n", __func__, offset);
 	xdbc.xdbc_reg = (struct xdbc_regs __iomem *)(xdbc.xhci_base + offset);
 
 	return 0;
@@ -963,7 +978,7 @@ static int __init xdbc_init(void)
 	u32 offset;
 
 	if (!(xdbc.flags & XDBC_FLAGS_INITIALIZED))
-		return 0;
+		goto unmap_and_quit;
 
 	/*
 	 * It's time to shut down the DbC, so that the debug
@@ -1000,6 +1015,7 @@ free_and_quit:
 	memblock_phys_free(xdbc.table_dma, PAGE_SIZE);
 	memblock_phys_free(xdbc.out_dma, PAGE_SIZE);
 	writel(0, &xdbc.xdbc_reg->control);
+unmap_and_quit:
 	early_iounmap(xdbc.xhci_base, xdbc.xhci_length);
 
 	return ret;

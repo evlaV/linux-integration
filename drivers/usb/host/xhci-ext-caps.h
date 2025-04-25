@@ -146,6 +146,8 @@ static inline int xhci_find_next_ext_cap(void __iomem *base, u32 start, int id)
 
 		next = XHCI_EXT_CAPS_NEXT(val);
 		offset += next << 2;
+		if (offset >= PAGE_SIZE)
+			break;
 	} while (next);
 
 	return 0;
