@@ -115,11 +115,9 @@ done:
 	return ret;
 }
 
-static int usbip_version(int argc, char *argv[])
+static int usbip_version(__attribute__((unused)) int argc,
+			 __attribute__((unused)) char *argv[])
 {
-	(void) argc;
-	(void) argv;
-
 	printf(PROGNAME " (%s)\n", usbip_version_string);
 	return 0;
 }
