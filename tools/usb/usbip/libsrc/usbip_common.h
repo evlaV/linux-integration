@@ -19,14 +19,14 @@
 #include <linux/usbip.h>
 
 #ifndef USBIDS_FILE
-#define USBIDS_FILE "/usr/share/hwdata/usb.ids"
+#define USBIDS_FILE		"/usr/share/hwdata/usb.ids"
 #endif
 
 #ifndef VHCI_STATE_PATH
-#define VHCI_STATE_PATH "/var/run/vhci_hcd"
+#define VHCI_STATE_PATH		"/var/run/vhci_hcd"
 #endif
 
-#define VUDC_DEVICE_DESCR_FILE "dev_desc"
+#define VUDC_DEVICE_DESCR_FILE	"dev_desc"
 
 /* kernel module names */
 #define USBIP_CORE_MOD_NAME	"usbip-core"
@@ -35,33 +35,33 @@
 #define USBIP_VHCI_DRV_NAME	"vhci_hcd"
 
 /* sysfs constants */
-#define SYSFS_MNT_PATH         "/sys"
-#define SYSFS_BUS_NAME         "bus"
-#define SYSFS_BUS_TYPE         "usb"
-#define SYSFS_DRIVERS_NAME     "drivers"
+#define SYSFS_MNT_PATH		"/sys"
+#define SYSFS_BUS_NAME		"bus"
+#define SYSFS_BUS_TYPE		"usb"
+#define SYSFS_DRIVERS_NAME	"drivers"
 
 #define SYSFS_PATH_MAX		256
 #define SYSFS_BUS_ID_SIZE	32
 
 /* Defines for op_code status in server/client op_common PDUs */
-#define ST_OK	0x00
-#define ST_NA	0x01
+#define ST_OK			0x00
+#define ST_NA			0x01
 	/* Device requested for import is not available */
-#define ST_DEV_BUSY	0x02
+#define ST_DEV_BUSY		0x02
 	/* Device requested for import is in error state */
-#define ST_DEV_ERR	0x03
-#define ST_NODEV	0x04
-#define ST_ERROR	0x05
+#define ST_DEV_ERR		0x03
+#define ST_NODEV		0x04
+#define ST_ERROR		0x05
 
 extern int usbip_use_syslog;
 extern int usbip_use_stderr;
 extern int usbip_use_debug ;
 
-#define PROGNAME "usbip"
+#define PROGNAME		"usbip"
 
-#define pr_fmt(fmt)	"%s: %s: " fmt "\n", PROGNAME
-#define dbg_fmt(fmt)	pr_fmt("%s:%d:[%s] " fmt), "debug",	\
-		        __FILE__, __LINE__, __func__
+#define pr_fmt(fmt)		"%s: %s: " fmt "\n", PROGNAME
+#define dbg_fmt(fmt)		pr_fmt("%s:%d:[%s] " fmt), "debug",	\
+				       __FILE__, __LINE__, __func__
 
 #define err(fmt, args...)						\
 	do {								\
