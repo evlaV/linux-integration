@@ -4,6 +4,8 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
+#define DBG_MOD_MASK DBG_MOD_USBIP_NET
+
 #include <sys/socket.h>
 
 #include <string.h>

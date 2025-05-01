@@ -9,6 +9,8 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
+#define DBG_MOD_MASK DBG_MOD_USBIP_HCOMMON
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>

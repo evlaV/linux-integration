@@ -57,6 +57,21 @@ extern int usbip_use_syslog;
 extern int usbip_use_stderr;
 extern int usbip_use_debug ;
 
+/* Debug modules selection bits */
+#define DBG_MOD_NAMES		0x01
+#define DBG_MOD_USBIP_COMMON	0x02
+#define DBG_MOD_USBIP_HCOMMON	0x04
+#define DBG_MOD_USBIP_NET	0x08
+#define DBG_MOD_VHCI_DRIVER	0x10
+
+/* Debug modules masks */
+#define DBG_MOD_ALL		0xff
+
+/* Default module debug mask */
+#ifndef DBG_MOD_MASK
+#define DBG_MOD_MASK		DBG_MOD_ALL
+#endif
+
 #define PROGNAME		"usbip"
 
 #define pr_fmt(fmt)		"%s: %s: " fmt "\n", PROGNAME
@@ -85,7 +100,7 @@ extern int usbip_use_debug ;
 
 #define dbg(fmt, args...)						\
 	do {								\
-	if (usbip_use_debug) {						\
+	if (usbip_use_debug & DBG_MOD_MASK) {				\
 		if (usbip_use_syslog) {					\
 			syslog(LOG_DEBUG, dbg_fmt(fmt), ##args);	\
 		}							\
@@ -148,5 +163,7 @@ void usbip_names_get_product(char *buff, size_t size, uint16_t vendor,
 			     uint16_t product);
 void usbip_names_get_class(char *buff, size_t size, uint8_t class,
 			   uint8_t subclass, uint8_t protocol);
+
+void usbip_setup_dbg_mod_mask(const char *arg);
 
 #endif /* __USBIP_COMMON_H */

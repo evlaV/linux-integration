@@ -65,8 +65,9 @@ static const char usbipd_help_string[] =
 	"	-D, --daemon\n"
 	"		Run as a daemon process.\n"
 	"\n"
-	"	-d, --debug\n"
-	"		Print debugging information.\n"
+	"	-d[MOD_MASK], --debug[=MOD_MASK]\n"
+	"		Print debugging information for selected modules.\n"
+	"		If no MOD_MASK specified, select all.\n"
 	"\n"
 	"	-PFILE, --pid=FILE\n"
 	"		Write process id to FILE.\n"
@@ -589,7 +590,7 @@ int main(int argc, char *argv[])
 		{ "ipv4",     no_argument,       NULL, '4' },
 		{ "ipv6",     no_argument,       NULL, '6' },
 		{ "daemon",   no_argument,       NULL, 'D' },
-		{ "debug",    no_argument,       NULL, 'd' },
+		{ "debug",    optional_argument, NULL, 'd' },
 		{ "device",   no_argument,       NULL, 'e' },
 		{ "pid",      optional_argument, NULL, 'P' },
 		{ "tcp-port", required_argument, NULL, 't' },
@@ -619,7 +620,7 @@ int main(int argc, char *argv[])
 	cmd = cmd_standalone_mode;
 	driver = &host_driver;
 	for (;;) {
-		opt = getopt_long(argc, argv, "46DdeP::t:hv", longopts, NULL);
+		opt = getopt_long(argc, argv, "46Dd::eP::t:hv", longopts, NULL);
 
 		if (opt == -1)
 			break;
@@ -635,7 +636,7 @@ int main(int argc, char *argv[])
 			daemonize = 1;
 			break;
 		case 'd':
-			usbip_use_debug = 1;
+			usbip_setup_dbg_mod_mask(optarg);
 			break;
 		case 'h':
 			cmd = cmd_help;

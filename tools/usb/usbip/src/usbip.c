@@ -23,7 +23,7 @@ static int usbip_version(int argc, char *argv[]);
 static const char usbip_version_string[] = PACKAGE_STRING;
 
 static const char usbip_usage_string[] =
-	"usbip [--debug] [--log] [--tcp-port=PORT] [version]\n"
+	"usbip [--debug[=MOD_MASK]] [--log] [--tcp-port=PORT] [version]\n"
 	"             [help] <command> <args>\n";
 
 static void usbip_usage(void)
@@ -131,7 +131,7 @@ static int run_command(const struct command *cmd, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	static const struct option opts[] = {
-		{ "debug",    no_argument,       NULL, 'd' },
+		{ "debug",    optional_argument, NULL, 'd' },
 		{ "log",      no_argument,       NULL, 'l' },
 		{ "tcp-port", required_argument, NULL, 't' },
 		{ NULL,       0,                 NULL,  0  }
@@ -144,14 +144,14 @@ int main(int argc, char *argv[])
 	usbip_use_stderr = 1;
 	opterr = 0;
 	for (;;) {
-		opt = getopt_long(argc, argv, "+dlt:", opts, NULL);
+		opt = getopt_long(argc, argv, "+d::lt:", opts, NULL);
 
 		if (opt == -1)
 			break;
 
 		switch (opt) {
 		case 'd':
-			usbip_use_debug = 1;
+			usbip_setup_dbg_mod_mask(optarg);
 			break;
 		case 'l':
 			usbip_use_syslog = 1;

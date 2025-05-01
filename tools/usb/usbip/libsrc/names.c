@@ -8,6 +8,8 @@
  *		- names_deinit() is added.
  */
 
+#define DBG_MOD_MASK DBG_MOD_NAMES
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>

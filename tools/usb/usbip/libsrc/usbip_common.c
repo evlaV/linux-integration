@@ -3,6 +3,8 @@
  * Copyright (C) 2005-2007 Takahiro Hirofuchi
  */
 
+#define DBG_MOD_MASK DBG_MOD_USBIP_COMMON
+
 #include <libudev.h>
 #include "usbip_common.h"
 #include "names.h"
@@ -315,4 +317,38 @@ void usbip_names_get_class(char *buff, size_t size, uint8_t class,
 		c = "unknown class";
 
 	snprintf(buff, size, "%s / %s / %s (%02x/%02x/%02x)", c, s, p, class, subclass, protocol);
+}
+
+void usbip_setup_dbg_mod_mask(const char *arg)
+{
+	unsigned long int mod_mask;
+	char *end;
+
+	usbip_use_debug = DBG_MOD_ALL;
+	dbg("debug mask defaults to 0x%x", usbip_use_debug);
+
+	if (!arg)
+		return;
+
+	mod_mask = strtoul(arg, &end, 0);
+
+	if (end == arg) {
+		err("dbg_mod_mask: could not parse '%s'", arg);
+		return;
+	}
+
+	if (*end != '\0') {
+		err("dbg_mod_mask: garbage at end of '%s'", arg);
+		return;
+	}
+
+	if (mod_mask > UINT8_MAX) {
+		err("dbg_mod_mask: 0x%lx is too high (max=0x%x)", mod_mask, UINT8_MAX);
+		return;
+	}
+
+	if (usbip_use_debug != (int) mod_mask) {
+		dbg("debug mask adjusted to 0x%lx", mod_mask);
+		usbip_use_debug = mod_mask;
+	}
 }

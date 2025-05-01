@@ -3,6 +3,8 @@
  * Copyright (C) 2005-2007 Takahiro Hirofuchi
  */
 
+#define DBG_MOD_MASK DBG_MOD_VHCI_DRIVER
+
 #include "usbip_common.h"
 #include "vhci_driver.h"
 #include <limits.h>
