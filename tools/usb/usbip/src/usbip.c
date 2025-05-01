@@ -23,7 +23,7 @@ static int usbip_version(int argc, char *argv[]);
 static const char usbip_version_string[] = PACKAGE_STRING;
 
 static const char usbip_usage_string[] =
-	"usbip [--debug] [--log] [--tcp-port PORT] [version]\n"
+	"usbip [--debug] [--log] [--tcp-port=PORT] [version]\n"
 	"             [help] <command> <args>\n";
 
 static void usbip_usage(void)
