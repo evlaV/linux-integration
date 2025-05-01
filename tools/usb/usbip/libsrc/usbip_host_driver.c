@@ -7,11 +7,10 @@
  *               Krzysztof Opasiak <k.opasiak@samsung.com>
  */
 
-#include <unistd.h>
-#include <libudev.h>
-
-#include "usbip_host_common.h"
 #include "usbip_host_driver.h"
+
+#include <libudev.h>
+#include <string.h>
 
 #undef  PROGNAME
 #define PROGNAME "libusbip"

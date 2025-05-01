@@ -6,21 +6,17 @@
 
 #define DBG_MOD_MASK DBG_MOD_USBIP_NET
 
-#include <sys/socket.h>
+#include "usbip_network.h"
 
-#include <string.h>
-
-#include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #ifdef HAVE_LIBWRAP
 #include <tcpd.h>
 #endif
-
-#include "usbip_common.h"
-#include "usbip_network.h"
 
 int usbip_port = 3240;
 char *usbip_port_string = "3240";

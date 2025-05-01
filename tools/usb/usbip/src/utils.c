@@ -4,13 +4,13 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-
-#include "usbip_common.h"
 #include "utils.h"
+
 #include "sysfs_utils.h"
+#include "usbip_common.h"
+
+#include <errno.h>
+#include <string.h>
 
 int modify_match_busid(char *busid, int add)
 {

@@ -9,14 +9,11 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
-#include <fcntl.h>
-#include <string.h>
-#include <linux/usb/ch9.h>
-
-#include <unistd.h>
-
-#include "usbip_host_common.h"
 #include "usbip_device_driver.h"
+
+#include <libudev.h>
+#include <linux/usb/ch9.h>
+#include <string.h>
 
 #undef  PROGNAME
 #define PROGNAME "libusbip"

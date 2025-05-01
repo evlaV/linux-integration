@@ -4,18 +4,14 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
-#include <libudev.h>
-
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-
-#include <getopt.h>
-
+#include "sysfs_utils.h"
+#include "usbip.h"
 #include "usbip_common.h"
 #include "utils.h"
-#include "usbip.h"
-#include "sysfs_utils.h"
+
+#include <getopt.h>
+#include <libudev.h>
+#include <string.h>
 
 static const char usbip_unbind_usage_string[] =
 	"usbip unbind <args>\n"

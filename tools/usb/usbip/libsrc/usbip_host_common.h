@@ -12,12 +12,10 @@
 #ifndef __USBIP_HOST_COMMON_H
 #define __USBIP_HOST_COMMON_H
 
-#include <stdint.h>
-#include <libudev.h>
+#include "usbip_common.h"
+
 #include <errno.h>
 #include "list.h"
-#include "usbip_common.h"
-#include "sysfs_utils.h"
 
 struct usbip_host_driver;
 

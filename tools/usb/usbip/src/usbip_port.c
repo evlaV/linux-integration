@@ -4,8 +4,8 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
+#include "usbip.h"
 #include "vhci_driver.h"
-#include "usbip_common.h"
 
 static int list_imported_devices(void)
 {

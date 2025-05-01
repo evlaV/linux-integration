@@ -10,19 +10,14 @@
 
 #define DBG_MOD_MASK DBG_MOD_NAMES
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <dirent.h>
-#include <string.h>
+#include "names.h"
+
+#include "usbip_common.h"
+
+#include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <ctype.h>
-
-#include "names.h"
-#include "usbip_common.h"
+#include <string.h>
 
 struct vendor {
 	struct vendor *next;

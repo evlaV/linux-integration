@@ -7,15 +7,14 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <getopt.h>
-#include <syslog.h>
+#include "usbip.h"
 
 #include "usbip_common.h"
 #include "usbip_network.h"
-#include "usbip.h"
+
+#include <getopt.h>
+#include <stdlib.h>
+#include <string.h>
 
 static int usbip_help(int argc, char *argv[]);
 static int usbip_version(int argc, char *argv[]);

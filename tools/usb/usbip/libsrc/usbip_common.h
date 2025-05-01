@@ -6,17 +6,9 @@
 #ifndef __USBIP_COMMON_H
 #define __USBIP_COMMON_H
 
-#include <libudev.h>
-
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include <syslog.h>
-#include <unistd.h>
-#include <linux/usb/ch9.h>
-#include <linux/usbip.h>
 
 #ifndef USBIDS_FILE
 #define USBIDS_FILE		"/usr/share/hwdata/usb.ids"
@@ -144,6 +136,8 @@ struct usbip_usb_device {
 } __attribute__((packed));
 
 #define to_string(s)	#s
+
+struct udev_device;
 
 void dump_usb_interface(struct usbip_usb_interface *);
 void dump_usb_device(struct usbip_usb_device *);

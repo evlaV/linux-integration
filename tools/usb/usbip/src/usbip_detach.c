@@ -4,20 +4,16 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
+#include "usbip.h"
+#include "vhci_driver.h"
+
 #include <ctype.h>
+#include <getopt.h>
 #include <limits.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <linux/usbip.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <getopt.h>
 #include <unistd.h>
-
-#include "vhci_driver.h"
-#include "usbip_common.h"
-#include "usbip_network.h"
-#include "usbip.h"
 
 static const char usbip_detach_usage_string[] =
 	"usbip detach <args>\n"

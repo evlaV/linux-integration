@@ -4,19 +4,15 @@
  *               2005-2007 Takahiro Hirofuchi
  */
 
-#include <libudev.h>
-
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <getopt.h>
-
+#include "sysfs_utils.h"
+#include "usbip.h"
 #include "usbip_common.h"
 #include "utils.h"
-#include "usbip.h"
-#include "sysfs_utils.h"
+
+#include <errno.h>
+#include <getopt.h>
+#include <libudev.h>
+#include <string.h>
 
 enum unbind_status {
 	UNBIND_ST_OK,

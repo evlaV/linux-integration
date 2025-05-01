@@ -11,19 +11,16 @@
 
 #define DBG_MOD_MASK DBG_MOD_USBIP_HCOMMON
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-
-#include <errno.h>
-#include <unistd.h>
-
-#include <libudev.h>
-
-#include "usbip_common.h"
 #include "usbip_host_common.h"
-#include "list.h"
+
 #include "sysfs_utils.h"
+
+#include <fcntl.h>
+#include <libudev.h>
+#include <linux/usbip.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 extern struct udev *udev_context;
 

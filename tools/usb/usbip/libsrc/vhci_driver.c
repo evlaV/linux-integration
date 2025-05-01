@@ -5,13 +5,17 @@
 
 #define DBG_MOD_MASK DBG_MOD_VHCI_DRIVER
 
-#include "usbip_common.h"
 #include "vhci_driver.h"
-#include <limits.h>
-#include <netdb.h>
-#include <libudev.h>
-#include <dirent.h>
+
 #include "sysfs_utils.h"
+
+#include <dirent.h>
+#include <libudev.h>
+#include <linux/usbip.h>
+#include <linux/usb/ch9.h>
+#include <netdb.h>
+#include <stdlib.h>
+#include <string.h>
 
 #undef  PROGNAME
 #define PROGNAME "libusbip"

@@ -7,22 +7,17 @@
  *               Krzysztof Opasiak <k.opasiak@samsung.com>
  */
 
-#include <sys/stat.h>
+#include "usbip.h"
+#include "usbip_network.h"
+#include "vhci_driver.h"
 
-#include <limits.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
-#include <errno.h>
-
-#include "vhci_driver.h"
-#include "usbip_common.h"
-#include "usbip_network.h"
-#include "usbip.h"
 
 static const char usbip_attach_usage_string[] =
 	"usbip attach <args>\n"

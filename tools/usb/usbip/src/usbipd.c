@@ -12,31 +12,23 @@
 #endif
 
 #define _GNU_SOURCE
-#include <errno.h>
-#include <unistd.h>
+
+#include "usbip_device_driver.h"
+#include "usbip_host_driver.h"
+#include "usbip_network.h"
+
+#include <getopt.h>
+#include <linux/usbip.h>
 #include <netdb.h>
-#include <string.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdlib.h>
-#include <sys/types.h>
+#include <string.h>
 #include <sys/stat.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 
 #ifdef HAVE_LIBWRAP
 #include <tcpd.h>
 #endif
-
-#include <getopt.h>
-#include <signal.h>
-#include <poll.h>
-
-#include "usbip_host_driver.h"
-#include "usbip_host_common.h"
-#include "usbip_device_driver.h"
-#include "usbip_common.h"
-#include "usbip_network.h"
-#include "list.h"
 
 #undef  PROGNAME
 #define PROGNAME "usbipd"

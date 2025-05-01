@@ -6,9 +6,6 @@
 #ifndef __VHCI_DRIVER_H
 #define __VHCI_DRIVER_H
 
-#include <libudev.h>
-#include <stdint.h>
-
 #include "usbip_common.h"
 
 #define USBIP_VHCI_BUS_TYPE "platform"

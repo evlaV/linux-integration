@@ -5,9 +5,15 @@
 
 #define DBG_MOD_MASK DBG_MOD_USBIP_COMMON
 
-#include <libudev.h>
 #include "usbip_common.h"
+
 #include "names.h"
+
+#include <libudev.h>
+#include <linux/usbip.h>
+#include <linux/usb/ch9.h>
+#include <stdlib.h>
+#include <string.h>
 
 #undef  PROGNAME
 #define PROGNAME "libusbip"

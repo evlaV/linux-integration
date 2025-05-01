@@ -7,27 +7,18 @@
  *               Krzysztof Opasiak <k.opasiak@samsung.com>
  */
 
-#include <sys/types.h>
-#include <libudev.h>
+#include "usbip.h"
+#include "usbip_network.h"
 
 #include <errno.h>
+#include <getopt.h>
+#include <libudev.h>
+#include <linux/usb/ch9.h>
+#include <netdb.h>
 #include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <getopt.h>
-#include <netdb.h>
 #include <unistd.h>
-
-#include <dirent.h>
-
-#include <linux/usb/ch9.h>
-
-#include "usbip_common.h"
-#include "usbip_network.h"
-#include "usbip.h"
 
 static const char usbip_list_usage_string[] =
 	"usbip list [-p|--parsable] <args>\n"

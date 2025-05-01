@@ -10,9 +10,10 @@
 #include "../config.h"
 #endif
 
-#include <sys/types.h>
+#include "usbip_common.h"
 
 #include <stdint.h>
+#include <sys/types.h>
 
 extern int usbip_port;
 extern char *usbip_port_string;
