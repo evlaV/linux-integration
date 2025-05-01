@@ -332,7 +332,7 @@ static int do_accept(int listenfd)
 	return connfd;
 }
 
-int process_request(int listenfd)
+static int process_request(int listenfd)
 {
 	pid_t childpid;
 	int connfd;
