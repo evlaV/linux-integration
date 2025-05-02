@@ -435,17 +435,21 @@ int usbip_vhci_imported_device_dump(struct usbip_imported_device *idev)
 	char serv[NI_MAXSERV] = "unknown port";
 	char remote_busid[SYSFS_BUS_ID_SIZE];
 	int ret;
-	int read_record_error = 0;
-
-	if (idev->status == VDEV_ST_NULL || idev->status == VDEV_ST_NOTASSIGNED)
-		return 0;
 
 	ret = read_record(idev->port, host, sizeof(host), serv, sizeof(serv),
 			  remote_busid);
-	if (ret) {
-		err("read_record");
-		read_record_error = 1;
+
+	if (idev->status == VDEV_ST_NULL || idev->status == VDEV_ST_NOTASSIGNED) {
+		if (!ret) {
+			printf("Port %02d: disconnected\n", idev->port);
+			printf("%10s -> usbip://%s:%s/%s\n", "Previous",
+			       host, serv, remote_busid);
+		}
+		return 0;
 	}
+
+	if (ret)
+		err("%srecord", ret > 0 ? "missing " : "read_");
 
 	printf("Port %02d: <%s> at %s\n", idev->port,
 	       usbip_status_string(idev->status),
@@ -456,7 +460,7 @@ int usbip_vhci_imported_device_dump(struct usbip_imported_device *idev)
 
 	printf("       %s\n",  product_name);
 
-	if (!read_record_error) {
+	if (!ret) {
 		printf("%10s -> usbip://%s:%s/%s\n", idev->udev.busid,
 		       host, serv, remote_busid);
 		printf("%10s -> remote bus/dev %03d/%03d\n", " ",
