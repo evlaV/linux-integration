@@ -177,6 +177,8 @@ static int get_ncontrollers(void)
 	return n;
 }
 
+/* ---------------------------------------------------------------------- */
+
 /*
  * Read the given port's record.
  *
@@ -186,8 +188,8 @@ static int get_ncontrollers(void)
  * which is needed to properly validate the 3rd part without it being
  * truncated to an acceptable length.
  */
-static int read_record(int rhport, char *host, unsigned long host_len,
-		       char *port, unsigned long port_len, char *busid)
+int usbip_vhci_read_record(int rhport, char *host, unsigned long host_len,
+			   char *port, unsigned long port_len, char *busid)
 {
 	int part;
 	FILE *file;
@@ -243,8 +245,6 @@ static int read_record(int rhport, char *host, unsigned long host_len,
 
 	return 0;
 }
-
-/* ---------------------------------------------------------------------- */
 
 int usbip_vhci_driver_open(void)
 {
@@ -436,8 +436,8 @@ int usbip_vhci_imported_device_dump(struct usbip_imported_device *idev)
 	char remote_busid[SYSFS_BUS_ID_SIZE];
 	int ret;
 
-	ret = read_record(idev->port, host, sizeof(host), serv, sizeof(serv),
-			  remote_busid);
+	ret = usbip_vhci_read_record(idev->port, host, sizeof(host),
+				     serv, sizeof(serv), remote_busid);
 
 	if (idev->status == VDEV_ST_NULL || idev->status == VDEV_ST_NOTASSIGNED) {
 		if (!ret) {

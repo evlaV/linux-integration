@@ -58,7 +58,10 @@ static int detach_port(char *port)
 			found = 1;
 			if (idev->status != VDEV_ST_NULL)
 				break;
+
 			info("Port %d is already detached!\n", idev->port);
+			//TODO: remove dangling file, i.e. when port gets detached by a remote
+			//event (on the host system)
 			goto call_driver_close;
 		}
 	}
@@ -71,6 +74,7 @@ static int detach_port(char *port)
 	}
 
 	/* remove the port state file */
+	//TODO: remove port state only after successfull vhci_detach
 	snprintf(path, PATH_MAX, VHCI_STATE_PATH"/port%d", portnum);
 
 	remove(path);

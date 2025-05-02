@@ -57,6 +57,12 @@ static const struct command cmds[] = {
 		.usage = usbip_attach_usage
 	},
 	{
+		.name  = "reattach",
+		.fn    = usbip_reattach,
+		.help  = "Re-attach a remote USB device",
+		.usage = usbip_reattach_usage
+	},
+	{
 		.name  = "detach",
 		.fn    = usbip_detach,
 		.help  = "Detach a remote USB device",
