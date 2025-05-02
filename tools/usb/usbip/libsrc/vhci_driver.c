@@ -10,6 +10,7 @@
 #include "sysfs_utils.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <libudev.h>
 #include <linux/usbip.h>
 #include <linux/usb/ch9.h>
@@ -186,11 +187,11 @@ static int get_ncontrollers(void)
  * truncated to an acceptable length.
  */
 static int read_record(int rhport, char *host, unsigned long host_len,
-		char *port, unsigned long port_len, char *busid)
+		       char *port, unsigned long port_len, char *busid)
 {
 	int part;
 	FILE *file;
-	char path[PATH_MAX+1];
+	char path[PATH_MAX + 1];
 	char *buffer, *start, *end;
 	char delim[] = {' ', ' ', '\n'};
 	int max_len[] = {(int)host_len, (int)port_len, SYSFS_BUS_ID_SIZE};
@@ -204,7 +205,10 @@ static int read_record(int rhport, char *host, unsigned long host_len,
 
 	file = fopen(path, "r");
 	if (!file) {
-		err("fopen");
+		if (errno == ENOENT)
+			return 1;
+
+		err("fopen: %s", strerror(errno));
 		free(buffer);
 		return -1;
 	}
@@ -228,8 +232,9 @@ static int read_record(int rhport, char *host, unsigned long host_len,
 		start = end + 1;
 	}
 
-	if (sscanf(buffer, "%s %s %s\n", host, port, busid) != 3) {
-		err("sscanf");
+	part = sscanf(buffer, "%s %s %s\n", host, port, busid);
+	if (part != 3) {
+		err("sscanf: unexpected ret %d", part);
 		free(buffer);
 		return -1;
 	}
