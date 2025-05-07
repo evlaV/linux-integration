@@ -860,11 +860,11 @@ void init_timer_on_stack_key(struct timer_list *timer,
 }
 EXPORT_SYMBOL_GPL(init_timer_on_stack_key);
 
-void destroy_timer_on_stack(struct timer_list *timer)
+void timer_destroy_on_stack(struct timer_list *timer)
 {
 	debug_object_free(timer, &timer_debug_descr);
 }
-EXPORT_SYMBOL_GPL(destroy_timer_on_stack);
+EXPORT_SYMBOL_GPL(timer_destroy_on_stack);
 
 #else
 static inline void debug_timer_init(struct timer_list *timer) { }
