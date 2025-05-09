@@ -3374,6 +3374,48 @@ static void apply_delay_after_dpcd_poweroff(struct amdgpu_device *adev,
 	}
 }
 
+static void do_stupid_retrigger(struct drm_device *ddev)
+{
+	struct amdgpu_device *adev = drm_to_adev(ddev);
+	struct amdgpu_dm_connector *aconnector;
+	struct dm_connector_state *dm_con_state;
+	struct drm_connector *connector;
+	struct drm_connector_list_iter iter;
+	int ret;
+
+	drm_connector_list_iter_begin(ddev, &iter);
+	drm_for_each_connector_iter(connector, &iter) {
+		aconnector = to_amdgpu_dm_connector(connector);
+		dm_con_state = connector->state ? to_dm_connector_state(connector->state) : NULL;
+
+		if (connector->connector_type != DRM_MODE_CONNECTOR_DisplayPort ||
+		    !dm_con_state || !dm_con_state->freesync_capable ||
+		    aconnector->mst_root)
+			continue;
+
+		mutex_lock(&aconnector->hpd_lock);
+
+		mutex_lock(&adev->dm.dc_lock);
+		ret = dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD);
+		mutex_unlock(&adev->dm.dc_lock);
+
+		if (!ret) {
+			mutex_unlock(&aconnector->hpd_lock);
+			continue;
+		}
+
+		amdgpu_dm_update_connector_after_detect(aconnector);
+
+		drm_modeset_lock_all(ddev);
+		dm_restore_drm_connector_state(ddev, connector);
+		drm_modeset_unlock_all(ddev);
+
+		drm_kms_helper_connector_hotplug_event(connector);
+
+		mutex_unlock(&aconnector->hpd_lock);
+	}
+}
+
 static int dm_resume(struct amdgpu_ip_block *ip_block)
 {
 	struct amdgpu_device *adev = ip_block->adev;
@@ -3601,6 +3643,7 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
 
 	drm_kms_helper_hotplug_event(ddev);
 
+	do_stupid_retrigger(ddev);
 	return 0;
 }
 
