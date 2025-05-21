@@ -291,6 +291,32 @@ config JOYSTICK_JOYDUMP
 	  To compile this driver as a module, choose M here: the
 	  module will be called joydump.
 
+config JOYSTICK_XBOX_GIP
+	tristate "Xbox One/Series controller support"
+	depends on USB_ARCH_HAS_HCD
+	select USB
+	help
+	  Say Y here if you want to use Xbox One and Series controllers with your
+	  computer. Make sure to say Y to "Joystick support" (CONFIG_INPUT_JOYDEV)
+	  and/or "Event interface support" (CONFIG_INPUT_EVDEV) as well.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called xbox_gip.
+
+config JOYSTICK_XBOX_GIP_FF
+	bool "Xbox One/Series controller rumble support"
+	depends on JOYSTICK_XBOX_GIP && INPUT
+	select INPUT_FF_MEMLESS
+	help
+	  Say Y here if you want to take advantage of Xbox One/Series rumble.
+
+config JOYSTICK_XBOX_GIP_LEDS
+	bool "LED Support for the Xbox One/Series controller Guide button"
+	depends on JOYSTICK_XBOX_GIP && LEDS_CLASS_MULTICOLOR
+	help
+	  This option enables support for the LED which surrounds the Big X on
+	  Xbox One/Series controllers.
+
 config JOYSTICK_XPAD
 	tristate "Xbox gamepad support"
 	depends on USB_ARCH_HAS_HCD
