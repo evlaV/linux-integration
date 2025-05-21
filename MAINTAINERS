@@ -26487,6 +26487,12 @@ S:	Maintained
 F:	drivers/media/rc/keymaps/rc-xbox-dvd.c
 F:	drivers/media/rc/xbox_remote.c
 
+XBOX GIP
+M:	Vicki Pfau <vi@endrift.com>
+L:	linux-input@vger.kernel.org
+S:	Maintained
+F:	drivers/input/joystick/xbox_gip.c
+
 XC2028/3028 TUNER DRIVER
 M:	Mauro Carvalho Chehab <mchehab@kernel.org>
 L:	linux-media@vger.kernel.org
