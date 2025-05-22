@@ -1327,9 +1327,11 @@ static void btrtl_handle_fw_can_ignore_bt_dis(struct hci_dev *hdev)
 	if (IS_ERR(skb))
 		return;
 
+#if 0
 	rp = (struct hci_rp_read_local_version *)skb->data;
 	if (le16_to_cpu(rp->hci_rev) == 0x98d7 &&
 	    le16_to_cpu(rp->lmp_subver) == 0x081e)
+#endif
 		can_ignore = true;
 
 	kfree_skb(skb);
