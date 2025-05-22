@@ -2322,9 +2322,6 @@ static u16 ath11k_peer_assoc_h_he_limit(u16 tx_mcs_set,
 
 		tx_mcs_set &= ~(0x3 << (nss * 2));
 		tx_mcs_set |= mcs << (nss * 2);
-
-		pr_info("%s: tx_mcs_set 0x%04x nss %d he_mcs_limit 0x%04x mcs_map 0x%04x idx_limit %d tx_mcs_set 0x%04x", __func__,
-				tx_mcs_set, nss, he_mcs_limit[nss], mcs_map, idx_limit, tx_mcs_set);
 	}
 
 	return tx_mcs_set;
@@ -2510,29 +2507,21 @@ static void ath11k_peer_assoc_h_he(struct ath11k *ar,
 		if (he_cap->he_cap_elem.phy_cap_info[0] &
 		    IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G) {
 			v = le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80);
-			pr_info("%s %d: he_cap->he_mcs_nss_supp.rx_mcs_80p80 0x%04x\n", __func__, __LINE__, v);
 			v = ath11k_peer_assoc_h_he_limit(v, he_mcs_mask);
 			arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80_80] = v;
-			pr_info("%s %d: arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80_80] 0x%04x\n", __func__, __LINE__, v);
 
 			v = le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80p80);
-			pr_info("%s %d: he_cap->he_mcs_nss_supp.tx_mcs_80p80 0x%04x\n", __func__, __LINE__, v);
 			arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80_80] = v;
-			pr_info("%s %d: arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80_80] 0x%04x\n", __func__, __LINE__, v);
 
 			arg->peer_he_mcs_count++;
 			he_tx_mcs = v;
 		}
 		v = le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160);
-		pr_info("%s %d: he_cap->he_mcs_nss_supp.rx_mcs_160 0x%04x\n", __func__, __LINE__, v);
 		arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_160] = v;
-		pr_info("%s %d: arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_160] 0x%04x\n", __func__, __LINE__, v);
 
 		v = le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_160);
-		pr_info("%s %d: he_cap->he_mcs_nss_supp.tx_mcs_160 0x%04x\n", __func__, __LINE__, v);
 		v = ath11k_peer_assoc_h_he_limit(v, he_mcs_mask);
 		arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_160] = v;
-		pr_info("%s %d: arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_160] 0x%04x\n", __func__, __LINE__, v);
 
 		arg->peer_he_mcs_count++;
 		if (!he_tx_mcs)
@@ -2541,15 +2530,11 @@ static void ath11k_peer_assoc_h_he(struct ath11k *ar,
 
 	default:
 		v = le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80);
-		pr_info("%s %d: he_cap->he_mcs_nss_supp.rx_mcs_80 0x%04x\n", __func__, __LINE__, v);
 		arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80] = v;
-		pr_info("%s %d: arg->peer_he_rx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80] 0x%04x\n", __func__, __LINE__, v);
 
 		v = le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80);
-		pr_info("%s %d: he_cap->he_mcs_nss_supp.tx_mcs_80 0x%04x\n", __func__, __LINE__, v);
 		v = ath11k_peer_assoc_h_he_limit(v, he_mcs_mask);
 		arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80] = v;
-		pr_info("%s %d: arg->peer_he_tx_mcs_set[WMI_HECAP_TXRX_MCS_NSS_IDX_80] 0x%04x\n", __func__, __LINE__, v);
 
 		arg->peer_he_mcs_count++;
 		if (!he_tx_mcs)
@@ -2592,7 +2577,7 @@ static void ath11k_peer_assoc_h_he(struct ath11k *ar,
 		arg->peer_bw_rxnss_override |= nss_160;
 	}
 
-	ath11k_info(ar->ab,
+	ath11k_dbg(ar->ab, ATH11K_DBG_MAC,
 		   "he peer %pM nss %d mcs cnt %d nss_override 0x%x\n",
 		   sta->addr, arg->peer_nss,
 		   arg->peer_he_mcs_count,
@@ -8659,47 +8644,6 @@ out:
 	return ret;
 }
 
-static void ath11k_mac_dump_bitrate_mask(const struct cfg80211_bitrate_mask *mask)
-{
-	u8 band;
-
-	for (band = 0; band < NUM_NL80211_BANDS; band++) {
-		pr_info("legacy %u\n", mask->control[band].legacy);
-		pr_info("band %u ht_mcs 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
-			band,
-			mask->control[band].ht_mcs[0],
-			mask->control[band].ht_mcs[1],
-			mask->control[band].ht_mcs[2],
-			mask->control[band].ht_mcs[3],
-			mask->control[band].ht_mcs[4],
-			mask->control[band].ht_mcs[5],
-			mask->control[band].ht_mcs[6],
-			mask->control[band].ht_mcs[7],
-			mask->control[band].ht_mcs[8],
-			mask->control[band].ht_mcs[9]);
-		pr_info("band %u vht_mcs 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x\n",
-			band,
-			mask->control[band].vht_mcs[0],
-			mask->control[band].vht_mcs[1],
-			mask->control[band].vht_mcs[2],
-			mask->control[band].vht_mcs[3],
-			mask->control[band].vht_mcs[4],
-			mask->control[band].vht_mcs[5],
-			mask->control[band].vht_mcs[6],
-			mask->control[band].vht_mcs[7]);
-		pr_info("band %u he_mcs 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x 0x%04x\n",
-			band,
-			mask->control[band].he_mcs[0],
-			mask->control[band].he_mcs[1],
-			mask->control[band].he_mcs[2],
-			mask->control[band].he_mcs[3],
-			mask->control[band].he_mcs[4],
-			mask->control[band].he_mcs[5],
-			mask->control[band].he_mcs[6],
-			mask->control[band].he_mcs[7]);
-	}
-}
-
 static int
 ath11k_mac_op_set_bitrate_mask(struct ieee80211_hw *hw,
 			       struct ieee80211_vif *vif,
@@ -8726,9 +8670,6 @@ ath11k_mac_op_set_bitrate_mask(struct ieee80211_hw *hw,
 
 	if (ath11k_mac_vif_chan(vif, &def))
 		return -EPERM;
-
-	pr_info("%s: dump cfg80211_bitrate_mask\n", __func__);
-	ath11k_mac_dump_bitrate_mask(mask);
 
 	band = def.chan->band;
 	cap = &ar->pdev->cap;
@@ -8769,10 +8710,6 @@ ath11k_mac_op_set_bitrate_mask(struct ieee80211_hw *hw,
 		nss = single_nss;
 		mutex_lock(&ar->conf_mutex);
 		arvif->bitrate_mask = *mask;
-
-		pr_info("%s: dump cfg80211_bitrate_maskf for single nss\n", __func__);
-		ath11k_mac_dump_bitrate_mask(&arvif->bitrate_mask);
-
 		ieee80211_iterate_stations_atomic(ar->hw,
 						  ath11k_mac_set_bitrate_mask_iter,
 						  arvif);
@@ -8838,10 +8775,6 @@ ath11k_mac_op_set_bitrate_mask(struct ieee80211_hw *hw,
 						  arvif);
 
 		arvif->bitrate_mask = *mask;
-
-		pr_info("%s: dump cfg80211_bitrate_maskf for non single nss\n", __func__);
-		ath11k_mac_dump_bitrate_mask(&arvif->bitrate_mask);
-
 		ieee80211_iterate_stations_atomic(ar->hw,
 						  ath11k_mac_set_bitrate_mask_iter,
 						  arvif);

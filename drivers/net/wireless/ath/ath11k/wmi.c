@@ -2091,7 +2091,6 @@ int ath11k_wmi_send_peer_assoc_cmd(struct ath11k *ar,
 		he_mcs->rx_mcs_set = param->peer_he_tx_mcs_set[i];
 		he_mcs->tx_mcs_set = param->peer_he_rx_mcs_set[i];
 		ptr += sizeof(*he_mcs);
-		pr_info("%s: i %u he_mcs->rx_mcs_set 0x%08x he_mcs->tx_mcs_set 0x%08x\n", __func__, i, he_mcs->rx_mcs_set, he_mcs->tx_mcs_set);
 	}
 
 	ret = ath11k_wmi_cmd_send(wmi, skb, WMI_PEER_ASSOC_CMDID);

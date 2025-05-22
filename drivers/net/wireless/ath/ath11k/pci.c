@@ -942,8 +942,6 @@ static int ath11k_pci_probe(struct pci_dev *pdev,
 		return -ENOMEM;
 	}
 
-	printk("bqiang: fdslfjlsdfsd");
-
 	ab->dev = &pdev->dev;
 	pci_set_drvdata(pdev, ab);
 	ab_pci = ath11k_pci_priv(ab);

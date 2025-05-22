@@ -150,14 +150,6 @@ ieee80211_he_cap_ie_to_sta_he_cap(struct ieee80211_sub_if_data *sdata,
 	/* HE Tx/Rx HE MCS NSS Support Field */
 	memcpy(&he_cap->he_mcs_nss_supp,
 	       &he_cap_ie[sizeof(he_cap->he_cap_elem)], mcs_nss_size);
-	pr_info("%s %d: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
-		__func__, __LINE__,
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80),
-		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80));
 
 	/* Check if there are (optional) PPE Thresholds */
 	if (he_cap->he_cap_elem.phy_cap_info[6] &
