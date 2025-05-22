@@ -103,6 +103,10 @@ static void ieee80211_he_mcs_intersection(__le16 *he_own_rx, __le16 *he_peer_rx,
 		*he_peer_tx &=
 			~cpu_to_le16(IEEE80211_HE_MCS_NOT_SUPPORTED << i * 2);
 		*he_peer_tx |= cpu_to_le16(peer_tx << i * 2);
+
+		pr_info("%s %d: i %u he_peer_rx 0x%04x he_peer_tx 0x%04x own_rx 0x%04x own_tx 0x%04x peer_rx 0x%04x peer_tx 0x%04x\n",
+				__func__, __LINE__, i,
+				le16_to_cpu(*he_peer_rx), le16_to_cpu(*he_peer_tx), own_rx, own_tx, peer_rx, peer_tx);
 	}
 }
 
@@ -150,6 +154,14 @@ ieee80211_he_cap_ie_to_sta_he_cap(struct ieee80211_sub_if_data *sdata,
 	/* HE Tx/Rx HE MCS NSS Support Field */
 	memcpy(&he_cap->he_mcs_nss_supp,
 	       &he_cap_ie[sizeof(he_cap->he_cap_elem)], mcs_nss_size);
+	pr_info("%s %d: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+		__func__, __LINE__,
+		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
+		le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80),
+		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
+		le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_160),
+		le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80),
+		le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80p80));
 
 	/* Check if there are (optional) PPE Thresholds */
 	if (he_cap->he_cap_elem.phy_cap_info[6] &
@@ -162,6 +174,9 @@ ieee80211_he_cap_ie_to_sta_he_cap(struct ieee80211_sub_if_data *sdata,
 
 	link_sta->cur_max_bandwidth = ieee80211_sta_cap_rx_bw(link_sta);
 	link_sta->pub->bandwidth = ieee80211_sta_cur_vht_bw(link_sta);
+	pr_info("%s %d: cur_max_bandwidth %u bandwidth %u\n",
+		__func__, __LINE__,
+		link_sta->cur_max_bandwidth, link_sta->pub->bandwidth);
 
 	if (sband->band == NL80211_BAND_6GHZ && he_6ghz_capa)
 		ieee80211_update_from_he_6ghz_capa(he_6ghz_capa, link_sta);
@@ -177,15 +192,58 @@ ieee80211_he_cap_ie_to_sta_he_cap(struct ieee80211_sub_if_data *sdata,
 		   IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G;
 
 	if (peer_160 && own_160) {
+		pr_info("%s %d: peer: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+				__func__, __LINE__,
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80p80));
+		pr_info("%s %d: own: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+				__func__, __LINE__,
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_160),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_160),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_80p80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_80p80));
+
 		ieee80211_he_mcs_intersection(&own_he_cap.he_mcs_nss_supp.rx_mcs_160,
 					      &he_cap->he_mcs_nss_supp.rx_mcs_160,
 					      &own_he_cap.he_mcs_nss_supp.tx_mcs_160,
 					      &he_cap->he_mcs_nss_supp.tx_mcs_160);
+
+		pr_info("%s %d: peer: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+				__func__, __LINE__,
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80p80));
+		pr_info("%s %d: own: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+				__func__, __LINE__,
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_160),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_160),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.rx_mcs_80p80),
+				le16_to_cpu(own_he_cap.he_mcs_nss_supp.tx_mcs_80p80));
 	} else if (peer_160 && !own_160) {
 		ieee80211_he_mcs_disable(&he_cap->he_mcs_nss_supp.rx_mcs_160);
 		ieee80211_he_mcs_disable(&he_cap->he_mcs_nss_supp.tx_mcs_160);
 		he_cap->he_cap_elem.phy_cap_info[0] &=
 			~IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G;
+
+		pr_info("%s %d: peer: rx_mcs_80 0x%04x tx_mcs_80 0x%04x rx_mcs_160 0x%04x tx_mcs_160 0x%04x rx_mcs_80p80 0x%04x tx_mcs_80p80 0x%04x\n",
+				__func__, __LINE__,
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_160),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.rx_mcs_80p80),
+				le16_to_cpu(he_cap->he_mcs_nss_supp.tx_mcs_80p80));
 	}
 
 	own_80p80 = own_he_cap.he_cap_elem.phy_cap_info[0] &

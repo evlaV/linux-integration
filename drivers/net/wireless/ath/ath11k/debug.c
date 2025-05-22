@@ -108,4 +108,34 @@ void ath11k_dbg_dump(struct ath11k_base *ab,
 }
 EXPORT_SYMBOL(ath11k_dbg_dump);
 
+void ath11k_info_dump(struct ath11k_base *ab,
+		     const char *msg, const char *prefix,
+		     const void *buf, size_t len)
+{
+	char linebuf[256];
+	size_t linebuflen;
+	const void *ptr;
+
+	if (msg)
+		ath11k_info(ab, "%s\n", msg);
+
+	for (ptr = buf; (ptr - buf) < len; ptr += 16) {
+		linebuflen = 0;
+		linebuflen += scnprintf(linebuf + linebuflen,
+				sizeof(linebuf) - linebuflen,
+				"%s%08x: ",
+				(prefix ? prefix : ""),
+				(unsigned int)(ptr - buf));
+		hex_dump_to_buffer(ptr, len - (ptr - buf), 16, 1,
+				linebuf + linebuflen,
+				sizeof(linebuf) - linebuflen, true);
+		dev_printk(KERN_INFO, ab->dev, "%s\n", linebuf);
+	}
+
+	/* tracing code doesn't like null strings */
+	trace_ath11k_log_dbg_dump(ab, msg ? msg : "", prefix ? prefix : "",
+				  buf, len);
+}
+EXPORT_SYMBOL(ath11k_info_dump);
+
 #endif /* CONFIG_ATH11K_DEBUG */

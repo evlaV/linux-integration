@@ -2091,6 +2091,7 @@ int ath11k_wmi_send_peer_assoc_cmd(struct ath11k *ar,
 		he_mcs->rx_mcs_set = param->peer_he_tx_mcs_set[i];
 		he_mcs->tx_mcs_set = param->peer_he_rx_mcs_set[i];
 		ptr += sizeof(*he_mcs);
+		pr_info("%s: i %u he_mcs->rx_mcs_set 0x%08x he_mcs->tx_mcs_set 0x%08x\n", __func__, i, he_mcs->rx_mcs_set, he_mcs->tx_mcs_set);
 	}
 
 	ret = ath11k_wmi_cmd_send(wmi, skb, WMI_PEER_ASSOC_CMDID);
@@ -7648,6 +7649,10 @@ static void ath11k_mgmt_rx_event(struct ath11k_base *ab, struct sk_buff *skb)
 		   "event mgmt rx freq %d band %d snr %d, rate_idx %d\n",
 		   status->freq, status->band, status->signal,
 		   status->rate_idx);
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	if (ieee80211_is_mgmt(hdr->frame_control))
+		ath11k_info_dump(ab, NULL, "MGMT: ", skb->data, skb->len);
 
 	ieee80211_rx_ni(ar->hw, skb);
 

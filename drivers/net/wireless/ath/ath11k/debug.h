@@ -87,6 +87,9 @@ void ath11k_dbg_dump(struct ath11k_base *ab,
 		     enum ath11k_debug_mask mask,
 		     const char *msg, const char *prefix,
 		     const void *buf, size_t len);
+void ath11k_info_dump(struct ath11k_base *ab,
+		     const char *msg, const char *prefix,
+		     const void *buf, size_t len);
 #else /* CONFIG_ATH11K_DEBUG */
 static inline int __ath11k_dbg(struct ath11k_base *ab,
 			       enum ath11k_debug_mask dbg_mask,
@@ -101,6 +104,13 @@ static inline void ath11k_dbg_dump(struct ath11k_base *ab,
 				   const void *buf, size_t len)
 {
 }
+
+void ath11k_info_dump(struct ath11k_base *ab,
+		     const char *msg, const char *prefix,
+		     const void *buf, size_t len)
+{
+}
+
 #endif /* CONFIG_ATH11K_DEBUG */
 
 #define ath11k_dbg(ar, dbg_mask, fmt, ...)			\
