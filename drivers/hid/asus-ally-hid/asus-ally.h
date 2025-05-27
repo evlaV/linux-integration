@@ -150,8 +150,8 @@ struct ally_x_input {
 	struct work_struct output_worker;
 	bool output_worker_initialized;
 
-	/* Set if the right QAM emits Home + A chord */
-	bool right_qam_steam_mode;
+	/* Set if the left QAM emits Guide/Mode and right QAM emits Home + A chord */
+	bool qam_mode;
 	/* Prevent multiple queued event due to the enforced delay in worker */
 	bool update_qam_chord;
 
