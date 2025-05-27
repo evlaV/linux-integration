@@ -214,6 +214,7 @@ struct mpc_color_caps {
 	uint16_t num_3dluts : 3;
 	uint16_t shared_3d_lut:1;
 	struct rom_curve_caps ogam_rom_caps;
+	bool preblend;
 };
 
 /**
