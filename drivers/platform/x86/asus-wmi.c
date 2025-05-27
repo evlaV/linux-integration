@@ -1358,7 +1358,7 @@ void set_ally_mcu_hack(enum asus_ally_mcu_hack status)
 	pr_debug("%s Ally MCU suspend quirk\n",
 		 status == ASUS_WMI_ALLY_MCU_HACK_ENABLED ? "Enabled" : "Disabled");
 }
-EXPORT_SYMBOL_NS_GPL(set_ally_mcu_hack, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_hack, ASUS_WMI);
 
 /*
  * mcu_powersave should be enabled always, as it is fixed in MCU FW versions:
@@ -1383,7 +1383,7 @@ void set_ally_mcu_powersave(bool enabled)
 	pr_debug("%s MCU Powersave\n",
 		 enabled ? "Enabled" : "Disabled");
 }
-EXPORT_SYMBOL_NS_GPL(set_ally_mcu_powersave, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_powersave, ASUS_WMI);
 
 static ssize_t mcu_powersave_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)

@@ -609,7 +609,6 @@ static void validate_mcu_fw_version(struct hid_device *hdev, int idProduct)
 		set_ally_mcu_powersave(true);
 	}
 }
-EXPORT_SYMBOL_NS(validate_mcu_fw_version, HID_ASUS);
 
 static int asus_kbd_register_leds(struct hid_device *hdev)
 {
