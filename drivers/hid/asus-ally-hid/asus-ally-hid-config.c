@@ -342,6 +342,8 @@ static bool ally_check_capability(struct hid_device *hdev, u8 flag_code)
 	if (!hidbuf)
 		return false;
 
+	hidbuf[0] = HID_ALLY_SET_REPORT_ID;
+	hidbuf[1] = HID_ALLY_FEATURE_CODE_PAGE;
 	hidbuf[2] = flag_code;
 	hidbuf[3] = 0x01;
 
