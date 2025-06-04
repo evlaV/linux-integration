@@ -35,14 +35,26 @@ struct legos_cfg {
 	struct led_classdev *led_cdev;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex;
-	int last_cmd_ret;
-	u8 last_cmd_val;
+	u8 gp_auto_sleep_time;
+	u8 gp_dpad_mode;
+	u8 gp_mode;
+	u8 gp_poll_rate;
+	u8 imu_bypass_en;
+	u8 imu_manufacturer;
+	u8 imu_sensor_en;
 	u8 mcu_id[12];
-	u8 mcu_ver[4];
-	u8 rgb_profile;
+	u8 mouse_step;
+	u8 os_mode;
 	u8 rgb_effect;
-	u8 rgb_speed;
+	u8 rgb_en;
 	u8 rgb_mode;
+	u8 rgb_profile;
+	u8 rgb_speed;
+	u8 tp_en;
+	u8 tp_linux_mode;
+	u8 tp_manufacturer;
+	u8 tp_version;
+	u8 tp_windows_mode;
 } drvdata;
 
 /* GET/SET_GAMEPAD_CFG */
@@ -119,7 +131,7 @@ enum GAMEPAD_CFG_INDEX {
 	CFG_PASS_ENABLE, // FEATURE_ENABLED
 	CFG_LIGHT_ENABLE, // FEATURE_ENABLED
 	CFG_IMU_ENABLE, // FEATURE_ENABLED
-	CFG_TPAD_ENABLE, // FEATURE_ENABLED
+	CFG_TP_ENABLE, // FEATURE_ENABLED
 	CFG_OS_TYPE = 0x0A, // OS_TYPE
 	CFG_POLL_RATE = 0x10, // POLL_RATE
 	CFG_DPAD_MODE, // DPAD_MODE
@@ -254,17 +266,16 @@ static const char *const IMU_MANUFACTURER_TEXT[] = {
 	[IMU_ST] = "ST",
 };
 
-struct mcu_version {
-	u8 ver1;
-	u8 ver2;
-	u8 ver3;
-	u8 ver4;
-} __packed;
-
 struct command_report {
 	u8 cmd;
 	u8 sub_cmd;
 	u8 data[63];
+} __packed;
+
+struct version_report {
+	u8 cmd;
+	u32 version;
+	u8 reserved[59];
 } __packed;
 
 struct legos_cfg_rw_attr {
@@ -273,9 +284,12 @@ struct legos_cfg_rw_attr {
 
 int legos_cfg_raw_event(u8 *data, int size)
 {
+	struct led_classdev_mc *mc_cdev;
 	struct command_report *cmd_rep;
+	struct version_report *ver_rep;
+	int ret;
 
-	pr_debug("Got raw event of length: %u, [%*ph]\n", size, size, data);
+	print_hex_dump_debug("", DUMP_PREFIX_NONE, 16, 1, data, size, false);
 
 	if (size != GO_S_PACKET_SIZE)
 		return -EINVAL;
@@ -283,32 +297,93 @@ int legos_cfg_raw_event(u8 *data, int size)
 	cmd_rep = (struct command_report *)data;
 	switch (cmd_rep->cmd) {
 	case GET_VERSION:
-		drvdata.mcu_ver[0] = cmd_rep->data[2];
-		drvdata.mcu_ver[1] = cmd_rep->data[1];
-		drvdata.mcu_ver[2] = cmd_rep->data[0];
-		drvdata.mcu_ver[3] = cmd_rep->sub_cmd;
-		drvdata.last_cmd_ret = 0;
+		ver_rep = (struct version_report *)data;
+		drvdata.hdev->firmware_version = __cpu_to_le32(ver_rep->version);
+		ret = 0;
 		break;
 	case GET_MCU_ID:
 		drvdata.mcu_id[0] = cmd_rep->sub_cmd;
 		memcpy(&drvdata.mcu_id[1], cmd_rep->data, 11);
-		drvdata.last_cmd_ret = 0;
+		ret = 0;
 		break;
 	case GET_GAMEPAD_CFG:
+		switch (cmd_rep->sub_cmd) {
+		case CFG_GAMEPAD_MODE:
+			drvdata.gp_mode = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_AUTO_SLP_TIME:
+			drvdata.gp_auto_sleep_time = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_PASS_ENABLE:
+			drvdata.imu_bypass_en = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_LIGHT_ENABLE:
+			drvdata.rgb_en = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_IMU_ENABLE:
+			drvdata.imu_sensor_en = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_TP_ENABLE:
+			drvdata.tp_en = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_OS_TYPE:
+			drvdata.os_mode = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_POLL_RATE:
+			drvdata.gp_poll_rate = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_DPAD_MODE:
+			drvdata.gp_dpad_mode = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_MS_WHEEL_STEP:
+			drvdata.mouse_step = cmd_rep->data[0];
+			ret = 0;
+			break;
+		default:
+			ret = -EINVAL;
+			break;
+		}
+		break;
 	case GET_TP_PARAM:
-		drvdata.last_cmd_val = cmd_rep->data[0];
-		drvdata.last_cmd_ret = 0;
+		switch (cmd_rep->sub_cmd) {
+		case CFG_LINUX_MODE:
+			drvdata.tp_linux_mode = cmd_rep->data[0];
+			ret = 0;
+			break;
+		case CFG_WINDOWS_MODE:
+			drvdata.tp_windows_mode = cmd_rep->data[0];
+			ret = 0;
+			break;
+		default:
+			ret = -EINVAL;
+			break;
+		}
 		break;
 	case GET_PL_TEST:
 		switch (cmd_rep->sub_cmd) {
 		case TEST_TP_MFR:
+			drvdata.tp_manufacturer = cmd_rep->data[0];
+			ret = 0;
+			break;
 		case TEST_IMU_MFR:
+			drvdata.imu_manufacturer = cmd_rep->data[0];
+			ret = 0;
+			break;
 		case TEST_TP_VER:
-			drvdata.last_cmd_val = cmd_rep->data[0];
-			drvdata.last_cmd_ret = 0;
+			drvdata.tp_version = cmd_rep->data[0];
+			ret = 0;
 			break;
 		default:
-			drvdata.last_cmd_ret = EINVAL;
+			ret = -EINVAL;
 			break;
 		}
 		break;
@@ -316,27 +391,26 @@ int legos_cfg_raw_event(u8 *data, int size)
 		switch (cmd_rep->sub_cmd) {
 		case LIGHT_MODE_SEL:
 			drvdata.rgb_mode = cmd_rep->data[0];
-			drvdata.last_cmd_ret = 0;
+			ret = 0;
 			break;
 		case LIGHT_PROFILE_SEL:
 			drvdata.rgb_profile = cmd_rep->data[0];
-			drvdata.last_cmd_ret = 0;
+			ret = 0;
 			break;
 		case USR_LIGHT_PROFILE_1:
 		case USR_LIGHT_PROFILE_2:
 		case USR_LIGHT_PROFILE_3:
-			struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
-
+			mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
 			drvdata.rgb_effect = cmd_rep->data[0];
 			mc_cdev->subled_info[0].intensity = cmd_rep->data[1];
 			mc_cdev->subled_info[1].intensity = cmd_rep->data[2];
 			mc_cdev->subled_info[2].intensity = cmd_rep->data[3];
 			drvdata.led_cdev->brightness = cmd_rep->data[4];
 			drvdata.rgb_speed = cmd_rep->data[5];
-			drvdata.last_cmd_ret = 0;
+			ret = 0;
 			break;
 		default:
-			drvdata.last_cmd_ret = EINVAL;
+			ret = -EINVAL;
 			break;
 		}
 		break;
@@ -345,7 +419,7 @@ int legos_cfg_raw_event(u8 *data, int size)
 	case GET_MOTOR_CFG:
 	case GET_STICK_CFG:
 	case GET_TRIGGER_CFG:
-		drvdata.last_cmd_ret = EINVAL;
+		ret = -EINVAL;
 		break;
 	case SET_GAMEPAD_CFG:
 	case SET_GYRO_CFG:
@@ -355,19 +429,22 @@ int legos_cfg_raw_event(u8 *data, int size)
 	case SET_STICK_CFG:
 	case SET_TP_PARAM:
 	case SET_TRIGGER_CFG:
-		drvdata.last_cmd_ret = cmd_rep->data[0];
+		ret = -cmd_rep->data[0];
 		break;
 	default:
-		drvdata.last_cmd_ret = EINVAL;
+		ret = -EINVAL;
 		break;
 	};
 
-	pr_debug("Last command: %u, sub_cmd: %u, ret: %u, val: %u\n",
-		cmd_rep->cmd, cmd_rep->sub_cmd, drvdata.last_cmd_ret,
-		drvdata.last_cmd_val);
+	if (ret && cmd_rep->cmd != START_IAP_UPGRADE)
+		dev_err(&drvdata.hdev->dev, "Command %u with index %u failed with error code: %x\n",
+			cmd_rep->cmd, cmd_rep->sub_cmd, ret);
+
+	pr_debug("Last command: %u, sub_cmd: %u, ret: %u, val: [%ph]\n",
+		 cmd_rep->cmd, cmd_rep->sub_cmd, ret, cmd_rep->data);
 
 	complete(&drvdata.send_cmd_complete);
-	return -drvdata.last_cmd_ret;
+	return ret;
 }
 
 static int legos_cfg_send_cmd(struct hid_device *hdev, u8 *buf, int ep)
@@ -383,11 +460,10 @@ static int legos_cfg_send_cmd(struct hid_device *hdev, u8 *buf, int ep)
 		return -ENOMEM;
 
 	ret = hid_hw_output_report(hdev, dmabuf, size);
+	if (ret < 0)
+		return ret;
 
-	if (ret != size)
-		return -EINVAL;
-
-	return 0;
+	return ret == size ? 0 : -EINVAL;
 }
 
 static int mcu_property_out(struct hid_device *hdev, enum MCU_COMMAND command,
@@ -396,26 +472,26 @@ static int mcu_property_out(struct hid_device *hdev, enum MCU_COMMAND command,
 	u8 outbuf[GO_S_PACKET_SIZE] = { command, index };
 	int ep = get_endpoint_address(hdev);
 	unsigned int i;
+	int timeout = 5;
 	int ret;
 
 	if (ep != LEGION_GO_S_CFG_INTF_IN)
 		return -ENODEV;
 
-
 	for (i = 0; i < size; i++)
 		outbuf[i + 2] = val[i];
 
-	mutex_lock(&drvdata.cfg_mutex);
-	drvdata.last_cmd_ret = 0;
-	drvdata.last_cmd_val = 0;
+	guard(mutex)(&drvdata.cfg_mutex);
 	ret = legos_cfg_send_cmd(hdev, outbuf, ep);
-	if (ret) {
-		mutex_unlock(&drvdata.cfg_mutex);
+	if (ret)
 		return ret;
-	}
+
+	/* PL_TEST commands can take longer because they go out to another device */
+	if (command == GET_PL_TEST)
+		timeout = 200;
 
 	ret = wait_for_completion_interruptible_timeout(&drvdata.send_cmd_complete,
-							msecs_to_jiffies(5));
+							msecs_to_jiffies(timeout));
 
 	if (ret == 0) /* timeout occured */
 		ret = -EBUSY;
@@ -423,7 +499,6 @@ static int mcu_property_out(struct hid_device *hdev, enum MCU_COMMAND command,
 		ret = 0;
 
 	reinit_completion(&drvdata.send_cmd_complete);
-	mutex_unlock(&drvdata.cfg_mutex);
 	return ret;
 }
 
@@ -438,13 +513,12 @@ static ssize_t gamepad_property_store(struct device *dev,
 	int ret;
 
 	switch (index) {
-	case CFG_GAMEPAD_MODE: {
+	case CFG_GAMEPAD_MODE:
 		ret = sysfs_match_string(GAMEPAD_MODE_TEXT, buf);
 		if (ret < 0)
 			return ret;
 		val = ret;
 		break;
-	}
 	case CFG_AUTO_SLP_TIME:
 		ret = kstrtou8(buf, 10, &val);
 		if (ret)
@@ -460,8 +534,18 @@ static ssize_t gamepad_property_store(struct device *dev,
 		val = ret;
 		break;
 	case CFG_PASS_ENABLE:
+		ret = sysfs_match_string(FEATURE_ENABLE_STATUS_TEXT, buf);
+		if (ret < 0)
+			return ret;
+		val = ret;
+		break;
 	case CFG_LIGHT_ENABLE:
-	case CFG_TPAD_ENABLE:
+		ret = sysfs_match_string(FEATURE_ENABLE_STATUS_TEXT, buf);
+		if (ret < 0)
+			return ret;
+		val = ret;
+		break;
+	case CFG_TP_ENABLE:
 		ret = sysfs_match_string(FEATURE_ENABLE_STATUS_TEXT, buf);
 		if (ret < 0)
 			return ret;
@@ -472,6 +556,7 @@ static ssize_t gamepad_property_store(struct device *dev,
 		if (ret < 0)
 			return ret;
 		val = ret;
+		drvdata.os_mode = val;
 		break;
 	case CFG_POLL_RATE:
 		ret = sysfs_match_string(POLL_RATE_TEXT, buf);
@@ -504,9 +589,6 @@ static ssize_t gamepad_property_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return count;
 }
 
@@ -521,55 +603,68 @@ static ssize_t gamepad_property_show(struct device *dev,
 	if (count < 0)
 		return count;
 
-	if (drvdata.last_cmd_ret) {
-		return -drvdata.last_cmd_ret;
-	}
-
-	i = drvdata.last_cmd_val;
-
 	switch (index) {
 	case CFG_GAMEPAD_MODE:
+		i = drvdata.gp_mode;
 		if (i > DINPUT)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", GAMEPAD_MODE_TEXT[i]);
 		break;
 	case CFG_AUTO_SLP_TIME:
-		count = sysfs_emit(buf, "%u\n", i);
+		count = sysfs_emit(buf, "%u\n", drvdata.gp_auto_sleep_time);
 		break;
 	case CFG_IMU_ENABLE:
+		i = drvdata.imu_sensor_en;
 		if (i > IMU_OFF_2S)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", IMU_ENABLED_TEXT[i]);
 		break;
 	case CFG_PASS_ENABLE:
+		i = drvdata.imu_bypass_en;
+		if (i > FEATURE_ENABLED)
+			count = -EINVAL;
+		else
+			count = sysfs_emit(buf, "%s\n", FEATURE_ENABLE_STATUS_TEXT[i]);
+		break;
 	case CFG_LIGHT_ENABLE:
-	case CFG_TPAD_ENABLE:
+		i = drvdata.rgb_en;
+		if (i > FEATURE_ENABLED)
+			count = -EINVAL;
+		else
+			count = sysfs_emit(buf, "%s\n", FEATURE_ENABLE_STATUS_TEXT[i]);
+		break;
+	case CFG_TP_ENABLE:
+		i = drvdata.tp_en;
 		if (i > FEATURE_ENABLED)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", FEATURE_ENABLE_STATUS_TEXT[i]);
 		break;
 	case CFG_OS_TYPE:
+		i = drvdata.os_mode;
 		if (i > LINUX)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", OS_TYPE_TEXT[i]);
 		break;
 	case CFG_POLL_RATE:
+		i = drvdata.gp_poll_rate;
 		if (i > HZ1000)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", POLL_RATE_TEXT[i]);
 		break;
 	case CFG_DPAD_MODE:
+		i = drvdata.gp_dpad_mode;
 		if (i > DIR4)
 			count = -EINVAL;
 		else
 			count = sysfs_emit(buf, "%s\n", DPAD_MODE_TEXT[i]);
 		break;
 	case CFG_MS_WHEEL_STEP:
+		i = drvdata.mouse_step;
 		if (i < 1 || i > 127)
 			count = -EINVAL;
 		else
@@ -607,7 +702,7 @@ static ssize_t gamepad_property_options(struct device *dev,
 		break;
 	case CFG_PASS_ENABLE:
 	case CFG_LIGHT_ENABLE:
-	case CFG_TPAD_ENABLE:
+	case CFG_TP_ENABLE:
 		for (i = 0; i < ARRAY_SIZE(FEATURE_ENABLE_STATUS_TEXT); i++) {
 			count += sysfs_emit_at(buf, count, "%s ",
 					       FEATURE_ENABLE_STATUS_TEXT[i]);
@@ -654,6 +749,11 @@ static ssize_t touchpad_property_store(struct device *dev,
 
 	switch (index) {
 	case CFG_WINDOWS_MODE:
+		ret = sysfs_match_string(TOUCHPAD_MODE_TEXT, buf);
+		if (ret < 0)
+			return ret;
+		val = ret;
+		break;
 	case CFG_LINUX_MODE:
 		ret = sysfs_match_string(TOUCHPAD_MODE_TEXT, buf);
 		if (ret < 0)
@@ -670,9 +770,6 @@ static ssize_t touchpad_property_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return count;
 }
 
@@ -680,33 +777,28 @@ static ssize_t touchpad_property_show(struct device *dev,
 				      struct device_attribute *attr, char *buf,
 				      enum TOUCHPAD_CFG_INDEX index)
 {
-	size_t count = 0;
+	int ret = 0;
 	u8 i;
 
-	count = mcu_property_out(drvdata.hdev, GET_TP_PARAM, index, 0, 0);
-	if (count < 0)
-		return count;
-
-	if (drvdata.last_cmd_ret) {
-		return -drvdata.last_cmd_ret;
-	}
-
-	i = drvdata.last_cmd_val;
+	ret = mcu_property_out(drvdata.hdev, GET_TP_PARAM, index, 0, 0);
+	if (ret < 0)
+		return ret;
 
 	switch (index) {
 	case CFG_WINDOWS_MODE:
+		i = drvdata.tp_windows_mode;
+		break;
 	case CFG_LINUX_MODE:
-		if (i > TP_ABS)
-			count = -EINVAL;
-		else
-			count = sysfs_emit(buf, "%s\n", TOUCHPAD_MODE_TEXT[i]);
+		i = drvdata.tp_linux_mode;
 		break;
 	default:
-		count = -EINVAL;
-		break;
+		return -EINVAL;
 	}
 
-	return count;
+	if (i > TP_ABS)
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%s\n", TOUCHPAD_MODE_TEXT[i]);
 }
 
 static ssize_t touchpad_property_options(struct device *dev,
@@ -735,132 +827,39 @@ static ssize_t touchpad_property_options(struct device *dev,
 	return count;
 }
 
-static ssize_t test_property_show(struct device *dev,
-				  struct device_attribute *attr, char *buf,
-				  enum TEST_INDEX index)
-{
-	size_t count = 0;
-	u8 i;
-
-	count = mcu_property_out(drvdata.hdev, GET_PL_TEST, index, 0, 0);
-	if (count < 0)
-		return count;
-
-	if (drvdata.last_cmd_ret) {
-		return -drvdata.last_cmd_ret;
-	}
-
-	i = drvdata.last_cmd_val;
-
-	switch (index) {
-	case TEST_TP_MFR:
-		if (i > TP_SIPO)
-			count = -EINVAL;
-		else
-			count = sysfs_emit(buf, "%s\n",
-					   TP_MANUFACTURER_TEXT[i]);
-		break;
-	case TEST_IMU_MFR:
-		if (i > IMU_ST)
-			count = -EINVAL;
-		else
-			count = sysfs_emit(buf, "%s\n",
-					   IMU_MANUFACTURER_TEXT[i]);
-		break;
-	case TEST_TP_VER:
-		count = sysfs_emit(buf, "%u\n", i);
-		break;
-	default:
-		count = -EINVAL;
-		break;
-	}
-
-	return count;
-}
-
-static int mcu_id_get(void)
-{
-	u8 null_id[12] = {};
-	int ret;
-
-	ret = memcmp(&drvdata.mcu_id, &null_id, sizeof(null_id));
-	if (ret)
-		return -ENOMEM;
-
-	ret = mcu_property_out(drvdata.hdev, GET_MCU_ID, NONE, 0, 0);
-	if (ret < 0)
-		return ret;
-
-	return -drvdata.last_cmd_ret;
-}
-
-static ssize_t mcu_id_show(struct device *dev, struct device_attribute *attr,
-			   char *buf)
-{
-	return sysfs_emit(buf, "%*phN\n", 12, &drvdata.mcu_id);
-}
-
-static int mcu_version_get(void)
-{
-	u8 null_ver[4] = {};
-	int ret;
-
-	ret = memcmp(&drvdata.mcu_ver, &null_ver, sizeof(null_ver));
-	if (ret)
-		return -ENOMEM;
-
-	ret = mcu_property_out(drvdata.hdev, GET_VERSION, NONE, 0, 0);
-	if (ret < 0)
-		return ret;
-
-	return -drvdata.last_cmd_ret;
-}
-
-static ssize_t mcu_version_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	return sysfs_emit(buf, "%x.%x.%x.%x\n", drvdata.mcu_ver[0],
-			  drvdata.mcu_ver[1], drvdata.mcu_ver[2],
-			  drvdata.mcu_ver[3]);
-}
-
 /* RGB LED */
 static int rgb_cfg_call(struct hid_device *hdev, enum MCU_COMMAND cmd,
 			enum LIGHT_CFG_INDEX index, u8 *val, size_t size)
 {
-	int ret;
-
-	if (cmd != GET_LIGHT_CFG && cmd != SET_LIGHT_CFG)
+	if (cmd != SET_LIGHT_CFG && cmd != GET_LIGHT_CFG)
 		return -EINVAL;
 
 	if (index < LIGHT_MODE_SEL || index > USR_LIGHT_PROFILE_3)
 		return -EINVAL;
 
-	ret = mcu_property_out(hdev, cmd, index, val, size);
-	if (ret)
-		return ret;
-
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
-	return 0;
+	return mcu_property_out(hdev, cmd, index, val, size);
 }
 
 static int rgb_profile_call(enum MCU_COMMAND cmd, u8 *rgb_profile, size_t size)
 {
 	enum LIGHT_CFG_INDEX index;
 
-	if (cmd != SET_LIGHT_CFG && cmd != GET_LIGHT_CFG)
-		return -EINVAL;
-
 	index = drvdata.rgb_profile + 2;
 
 	return rgb_cfg_call(drvdata.hdev, cmd, index, rgb_profile, size);
 }
 
-static int rgb_write_profile(void)
+static int rgb_attr_show(void)
+{
+	return rgb_profile_call(GET_LIGHT_CFG, 0, 0);
+};
+
+static int rgb_attr_store(void)
 {
 	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
+
+	if (drvdata.rgb_mode != RGB_MODE_CUSTOM)
+		return -EINVAL;
 
 	u8 rgb_profile[6] = { drvdata.rgb_effect,
 			      mc_cdev->subled_info[0].intensity,
@@ -870,38 +869,6 @@ static int rgb_write_profile(void)
 			      drvdata.rgb_speed };
 
 	return rgb_profile_call(SET_LIGHT_CFG, rgb_profile, 6);
-}
-
-static int rgb_attr_show(void)
-
-{
-	int ret;
-
-	ret = rgb_profile_call(GET_LIGHT_CFG, 0, 0);
-	if (ret < 0)
-		return ret;
-
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
-	return 0;
-};
-
-static int rgb_attr_store(void)
-{
-	int ret;
-
-	if (drvdata.rgb_mode != RGB_MODE_CUSTOM)
-		return -EINVAL;
-
-	ret = rgb_write_profile();
-	if (ret < 0)
-		return ret;
-
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
-	return 0;
 }
 
 static ssize_t rgb_effect_show(struct device *dev,
@@ -994,15 +961,6 @@ static ssize_t rgb_speed_range_show(struct device *dev,
 static ssize_t rgb_mode_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
-	int ret;
-
-	ret = rgb_cfg_call(drvdata.hdev, GET_LIGHT_CFG, LIGHT_MODE_SEL, 0, 0);
-	if (ret < 0)
-		return ret;
-
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return sysfs_emit(buf, "%s\n", RGB_MODE_TEXT[drvdata.rgb_mode]);
 };
 
@@ -1026,9 +984,6 @@ static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return count;
 };
 
@@ -1050,16 +1005,6 @@ static ssize_t rgb_mode_index_show(struct device *dev,
 static ssize_t rgb_profile_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	int ret;
-
-	ret = rgb_cfg_call(drvdata.hdev, GET_LIGHT_CFG, LIGHT_PROFILE_SEL, 0,
-			   0);
-	if (ret < 0)
-		return ret;
-
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return sysfs_emit(buf, "%hhu\n", drvdata.rgb_profile);
 };
 
@@ -1088,9 +1033,6 @@ static ssize_t rgb_profile_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata.last_cmd_ret)
-		return -drvdata.last_cmd_ret;
-
 	return count;
 };
 
@@ -1113,14 +1055,17 @@ static void legos_rgb_color_set(struct led_classdev *led_cdev,
 	led_cdev->brightness = brightness;
 
 	ret = rgb_attr_store();
-	if (ret)
-		dev_err(led_cdev->dev, "Failed to write RGB profile: %u\n",
-			ret);
-
-	if (drvdata.last_cmd_ret)
-		dev_err(led_cdev->dev, "Failed to write RGB profile: %u\n",
-			drvdata.last_cmd_ret);
-};
+	switch (ret) {
+	case 0:
+		break;
+	case -ENODEV: /* during switch to IAP -ENODEV is expected */
+	case -ENOSYS: /* during rmmod -ENOSYS is expected */
+		dev_dbg(led_cdev->dev, "Failed to write RGB profile: %i\n", ret);
+		break;
+	default:
+		dev_err(led_cdev->dev, "Failed to write RGB profile: %i\n", ret);
+	};
+}
 
 #define DEVICE_ATTR_RO_NAMED(_name, _attrname)               \
 	struct device_attribute dev_attr_##_name = {         \
@@ -1175,14 +1120,6 @@ static void legos_rgb_color_set(struct led_classdev *led_cdev,
 	}                                                                      \
 	DEVICE_ATTR_RW_NAMED(_name, _attrname)
 
-#define ATTR_LEGOS_TEST_RO(_name, _attrname)                                  \
-	static ssize_t _name##_show(struct device *dev,                       \
-				    struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return test_property_show(dev, attr, buf, _name.index);       \
-	}                                                                     \
-	DEVICE_ATTR_RO_NAMED(_name, _attrname)
-
 /* Gamepad */
 struct legos_cfg_rw_attr auto_sleep_time = { CFG_AUTO_SLP_TIME };
 struct legos_cfg_rw_attr dpad_mode = { CFG_DPAD_MODE };
@@ -1217,14 +1154,12 @@ struct legos_cfg_rw_attr imu_sensor_enabled = { CFG_IMU_ENABLE };
 
 ATTR_LEGOS_GAMEPAD_RW(imu_bypass_enabled, "bypass_enabled", index);
 ATTR_LEGOS_GAMEPAD_RW(imu_sensor_enabled, "sensor_enabled", index);
-ATTR_LEGOS_TEST_RO(imu_manufacturer, "manufacturer");
 static DEVICE_ATTR_RO_NAMED(imu_bypass_enabled_index, "bypass_enabled_index");
 static DEVICE_ATTR_RO_NAMED(imu_sensor_enabled_index, "sensor_enabled_index");
 
 static struct attribute *legos_imu_attrs[] = {
 	&dev_attr_imu_bypass_enabled.attr,
 	&dev_attr_imu_bypass_enabled_index.attr,
-	&dev_attr_imu_manufacturer.attr,
 	&dev_attr_imu_sensor_enabled.attr,
 	&dev_attr_imu_sensor_enabled_index.attr,
 	NULL,
@@ -1235,12 +1170,8 @@ struct legos_cfg_rw_attr os_mode = { CFG_OS_TYPE };
 
 ATTR_LEGOS_GAMEPAD_RW(os_mode, "os_mode", index);
 static DEVICE_ATTR_RO(os_mode_index);
-static DEVICE_ATTR_RO(mcu_id);
-static DEVICE_ATTR_RO(mcu_version);
 
 static struct attribute *legos_mcu_attrs[] = {
-	&dev_attr_mcu_id.attr,
-	&dev_attr_mcu_version.attr,
 	&dev_attr_os_mode.attr,
 	&dev_attr_os_mode_index.attr,
 	NULL,
@@ -1287,15 +1218,13 @@ static struct attribute *legos_rgb_attrs[] = {
 };
 
 /* Touchpad */
-struct legos_cfg_rw_attr touchpad_enabled = { CFG_TPAD_ENABLE };
+struct legos_cfg_rw_attr touchpad_enabled = { CFG_TP_ENABLE };
 struct legos_cfg_rw_attr touchpad_linux_mode = { CFG_LINUX_MODE };
 struct legos_cfg_rw_attr touchpad_manufacturer = { TEST_TP_MFR };
 struct legos_cfg_rw_attr touchpad_version = { TEST_TP_VER };
 struct legos_cfg_rw_attr touchpad_windows_mode = { CFG_WINDOWS_MODE };
 
 ATTR_LEGOS_GAMEPAD_RW(touchpad_enabled, "enabled", index);
-ATTR_LEGOS_TEST_RO(touchpad_manufacturer, "manufacturer");
-ATTR_LEGOS_TEST_RO(touchpad_version, "version");
 ATTR_LEGOS_TOUCHPAD_RW(touchpad_linux_mode, "linux_mode", index);
 ATTR_LEGOS_TOUCHPAD_RW(touchpad_windows_mode, "windows_mode", index);
 static DEVICE_ATTR_RO_NAMED(touchpad_enabled_index, "enabled_index");
@@ -1307,8 +1236,6 @@ static struct attribute *legos_touchpad_attrs[] = {
 	&dev_attr_touchpad_enabled_index.attr,
 	&dev_attr_touchpad_linux_mode.attr,
 	&dev_attr_touchpad_linux_mode_index.attr,
-	&dev_attr_touchpad_manufacturer.attr,
-	&dev_attr_touchpad_version.attr,
 	&dev_attr_touchpad_windows_mode.attr,
 	&dev_attr_touchpad_windows_mode_index.attr,
 	NULL,
@@ -1324,13 +1251,13 @@ static const struct attribute_group imu_attr_group = {
 	.attrs = legos_imu_attrs,
 };
 
-static const struct attribute_group mcu_attr_group = {
-	.attrs = legos_mcu_attrs,
-};
-
 static const struct attribute_group mouse_attr_group = {
 	.name = "mouse",
 	.attrs = legos_mouse_attrs,
+};
+
+static const struct attribute_group mcu_attr_group = {
+	.attrs = legos_mcu_attrs,
 };
 
 static struct attribute_group rgb_attr_group = {
@@ -1380,45 +1307,147 @@ struct led_classdev_mc legos_cdev_rgb = {
 	.subled_info = legos_rgb_subled_info,
 };
 
-void cfg_setup(struct work_struct *work)
+static void cfg_setup(struct work_struct *work)
 {
 	int ret;
 
-	ret = mcu_id_get();
+	/* Gamepad */
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_AUTO_SLP_TIME, 0, 0);
 	if (ret) {
-		dev_err(drvdata.led_cdev->dev,
-			"Failed to retrieve MCU ID: %u\n", ret);
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve gamepad auto sleep time: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_version_get();
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_DPAD_MODE, 0, 0);
 	if (ret) {
-		dev_err(drvdata.led_cdev->dev,
-			"Failed to retrieve MCU Version: %u\n", ret);
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve gamepad dpad mode: %i\n", ret);
 		return;
 	}
 
-	ret = rgb_cfg_call(drvdata.hdev, GET_LIGHT_CFG, LIGHT_MODE_SEL, 0, 0);
-	if (ret < 0) {
-		dev_err(drvdata.led_cdev->dev,
-			"Failed to retrieve RGB Mode: %u\n", ret);
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_GAMEPAD_MODE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve gamepad mode: %i\n", ret);
 		return;
 	}
 
-	ret = rgb_cfg_call(drvdata.hdev, GET_LIGHT_CFG, LIGHT_PROFILE_SEL, 0,
-			   0);
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_POLL_RATE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve gamepad poll rate: %i\n", ret);
+		return;
+	}
+
+	/* IMU */
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_PASS_ENABLE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve IMU bypass enabled: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_PL_TEST, TEST_IMU_MFR, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve IMU Manufacturer: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_IMU_ENABLE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve IMU enabled: %i\n", ret);
+		return;
+	}
+
+	/* MCU */
+	ret = mcu_property_out(drvdata.hdev, GET_MCU_ID, NONE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve MCU ID: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_VERSION, NONE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve MCU Version: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_MS_WHEEL_STEP, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve mouse wheel step size: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_OS_TYPE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve MCU OS Mode: %i\n", ret);
+		return;
+	}
+
+	/* RGB */
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_LIGHT_ENABLE, 0, 0);
 	if (ret < 0) {
-		dev_err(drvdata.led_cdev->dev,
-			"Failed to retrieve RGB Profile: %u\n", ret);
+		dev_err(drvdata.led_cdev->dev, "Failed to retrieve RGB enabled: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_LIGHT_CFG, LIGHT_MODE_SEL, 0, 0);
+	if (ret < 0) {
+		dev_err(drvdata.led_cdev->dev, "Failed to retrieve RGB Mode: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_LIGHT_CFG, LIGHT_PROFILE_SEL, 0, 0);
+	if (ret < 0) {
+		dev_err(drvdata.led_cdev->dev, "Failed to retrieve RGB Profile: %i\n", ret);
 		return;
 	}
 
 	ret = rgb_attr_show();
 	if (ret < 0) {
-		dev_err(drvdata.led_cdev->dev,
-			"Failed to retrieve RGB Profile Data: %u\n", ret);
+		dev_err(drvdata.led_cdev->dev, "Failed to retrieve RGB Profile Data: %i\n", ret);
 		return;
 	}
+
+	/* Touchpad */
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_TP_ENABLE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve touchpad enabled: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_TP_PARAM, CFG_LINUX_MODE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve touchpad Linux mode: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_PL_TEST, TEST_TP_MFR, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve touchpad manufacturer: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_TP_PARAM, CFG_WINDOWS_MODE, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve touchpad Windows mode: %i\n", ret);
+		return;
+	}
+
+	ret = mcu_property_out(drvdata.hdev, GET_PL_TEST, TEST_TP_VER, 0, 0);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to retrieve touchpad Version: %i\n", ret);
+		return;
+	}
+}
+
+static int legos_cfg_uevent(const struct device *dev, struct kobj_uevent_env *env)
+{
+	if (add_uevent_var(env, "LEGOS_TP_MANUFACTURER=%s", TP_MANUFACTURER_TEXT[drvdata.tp_manufacturer]))
+		return -ENOMEM;
+	if (add_uevent_var(env, "LEGOS_TP_VERSION=%u", drvdata.tp_version))
+		return -ENOMEM;
+	if (add_uevent_var(env, "LEGOS_IMU_MANUFACTURER=%s", IMU_MANUFACTURER_TEXT[drvdata.imu_manufacturer]))
+		return -ENOMEM;
+	if (add_uevent_var(env, "LEGOS_MCU_ID=%*phN", 12, &drvdata.mcu_id))
+		return -ENOMEM;
+	return 0;
 }
 
 int legos_cfg_probe(struct hid_device *hdev, const struct hid_device_id *_id)
@@ -1430,28 +1459,23 @@ int legos_cfg_probe(struct hid_device *hdev, const struct hid_device_id *_id)
 	hid_set_drvdata(hdev, &drvdata);
 
 	drvdata.hdev = hdev;
+	hdev->uevent = legos_cfg_uevent;
 
 	ret = sysfs_create_groups(&hdev->dev.kobj, legos_top_level_attr_groups);
 	if (ret) {
-		dev_err(&hdev->dev,
-			"Failed to create gamepad configuration attributes: %u\n",
-			ret);
+		dev_err(&hdev->dev, "Failed to create gamepad configuration attributes: %i\n", ret);
 		return ret;
 	}
 
-	ret = devm_led_classdev_multicolor_register(&hdev->dev,
-						    &legos_cdev_rgb);
+	ret = devm_led_classdev_multicolor_register(&hdev->dev, &legos_cdev_rgb);
 	if (ret) {
-		dev_err(&hdev->dev, "Failed to create RGB device: %u\n", ret);
+		dev_err(&hdev->dev, "Failed to create RGB device: %i\n", ret);
 		return ret;
 	}
 
-	ret = devm_device_add_group(legos_cdev_rgb.led_cdev.dev,
-				    &rgb_attr_group);
+	ret = devm_device_add_group(legos_cdev_rgb.led_cdev.dev, &rgb_attr_group);
 	if (ret) {
-		dev_err(&hdev->dev,
-			"Failed to create RGB configuratiion attributes: %u\n",
-			ret);
+		dev_err(&hdev->dev, "Failed to create RGB configuratiion attributes: %i\n", ret);
 		return ret;
 	}
 
@@ -1463,16 +1487,40 @@ int legos_cfg_probe(struct hid_device *hdev, const struct hid_device_id *_id)
 	 * initial data call after probe has completed and MCU can accept calls.
 	 */
 	INIT_DELAYED_WORK(&drvdata.legos_cfg_setup, &cfg_setup);
-	schedule_delayed_work(&drvdata.legos_cfg_setup, msecs_to_jiffies(2));
-
+	ret = schedule_delayed_work(&drvdata.legos_cfg_setup, msecs_to_jiffies(2));
+	if (!ret) {
+		dev_err(&hdev->dev, "Failed to schedule startup delayed work\n");
+		return -ENODEV;
+	}
 	return 0;
 }
 
 void legos_cfg_remove(struct hid_device *hdev)
 {
+	guard(mutex)(&drvdata.cfg_mutex);
 	cancel_delayed_work_sync(&drvdata.legos_cfg_setup);
 	sysfs_remove_groups(&hdev->dev.kobj, legos_top_level_attr_groups);
-
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
+	hdev->uevent = NULL;
+	hid_set_drvdata(hdev, NULL);
+}
+
+int legos_cfg_reset_resume(struct hid_device *hdev)
+{
+	u8 os_mode = drvdata.os_mode;
+	int ret;
+
+	ret = mcu_property_out(drvdata.hdev, SET_GAMEPAD_CFG, CFG_OS_TYPE, &os_mode, 1);
+	if (ret < 0)
+		return ret;
+
+	ret = mcu_property_out(drvdata.hdev, GET_GAMEPAD_CFG, CFG_OS_TYPE, 0, 0);
+	if (ret < 0)
+		return ret;
+
+	if (drvdata.os_mode != os_mode)
+		return -ENODEV;
+
+	return 0;
 }

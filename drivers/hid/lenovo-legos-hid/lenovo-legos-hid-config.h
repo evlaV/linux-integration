@@ -12,8 +12,8 @@ struct hid_device_id;
 struct work_struct;
 
 int legos_cfg_raw_event(u8 *data, int size);
-void cfg_setup(struct work_struct *work);
 int legos_cfg_probe(struct hid_device *hdev, const struct hid_device_id *_id);
 void legos_cfg_remove(struct hid_device *hdev);
+int legos_cfg_reset_resume(struct hid_device *hdev);
 
 #endif /* !_LENOVO_LEGOS_HID_CONFIG_*/
