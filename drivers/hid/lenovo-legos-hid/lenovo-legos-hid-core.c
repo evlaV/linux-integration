@@ -92,8 +92,25 @@ static void lenovo_legos_hid_remove(struct hid_device *hdev)
 		legos_cfg_remove(hdev);
 		break;
 	default:
+		hid_hw_close(hdev);
+		hid_hw_stop(hdev);
+
 		break;
 	}
+}
+
+static int lenovo_legos_hid_reset_resume(struct hid_device *hdev)
+{
+	int ep = get_endpoint_address(hdev);
+
+	switch (ep) {
+	case LEGION_GO_S_CFG_INTF_IN:
+		return legos_cfg_reset_resume(hdev);
+	default:
+		break;
+	}
+
+	return 0;
 }
 
 static const struct hid_device_id lenovo_legos_devices[] = {
@@ -110,6 +127,7 @@ static struct hid_driver lenovo_legos_hid = {
 	.id_table = lenovo_legos_devices,
 	.probe = lenovo_legos_hid_probe,
 	.remove = lenovo_legos_hid_remove,
+	.reset_resume = lenovo_legos_hid_reset_resume,
 	.raw_event = lenovo_legos_raw_event,
 };
 module_hid_driver(lenovo_legos_hid);
