@@ -389,6 +389,9 @@ struct mhi_controller {
 	size_t sbl_size;
 	size_t seg_len;
 	size_t reg_len;
+	void *bhi_fw_buf;
+	size_t bhi_fw_len;
+	dma_addr_t bhi_fw_dma_addr;
 	struct image_info *fbc_image;
 	struct image_info *rddm_image;
 	struct mhi_chan *mhi_chan;
