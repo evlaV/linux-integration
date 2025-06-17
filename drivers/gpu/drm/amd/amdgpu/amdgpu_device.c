@@ -5653,7 +5653,7 @@ int amdgpu_device_reinit_after_reset(struct amdgpu_reset_context *reset_context)
 
 				if (reset_context->job && reset_context->job->vm) {
 					tmp_adev->reset_event_info.pid =
-						reset_context->job->vm->task_info->pid;
+						reset_context->job->vm->task_info->task.pid;
 					memset(tmp_adev->reset_event_info.pname, 0, TASK_COMM_LEN);
 					strcpy(tmp_adev->reset_event_info.pname,
 						reset_context->job->vm->task_info->process_name);
