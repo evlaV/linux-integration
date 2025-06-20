@@ -1326,27 +1326,11 @@ static const struct dmi_system_id btrtl_can_ignore_bt_dis_table[] = {
 
 static void btrtl_handle_fw_can_ignore_bt_dis(struct hci_dev *hdev)
 {
-	struct sk_buff *skb;
-	struct hci_rp_read_local_version *rp;
-	bool can_ignore = false;
 	u16 ignore_mask;
 	u8 buf[2];
 	int ret;
 
 	if (!dmi_check_system(btrtl_can_ignore_bt_dis_table))
-		return;
-
-	skb = btrtl_read_local_version(hdev);
-	if (IS_ERR(skb))
-		return;
-
-	rp = (struct hci_rp_read_local_version *)skb->data;
-	if (le16_to_cpu(rp->hci_rev) == 0x98d7 &&
-	    le16_to_cpu(rp->lmp_subver) == 0x081e)
-		can_ignore = true;
-
-	kfree_skb(skb);
-	if (!can_ignore)
 		return;
 
 	ret = btrtl_vendor_read_reg16(hdev, RTL_IGNORE_MASK, buf);
@@ -1361,7 +1345,9 @@ static void btrtl_handle_fw_can_ignore_bt_dis(struct hci_dev *hdev)
 
 	ret = btrtl_vendor_write_reg16(hdev, RTL_IGNORE_MASK, buf);
 	if (ret)
-		rtl_dev_warn(hdev, "failed to write ignore mask, will not wake on bluetooth");
+		rtl_dev_warn(hdev, "Failed to enable wake-on-bluetooth. (possibly due to old fw)");
+	else
+		rtl_dev_info(hdev, "wake-on-bluetooth enabled");
 }
 
 void btrtl_set_quirks(struct hci_dev *hdev, struct btrtl_device_info *btrtl_dev)
