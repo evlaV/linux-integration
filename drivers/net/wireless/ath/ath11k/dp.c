@@ -254,10 +254,13 @@ int ath11k_dp_srng_setup(struct ath11k_base *ab, struct dp_srng *ring,
 							      &ring->paddr_unaligned,
 							      DMA_FROM_DEVICE,
 							      GFP_KERNEL);
-	else
+	else {
 		ring->vaddr_unaligned = dma_alloc_coherent(ab->dev, ring->size,
 							   &ring->paddr_unaligned,
 							   GFP_KERNEL);
+		pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__,
+			ring->size);
+	}
 
 	if (!ring->vaddr_unaligned)
 		return -ENOMEM;
@@ -353,6 +356,7 @@ static void ath11k_dp_srng_common_cleanup(struct ath11k_base *ab)
 	struct ath11k_dp *dp = &ab->dp;
 	int i;
 
+	pr_info("[debug]: %s\n", __func__);
 	ath11k_dp_stop_shadow_timers(ab);
 	ath11k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
 	ath11k_dp_srng_cleanup(ab, &dp->tcl_cmd_ring);
@@ -528,6 +532,8 @@ static int ath11k_dp_scatter_idle_link_desc_setup(struct ath11k_base *ab,
 		return -EINVAL;
 
 	for (i = 0; i < num_scatter_buf; i++) {
+		pr_info("[debug]: %s dma_alloc_coherent(%d) %d\n", __func__,
+			HAL_WBM_IDLE_SCATTER_BUF_SIZE_MAX, i);
 		slist[i].vaddr = dma_alloc_coherent(ab->dev,
 						    HAL_WBM_IDLE_SCATTER_BUF_SIZE_MAX,
 						    &slist[i].paddr, GFP_KERNEL);
@@ -607,6 +613,8 @@ static int ath11k_dp_link_desc_bank_alloc(struct ath11k_base *ab,
 		if (i == (n_link_desc_bank - 1) && last_bank_sz)
 			desc_sz = last_bank_sz;
 
+		pr_info("[debug]: %s dma_alloc_coherent(%d) %d\n", __func__,
+			desc_sz, i);
 		desc_bank[i].vaddr_unaligned =
 					dma_alloc_coherent(ab->dev, desc_sz,
 							   &desc_bank[i].paddr_unaligned,
@@ -1026,9 +1034,11 @@ void ath11k_dp_free(struct ath11k_base *ab)
 	struct ath11k_dp *dp = &ab->dp;
 	int i;
 
+	pr_info("[debug]: %s\n", __func__);
+
 	ath11k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-
+	
 	ath11k_dp_srng_common_cleanup(ab);
 
 	ath11k_dp_reo_cmd_list_cleanup(ab);
@@ -1040,6 +1050,7 @@ void ath11k_dp_free(struct ath11k_base *ab)
 		idr_destroy(&dp->tx_ring[i].txbuf_idr);
 		spin_unlock_bh(&dp->tx_ring[i].tx_idr_lock);
 		kfree(dp->tx_ring[i].tx_status);
+		dp->tx_ring[i].tx_status = NULL;
 	}
 
 	/* Deinit any SOC level resource */
@@ -1054,6 +1065,7 @@ int ath11k_dp_alloc(struct ath11k_base *ab)
 	int ret;
 	int i;
 
+	pr_info("[debug]: %s\n", __func__);
 	dp->ab = ab;
 
 	INIT_LIST_HEAD(&dp->reo_cmd_list);
@@ -1078,6 +1090,7 @@ int ath11k_dp_alloc(struct ath11k_base *ab)
 		return ret;
 	}
 
+
 	ret = ath11k_dp_srng_common_setup(ab);
 	if (ret)
 		goto fail_link_desc_cleanup;
@@ -1100,6 +1113,8 @@ int ath11k_dp_alloc(struct ath11k_base *ab)
 
 	for (i = 0; i < HAL_DSCP_TID_MAP_TBL_NUM_ENTRIES_MAX; i++)
 		ath11k_hal_tx_set_dscp_tid_map(ab, i);
+
+	pr_info("[debug] %s ath11k_dp_restart end\n", __func__);
 
 	/* Init any SOC level resource for DP */
 

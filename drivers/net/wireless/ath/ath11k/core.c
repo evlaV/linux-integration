@@ -2389,6 +2389,7 @@ static void ath11k_core_restart(struct work_struct *work)
 	struct ath11k_base *ab = container_of(work, struct ath11k_base, restart_work);
 	int ret;
 
+	pr_info("[debug]: %s\n", __func__);
 	ret = ath11k_core_reconfigure_on_crash(ab);
 	if (ret) {
 		ath11k_err(ab, "failed to reconfigure driver on crash recovery\n");
