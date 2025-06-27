@@ -626,6 +626,7 @@ ath11k_ce_alloc_ring(struct ath11k_base *ab, int nentries, int desc_sz)
 	/* Legacy platforms that do not support cache
 	 * coherent DMA are unsupported
 	 */
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, nentries * desc_sz + CE_DESC_RING_ALIGN);
 	ce_ring->base_addr_owner_space_unaligned =
 		dma_alloc_coherent(ab->dev,
 				   nentries * desc_sz + CE_DESC_RING_ALIGN,

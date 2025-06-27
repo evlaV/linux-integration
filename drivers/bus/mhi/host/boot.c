@@ -340,6 +340,7 @@ int mhi_alloc_bhie_table(struct mhi_controller *mhi_cntrl,
 			vec_size = sizeof(struct bhi_vec_entry) * i;
 
 		mhi_buf->len = vec_size;
+		pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, vec_size);
 		mhi_buf->buf = dma_alloc_coherent(mhi_cntrl->cntrl_dev,
 						  vec_size, &mhi_buf->dma_addr,
 						  GFP_KERNEL);
@@ -461,6 +462,7 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 	fw_sz = firmware->size;
 
 skip_req_fw:
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, size);
 	buf = dma_alloc_coherent(mhi_cntrl->cntrl_dev, size, &dma_addr,
 				 GFP_KERNEL);
 	if (!buf) {

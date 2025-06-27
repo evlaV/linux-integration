@@ -196,6 +196,7 @@ static int ath11k_hal_alloc_cont_rdp(struct ath11k_base *ab)
 	size_t size;
 
 	size = sizeof(u32) * HAL_SRNG_RING_ID_MAX;
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, size);
 	hal->rdp.vaddr = dma_alloc_coherent(ab->dev, size, &hal->rdp.paddr,
 					    GFP_KERNEL);
 	if (!hal->rdp.vaddr)
@@ -224,6 +225,7 @@ static int ath11k_hal_alloc_cont_wrp(struct ath11k_base *ab)
 	size_t size;
 
 	size = sizeof(u32) * HAL_SRNG_NUM_LMAC_RINGS;
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, size);
 	hal->wrp.vaddr = dma_alloc_coherent(ab->dev, size, &hal->wrp.paddr,
 					    GFP_KERNEL);
 	if (!hal->wrp.vaddr)

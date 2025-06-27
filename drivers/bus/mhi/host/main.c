@@ -198,6 +198,7 @@ int mhi_map_single_use_bb(struct mhi_controller *mhi_cntrl,
 {
 	void *buf = dma_alloc_coherent(mhi_cntrl->cntrl_dev, buf_info->len,
 				       &buf_info->p_addr, GFP_ATOMIC);
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, buf_info->len);
 
 	if (!buf)
 		return -ENOMEM;

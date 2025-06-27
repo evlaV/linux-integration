@@ -133,6 +133,7 @@ static int mhi_alloc_aligned_ring(struct mhi_controller *mhi_cntrl,
 				  u64 len)
 {
 	ring->alloc_size = len + (len - 1);
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, ring->alloc_size);
 	ring->pre_aligned = dma_alloc_coherent(mhi_cntrl->cntrl_dev, ring->alloc_size,
 					       &ring->dma_handle, GFP_KERNEL);
 	if (!ring->pre_aligned)
@@ -287,6 +288,8 @@ int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
 		return -ENOMEM;
 
 	/* Setup channel ctxt */
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__,
+		sizeof(*mhi_ctxt->chan_ctxt) * mhi_cntrl->max_chan);
 	mhi_ctxt->chan_ctxt = dma_alloc_coherent(mhi_cntrl->cntrl_dev,
 						 sizeof(*mhi_ctxt->chan_ctxt) *
 						 mhi_cntrl->max_chan,
@@ -319,6 +322,8 @@ int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
 	}
 
 	/* Setup event context */
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__,
+		sizeof(*mhi_ctxt->er_ctxt) * mhi_cntrl->total_ev_rings);
 	mhi_ctxt->er_ctxt = dma_alloc_coherent(mhi_cntrl->cntrl_dev,
 					       sizeof(*mhi_ctxt->er_ctxt) *
 					       mhi_cntrl->total_ev_rings,
@@ -366,6 +371,8 @@ int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
 
 	/* Setup cmd context */
 	ret = -ENOMEM;
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, sizeof(*mhi_ctxt->cmd_ctxt) *
+							NR_OF_CMD_RINGS);
 	mhi_ctxt->cmd_ctxt = dma_alloc_coherent(mhi_cntrl->cntrl_dev,
 						sizeof(*mhi_ctxt->cmd_ctxt) *
 						NR_OF_CMD_RINGS,

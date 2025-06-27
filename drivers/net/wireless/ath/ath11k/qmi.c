@@ -1997,6 +1997,7 @@ static int ath11k_qmi_alloc_target_mem_chunk(struct ath11k_base *ab)
 			chunk->vaddr = NULL;
 		}
 
+		pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, chunk->size);
 		chunk->vaddr = dma_alloc_coherent(ab->dev,
 						  chunk->size,
 						  &chunk->paddr,
@@ -2536,6 +2537,7 @@ static int ath11k_qmi_m3_load(struct ath11k_base *ab)
 		m3_len = fw->size;
 	}
 
+	pr_info("[debug]: %s dma_alloc_coherent(%d)\n", __func__, m3_len);
 	m3_mem->vaddr = dma_alloc_coherent(ab->dev,
 					   m3_len, &m3_mem->paddr,
 					   GFP_KERNEL);
