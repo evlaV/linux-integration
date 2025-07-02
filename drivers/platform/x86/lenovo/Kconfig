@@ -6,6 +6,7 @@
 config IDEAPAD_LAPTOP
 	tristate "Lenovo IdeaPad Laptop Extras"
 	depends on ACPI
+	depends on ACPI_BATTERY
 	depends on RFKILL && INPUT
 	depends on SERIO_I8042
 	depends on BACKLIGHT_CLASS_DEVICE
@@ -197,6 +198,7 @@ config THINKPAD_ACPI_HOTKEY_POLL
 config THINKPAD_LMI
 	tristate "Lenovo WMI-based systems management driver"
 	depends on ACPI_WMI
+	depends on DMI
 	select FW_ATTR_CLASS
 	help
 	  This driver allows changing BIOS settings on Lenovo machines whose
@@ -231,4 +233,6 @@ config YT2_1380
 	  To compile this driver as a module, choose M here: the module will
 	  be called lenovo-yogabook.
 
-
+config LENOVO_WMI_HELPERS
+	tristate
+	depends on ACPI_WMI
