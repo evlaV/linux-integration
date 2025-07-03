@@ -915,10 +915,11 @@ s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 		 * In that case, just skip it.
 		 */
 		if (!lret && bo->resource && bo->resource->mem_type == mem_type)
-			lret = walk->ops->process_bo(walk, bo);
+			lret = walk->process_bo(walk, bo);
 
 		ttm_lru_walk_unlock(bo, bo_needs_unlock);
 		ttm_bo_put(bo);
+
 		if (lret == -EBUSY || lret == -EALREADY)
 			lret = 0;
 		progress = (lret < 0) ? lret : progress + lret;

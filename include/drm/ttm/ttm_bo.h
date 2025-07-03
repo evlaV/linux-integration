@@ -179,10 +179,10 @@ struct ttm_operation_ctx {
 	uint64_t bytes_moved;
 };
 
-struct ttm_lru_walk;
-
-/** struct ttm_lru_walk_ops - Operations for a LRU walk. */
-struct ttm_lru_walk_ops {
+/**
+ * struct ttm_lru_walk - Structure describing a LRU walk.
+ */
+struct ttm_lru_walk {
 	/**
 	 * process_bo - Process this bo.
 	 * @walk: struct ttm_lru_walk describing the walk.
@@ -194,15 +194,8 @@ struct ttm_lru_walk_ops {
 	 * walk exits when its target is met.
 	 * 0 also indicates success, -EBUSY means this bo was skipped.
 	 */
-	s64 (*process_bo)(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo);
-};
-
-/**
- * struct ttm_lru_walk - Structure describing a LRU walk.
- */
-struct ttm_lru_walk {
-	/** @ops: Pointer to the ops structure. */
-	const struct ttm_lru_walk_ops *ops;
+	s64 (*process_bo)(struct ttm_lru_walk *walk,
+			  struct ttm_buffer_object *bo);
 	/** @ctx: Pointer to the struct ttm_operation_ctx. */
 	struct ttm_operation_ctx *ctx;
 	/** @ticket: The struct ww_acquire_ctx if any. */
