@@ -1213,6 +1213,14 @@ void mhi_unprepare_after_power_down(struct mhi_controller *mhi_cntrl)
 		mhi_cntrl->rddm_image = NULL;
 	}
 
+	if (mhi_cntrl->bhi_fw_dma_addr) {
+		dma_free_coherent(mhi_cntrl->cntrl_dev, mhi_cntrl->bhi_fw_len,
+				  mhi_cntrl->bhi_fw_buf, mhi_cntrl->bhi_fw_dma_addr);
+		mhi_cntrl->bhi_fw_buf = NULL;
+		mhi_cntrl->bhi_fw_len = 0;
+		mhi_cntrl->bhi_fw_dma_addr = 0;
+	}
+
 	mhi_cntrl->bhi = NULL;
 	mhi_cntrl->bhie = NULL;
 

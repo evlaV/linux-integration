@@ -392,8 +392,6 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 	enum mhi_pm_state new_state;
 	const char *fw_name;
 	const u8 *fw_data;
-	void *buf;
-	dma_addr_t dma_addr;
 	size_t size, fw_sz;
 	int ret;
 
@@ -452,17 +450,19 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 	fw_sz = firmware->size;
 
 skip_req_fw:
-	buf = dma_alloc_coherent(mhi_cntrl->cntrl_dev, size, &dma_addr,
-				 GFP_KERNEL);
-	if (!buf) {
-		release_firmware(firmware);
-		goto error_fw_load;
+	if (!mhi_cntrl->bhi_fw_dma_addr) {
+		mhi_cntrl->bhi_fw_buf = dma_alloc_coherent(mhi_cntrl->cntrl_dev, size,
+							   &mhi_cntrl->bhi_fw_dma_addr, GFP_KERNEL);
+		if (!mhi_cntrl->bhi_fw_dma_addr) {
+			release_firmware(firmware);
+			goto error_fw_load;
+		}
+		mhi_cntrl->bhi_fw_len = size;
 	}
 
 	/* Download image using BHI */
-	memcpy(buf, fw_data, size);
-	ret = mhi_fw_load_bhi(mhi_cntrl, dma_addr, size);
-	dma_free_coherent(mhi_cntrl->cntrl_dev, size, buf, dma_addr);
+	memcpy(mhi_cntrl->bhi_fw_buf, fw_data, size);
+	ret = mhi_fw_load_bhi(mhi_cntrl, mhi_cntrl->bhi_fw_dma_addr, size);
 
 	/* Error or in EDL mode, we're done */
 	if (ret) {
