@@ -2126,7 +2126,7 @@ static bool iwl_mvm_mlo_gtk_rekey(struct iwl_wowlan_status_data *status,
 
 		IWL_DEBUG_WOWLAN(mvm, "Add MLO key id %d, link id %d\n",
 				 key_id, link_id);
-		key = ieee80211_gtk_rekey_add(vif, &conf.conf, link_id);
+		key = ieee80211_gtk_rekey_add(vif, conf.conf.keyidx, conf.conf.key, conf.conf.keylen, link_id);
 		if (WARN_ON(IS_ERR(key))) {
 			ret = false;
 			goto out;
@@ -2163,6 +2163,7 @@ static bool iwl_mvm_gtk_rekey(struct iwl_wowlan_status_data *status,
 		.conf.cipher = gtk_cipher,
 	};
 	int link_id = vif->active_links ? __ffs(vif->active_links) : -1;
+	u8 key_data[WOWLAN_KEY_MAX_SIZE];
 
 	BUILD_BUG_ON(WLAN_KEY_LEN_CCMP != WLAN_KEY_LEN_GCMP);
 	BUILD_BUG_ON(sizeof(conf.key) < WLAN_KEY_LEN_CCMP);
@@ -2195,8 +2196,10 @@ static bool iwl_mvm_gtk_rekey(struct iwl_wowlan_status_data *status,
 				 conf.conf.cipher, conf.conf.keyidx);
 		memcpy(conf.conf.key, status->gtk[i].key,
 		       sizeof(status->gtk[i].key));
+		memcpy(key_data, status->gtk[i].key, sizeof(status->gtk[i].key));
 
-		key = ieee80211_gtk_rekey_add(vif, &conf.conf, link_id);
+		key = ieee80211_gtk_rekey_add(vif, status->gtk[i].id, key_data,
+					      sizeof(key_data), link_id);
 		if (IS_ERR(key))
 			return false;
 
@@ -2228,6 +2231,7 @@ iwl_mvm_d3_igtk_bigtk_rekey_add(struct iwl_wowlan_status_data *status,
 	};
 	struct ieee80211_key_seq seq;
 	int link_id = vif->active_links ? __ffs(vif->active_links) : -1;
+	u8 key[WOWLAN_KEY_MAX_SIZE];
 
 	if (!key_data->len)
 		return true;
@@ -2253,7 +2257,10 @@ iwl_mvm_d3_igtk_bigtk_rekey_add(struct iwl_wowlan_status_data *status,
 	BUILD_BUG_ON(sizeof(conf.key) < sizeof(key_data->key));
 	memcpy(conf.conf.key, key_data->key, conf.conf.keylen);
 
-	key_config = ieee80211_gtk_rekey_add(vif, &conf.conf, link_id);
+	memcpy(key, key_data->key, sizeof(key_data->key));
+
+	key_config = ieee80211_gtk_rekey_add(vif, key_data->id, key, sizeof(key),
+					     link_id);
 	if (IS_ERR(key_config))
 		return false;
 	ieee80211_set_key_rx_seq(key_config, 0, &seq);
