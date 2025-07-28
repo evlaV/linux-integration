@@ -59,40 +59,67 @@ int acp_dsp_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_t
 
 	switch (blk_type) {
 	case SOF_FW_BLK_TYPE_IRAM:
-		if (!adata->bin_buf) {
+		if (adata->suspend_buffers.bin_buf) {
 			size_fw = sdev->basefw.fw->size;
 			page_count = PAGE_ALIGN(size_fw) >> PAGE_SHIFT;
 			dma_size = page_count * ACP_PAGE_SIZE;
-			adata->bin_buf = dma_alloc_coherent(&pci->dev, dma_size,
-							    &adata->sha_dma_addr,
-							    GFP_KERNEL);
-			if (!adata->bin_buf)
-				return -ENOMEM;
+			
+			if (dma_size <= adata->suspend_buffers.bin_buf_size) {
+				adata->bin_buf = adata->suspend_buffers.bin_buf;
+				adata->sha_dma_addr = adata->suspend_buffers.sha_dma_addr;
+			} else {
+				dma_free_coherent(&pci->dev, adata->suspend_buffers.bin_buf_size,
+						 adata->suspend_buffers.bin_buf, adata->suspend_buffers.sha_dma_addr);
+				adata->suspend_buffers.bin_buf = NULL;
+				goto fallback_iram_alloc;
+			}
+		} else {
+fallback_iram_alloc:
+			if (!adata->bin_buf) {
+				size_fw = sdev->basefw.fw->size;
+				page_count = PAGE_ALIGN(size_fw) >> PAGE_SHIFT;
+				dma_size = page_count * ACP_PAGE_SIZE;
+				adata->bin_buf = dma_alloc_coherent(&pci->dev, dma_size,
+								    &adata->sha_dma_addr,
+								    GFP_KERNEL);
+				if (!adata->bin_buf)
+					return -ENOMEM;
+			}
 		}
 		adata->fw_bin_size = size + offset;
 		dest = adata->bin_buf + offset;
 		break;
 	case SOF_FW_BLK_TYPE_DRAM:
-		if (!adata->data_buf) {
-			adata->data_buf = dma_alloc_coherent(&pci->dev,
-							     ACP_DEFAULT_DRAM_LENGTH,
-							     &adata->dma_addr,
-							     GFP_KERNEL);
-			if (!adata->data_buf)
-				return -ENOMEM;
+		if (adata->suspend_buffers.data_buf) {
+			adata->data_buf = adata->suspend_buffers.data_buf;
+			adata->dma_addr = adata->suspend_buffers.dma_addr;
+		} else {
+			if (!adata->data_buf) {
+				adata->data_buf = dma_alloc_coherent(&pci->dev,
+								     ACP_DEFAULT_DRAM_LENGTH,
+								     &adata->dma_addr,
+								     GFP_KERNEL);
+				if (!adata->data_buf)
+					return -ENOMEM;
+			}
 		}
 		dest = adata->data_buf + offset;
 		adata->fw_data_bin_size = size + offset;
 		adata->is_dram_in_use = true;
 		break;
 	case SOF_FW_BLK_TYPE_SRAM:
-		if (!adata->sram_data_buf) {
-			adata->sram_data_buf = dma_alloc_coherent(&pci->dev,
-								  ACP_DEFAULT_SRAM_LENGTH,
-								  &adata->sram_dma_addr,
-								  GFP_KERNEL);
-			if (!adata->sram_data_buf)
-				return -ENOMEM;
+		if (adata->suspend_buffers.sram_data_buf) {
+			adata->sram_data_buf = adata->suspend_buffers.sram_data_buf;
+			adata->sram_dma_addr = adata->suspend_buffers.sram_dma_addr;
+		} else {
+			if (!adata->sram_data_buf) {
+				adata->sram_data_buf = dma_alloc_coherent(&pci->dev,
+									  ACP_DEFAULT_SRAM_LENGTH,
+									  &adata->sram_dma_addr,
+									  GFP_KERNEL);
+				if (!adata->sram_data_buf)
+					return -ENOMEM;
+			}
 		}
 		adata->fw_sram_data_bin_size = size + offset;
 		dest = adata->sram_data_buf + offset;
@@ -225,18 +252,40 @@ int acp_dsp_pre_fw_run(struct snd_sof_dev *sdev)
 		snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_DSP0_CACHE_SIZE0, SRAM1_SIZE | BIT(31));
 	}
 
-	/* Free memory once DMA is complete */
-	dma_size =  (PAGE_ALIGN(sdev->basefw.fw->size) >> PAGE_SHIFT) * ACP_PAGE_SIZE;
-	dma_free_coherent(&pci->dev, dma_size, adata->bin_buf, adata->sha_dma_addr);
+	if (adata->suspend_buffers.bin_buf &&
+	    adata->bin_buf == adata->suspend_buffers.bin_buf) {
+		dma_free_coherent(&pci->dev, adata->suspend_buffers.bin_buf_size,
+				  adata->suspend_buffers.bin_buf, adata->suspend_buffers.sha_dma_addr);
+		adata->suspend_buffers.bin_buf = NULL;
+	} else if (adata->bin_buf) {
+		dma_size = (PAGE_ALIGN(sdev->basefw.fw->size) >> PAGE_SHIFT) * ACP_PAGE_SIZE;
+		dma_free_coherent(&pci->dev, dma_size, adata->bin_buf, adata->sha_dma_addr);
+	}
 	adata->bin_buf = NULL;
+	
 	if (adata->is_dram_in_use) {
-		dma_free_coherent(&pci->dev, ACP_DEFAULT_DRAM_LENGTH, adata->data_buf,
-				  adata->dma_addr);
+		if (adata->suspend_buffers.data_buf &&
+		    adata->data_buf == adata->suspend_buffers.data_buf) {
+			dma_free_coherent(&pci->dev, ACP_DEFAULT_DRAM_LENGTH,
+					  adata->suspend_buffers.data_buf, adata->suspend_buffers.dma_addr);
+			adata->suspend_buffers.data_buf = NULL;
+		} else if (adata->data_buf) {
+			dma_free_coherent(&pci->dev, ACP_DEFAULT_DRAM_LENGTH, adata->data_buf,
+					  adata->dma_addr);
+		}
 		adata->data_buf = NULL;
 	}
+	
 	if (adata->is_sram_in_use) {
-		dma_free_coherent(&pci->dev, ACP_DEFAULT_SRAM_LENGTH, adata->sram_data_buf,
-				  adata->sram_dma_addr);
+		if (adata->suspend_buffers.sram_data_buf &&
+		    adata->sram_data_buf == adata->suspend_buffers.sram_data_buf) {
+			dma_free_coherent(&pci->dev, ACP_DEFAULT_SRAM_LENGTH,
+					  adata->suspend_buffers.sram_data_buf, adata->suspend_buffers.sram_dma_addr);
+			adata->suspend_buffers.sram_data_buf = NULL;
+		} else if (adata->sram_data_buf) {
+			dma_free_coherent(&pci->dev, ACP_DEFAULT_SRAM_LENGTH, adata->sram_data_buf,
+					  adata->sram_dma_addr);
+		}
 		adata->sram_data_buf = NULL;
 	}
 	return ret;
