@@ -125,7 +125,7 @@ static int sof_resume(struct device *dev, bool runtime_resume)
 
 	sof_set_fw_state(sdev, SOF_FW_BOOT_PREPARE);
 
-	/* load the firmware */
+	/* load the firmware if its not loaded at suspend time */
 	ret = snd_sof_load_firmware(sdev);
 	if (ret < 0) {
 		dev_err(sdev->dev,
@@ -271,6 +271,21 @@ suspend:
 	/* return if the DSP was not probed successfully */
 	if (sdev->fw_state == SOF_FW_BOOT_NOT_STARTED)
 		return 0;
+
+	/* Pre-load firmware during suspend to prepare buffers for resume.
+	 * This improves resume reliability by using GFP_KERNEL allocation
+	 * when memory pressure is lower during suspend.
+	 */
+	if (!runtime_suspend && target_state != SOF_DSP_PM_D0) {
+		sof_set_fw_state(sdev, SOF_FW_BOOT_PREPARE);
+		ret = snd_sof_load_firmware(sdev);
+		if (ret < 0) {
+			dev_warn(sdev->dev,
+				"warning: failed to pre-load firmware during suspend %d\n",
+				ret);
+			/* Non-fatal - resume will try to load firmware normally */
+		}
+	}
 
 	/* platform-specific suspend */
 	if (runtime_suspend)

@@ -270,6 +270,10 @@ int acp_sof_load_signed_firmware(struct snd_sof_dev *sdev)
 	const char *fw_filename;
 	int ret;
 
+	/* Don't request firmware again if firmware is already requested */
+	if (adata->bin_buf)
+		return 0;
+
 	fw_filename = kasprintf(GFP_KERNEL, "%s/%s",
 				plat_data->fw_filename_prefix,
 				adata->fw_code_bin);
