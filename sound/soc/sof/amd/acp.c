@@ -558,85 +558,9 @@ static bool check_acp_sdw_enable_status(struct snd_sof_dev *sdev)
 	return acp_data->sdw_en_stat;
 }
 
-/**
- * acp_preallocate_suspend_buffers - Pre-allocate DMA buffers for suspend/resume
- * @pci: PCI device for DMA allocation
- * @adata: ACP device data to check usage flags
- *
- * Allocates the DMA buffers (IRAM, DRAM, SRAM) needed for firmware loading
- * during suspend when memory is available. Only allocates buffers that are
- * actually in use based on the firmware requirements. These buffers are used
- * during the next resume operation and then freed immediately after firmware
- * loading completes.
- */
-static void acp_preallocate_suspend_buffers(struct pci_dev *pci, struct acp_dev_data *adata)
-{
-	struct acp_suspend_buffers *suspend_buffers = &adata->suspend_buffers;
-	u32 dma_size, page_count;
-
-	/* Calculate IRAM buffer size based on maximum expected firmware size */
-	page_count = PAGE_ALIGN(SZ_2M) >> PAGE_SHIFT; /* 2MB max firmware size */
-	dma_size = page_count * ACP_PAGE_SIZE;
-	suspend_buffers->bin_buf_size = dma_size;
-
-	/* Allocate IRAM buffer */
-	suspend_buffers->bin_buf = dma_alloc_coherent(&pci->dev, dma_size,
-						      &suspend_buffers->sha_dma_addr,
-						      GFP_KERNEL);
-	if (!suspend_buffers->bin_buf) {
-		dev_warn(&pci->dev, "Failed to pre-allocate IRAM suspend buffer\n");
-		return;
-	}
-
-	/* Allocate DRAM buffer if it was used in previous firmware load or first time */
-	if (adata->is_dram_in_use) {
-		suspend_buffers->data_buf = dma_alloc_coherent(&pci->dev,
-							       ACP_DEFAULT_DRAM_LENGTH,
-							       &suspend_buffers->dma_addr,
-							       GFP_KERNEL);
-		if (!suspend_buffers->data_buf) {
-			dev_warn(&pci->dev, "Failed to pre-allocate DRAM suspend buffer\n");
-			goto free_iram;
-		}
-	}
-
-	/* Allocate SRAM buffer if it was used in previous firmware load or first time */
-	if (adata->is_sram_in_use) {
-		suspend_buffers->sram_data_buf = dma_alloc_coherent(&pci->dev,
-								   ACP_DEFAULT_SRAM_LENGTH,
-								   &suspend_buffers->sram_dma_addr,
-								   GFP_KERNEL);
-		if (!suspend_buffers->sram_data_buf) {
-			dev_warn(&pci->dev, "Failed to pre-allocate SRAM suspend buffer\n");
-			goto free_dram;
-		}
-	}
-
-	return;
-
-free_dram:
-	if (suspend_buffers->data_buf) {
-		dma_free_coherent(&pci->dev, ACP_DEFAULT_DRAM_LENGTH,
-				  suspend_buffers->data_buf,
-				  suspend_buffers->dma_addr);
-		suspend_buffers->data_buf = NULL;
-	}
-
-free_iram:
-	dma_free_coherent(&pci->dev, suspend_buffers->bin_buf_size,
-			  suspend_buffers->bin_buf,
-			  suspend_buffers->sha_dma_addr);
-	suspend_buffers->bin_buf = NULL;
-}
-
 int amd_sof_acp_suspend(struct snd_sof_dev *sdev, u32 target_state)
 {
-	struct pci_dev *pci = to_pci_dev(sdev->dev);
-	struct acp_dev_data *adata = sdev->pdata->hw_pdata;
 	int ret;
-
-	/* Pre-allocate DMA buffers for next resume to avoid allocation failures */
-	acp_preallocate_suspend_buffers(pci, adata);
 
 	/* When acp_reset() function is invoked, it will apply ACP SOFT reset and
 	 * DSP reset. ACP Soft reset sequence will cause all ACP IP registers will
@@ -657,6 +581,7 @@ int amd_sof_acp_suspend(struct snd_sof_dev *sdev, u32 target_state)
 
 	return 0;
 }
+EXPORT_SYMBOL_NS(amd_sof_acp_suspend, SND_SOC_SOF_AMD_COMMON);
 
 int amd_sof_acp_resume(struct snd_sof_dev *sdev)
 {

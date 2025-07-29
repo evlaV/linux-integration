@@ -175,16 +175,6 @@ struct  scratch_reg_conf {
 	unsigned int    reserve[];
 };
 
-struct acp_suspend_buffers {
-	void *bin_buf;
-	dma_addr_t sha_dma_addr;
-	u32 bin_buf_size;
-	void *data_buf;
-	dma_addr_t dma_addr;
-	void *sram_data_buf;
-	dma_addr_t sram_dma_addr;
-};
-
 struct acp_dsp_stream {
 	struct list_head list;
 	struct snd_sof_dev *sdev;
@@ -267,8 +257,6 @@ struct acp_dev_data {
 	bool is_dram_in_use;
 	bool is_sram_in_use;
 	bool sdw_en_stat;
-	/* Pre-allocated DMA buffers for suspend/resume reliability */
-	struct acp_suspend_buffers suspend_buffers;
 };
 
 void memcpy_to_scratch(struct snd_sof_dev *sdev, u32 offset, unsigned int *src, size_t bytes);
