@@ -150,8 +150,8 @@ struct ally_x_input {
 	struct work_struct output_worker;
 	bool output_worker_initialized;
 
-	/* Set if the left QAM emits Guide/Mode and right QAM emits Home + A chord */
-	bool qam_mode;
+	/* Set if the right QAM emits Home + A chord */
+	bool right_qam_steam_mode;
 	/* Prevent multiple queued event due to the enforced delay in worker */
 	bool update_qam_chord;
 
@@ -239,7 +239,6 @@ struct ally_config {
 
 	struct turbo_config turbo;
 	struct button_sysfs_entry *button_entries;
-	void *button_mappings; /* ally_button_mapping array indexed by gamepad_mode */
 
 	struct joystick_resp_curve left_curve;
 	struct joystick_resp_curve right_curve;
