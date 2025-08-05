@@ -392,7 +392,7 @@ int asus_wmi_evaluate_method(u32 method_id, u32 arg0, u32 arg1, u32 *retval)
 {
 	return asus_wmi_evaluate_method3(method_id, arg0, arg1, 0, retval);
 }
-EXPORT_SYMBOL_NS_GPL(asus_wmi_evaluate_method, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(asus_wmi_evaluate_method, ASUS_WMI);
 
 static int asus_wmi_evaluate_method5(u32 method_id,
 		u32 arg0, u32 arg1, u32 arg2, u32 arg3, u32 arg4, u32 *retval)
@@ -579,7 +579,7 @@ int asus_wmi_get_devstate_dsts(u32 dev_id, u32 *retval)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(asus_wmi_get_devstate_dsts, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(asus_wmi_get_devstate_dsts, ASUS_WMI);
 
 /**
  * asus_wmi_set_devstate() - Set the WMI function state.
@@ -600,7 +600,7 @@ int asus_wmi_set_devstate(u32 dev_id, u32 ctrl_param, u32 *retval)
 	return asus_wmi_evaluate_method(ASUS_WMI_METHODID_DEVS, dev_id,
 					ctrl_param, retval);
 }
-EXPORT_SYMBOL_NS_GPL(asus_wmi_set_devstate, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(asus_wmi_set_devstate, ASUS_WMI);
 
 /* Helper for special devices with magic return codes */
 static int asus_wmi_get_devstate_bits(struct asus_wmi *asus,
@@ -1436,7 +1436,7 @@ void set_ally_mcu_hack(enum asus_ally_mcu_hack status)
 	pr_debug("%s Ally MCU suspend quirk\n",
 		 status == ASUS_WMI_ALLY_MCU_HACK_ENABLED ? "Enabled" : "Disabled");
 }
-EXPORT_SYMBOL_NS_GPL(set_ally_mcu_hack, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_hack, ASUS_WMI);
 
 /*
  * mcu_powersave should be enabled always, as it is fixed in MCU FW versions:
@@ -1461,7 +1461,7 @@ void set_ally_mcu_powersave(bool enabled)
 	pr_debug("%s MCU Powersave\n",
 		 enabled ? "Enabled" : "Disabled");
 }
-EXPORT_SYMBOL_NS_GPL(set_ally_mcu_powersave, "ASUS_WMI");
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_powersave, ASUS_WMI);
 
 #if IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS)
 static ssize_t mcu_powersave_show(struct device *dev,

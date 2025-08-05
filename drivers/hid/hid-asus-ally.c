@@ -2190,8 +2190,8 @@ static void __exit rog_ally_exit(void)
 module_init(rog_ally_init);
 module_exit(rog_ally_exit);
 
-MODULE_IMPORT_NS("ASUS_WMI");
-MODULE_IMPORT_NS("HID_ASUS");
+MODULE_IMPORT_NS(ASUS_WMI);
+MODULE_IMPORT_NS(HID_ASUS);
 MODULE_AUTHOR("Luke D. Jones");
 MODULE_DESCRIPTION("HID Driver for ASUS ROG Ally gamepad configuration.");
 MODULE_LICENSE("GPL");
