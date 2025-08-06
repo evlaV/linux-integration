@@ -98,7 +98,7 @@ build-debian-kernel-builder:
     IMAGE_DISTRO_BASE: archlinux
     IMAGE_DISTRO_TAG: base-devel
     IMAGE_NAME: archlinux-kernel-builder
-    IMAGE_TAG: "2024-12-02"
+    IMAGE_TAG: "2025-08-02"
 
 check-archlinux-kernel-builder:
   extends:
