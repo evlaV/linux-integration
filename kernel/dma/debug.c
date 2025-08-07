@@ -1394,6 +1394,8 @@ void debug_dma_alloc_coherent(struct device *dev, size_t size,
 {
 	struct dma_debug_entry *entry;
 
+	pr_info("[Debug] %s\n", __func__);
+
 	if (unlikely(dma_debug_disabled()))
 		return;
 

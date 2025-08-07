@@ -107,6 +107,8 @@ static struct page *dma_direct_alloc_swiotlb(struct device *dev, size_t size)
 {
 	struct page *page = swiotlb_alloc(dev, size);
 
+	pr_info("[Debug] %s\n", __func__);
+
 	if (page && !dma_coherent_ok(dev, page_to_phys(page), size)) {
 		swiotlb_free(dev, page, size);
 		return NULL;
@@ -122,12 +124,15 @@ static struct page *__dma_direct_alloc_pages(struct device *dev, size_t size,
 	struct page *page = NULL;
 	u64 phys_limit;
 
+	pr_info("[Debug] %s %x\n", __func__, gfp);
+
 	WARN_ON_ONCE(!PAGE_ALIGNED(size));
 
 	if (is_swiotlb_for_alloc(dev))
 		return dma_direct_alloc_swiotlb(dev, size);
 
 	gfp |= dma_direct_optimal_gfp_mask(dev, &phys_limit);
+	pr_info("[Debug] %s %x\n", __func__, gfp);
 	page = dma_alloc_contiguous(dev, size, gfp);
 	if (page) {
 		if (!dma_coherent_ok(dev, page_to_phys(page), size) ||
@@ -175,6 +180,7 @@ static void *dma_direct_alloc_from_pool(struct device *dev, size_t size,
 	u64 phys_limit;
 	void *ret;
 
+	pr_info("[Debug] %s\n", __func__);
 	if (WARN_ON_ONCE(!IS_ENABLED(CONFIG_DMA_COHERENT_POOL)))
 		return NULL;
 
@@ -190,6 +196,8 @@ static void *dma_direct_alloc_no_mapping(struct device *dev, size_t size,
 		dma_addr_t *dma_handle, gfp_t gfp)
 {
 	struct page *page;
+
+	pr_info("[Debug] %s %x\n", __func__, gfp);
 
 	page = __dma_direct_alloc_pages(dev, size, gfp & ~__GFP_ZERO, true);
 	if (!page)
@@ -210,6 +218,8 @@ void *dma_direct_alloc(struct device *dev, size_t size,
 	bool remap = false, set_uncached = false;
 	struct page *page;
 	void *ret;
+
+	pr_info("[Debug] %s %x\n", __func__, gfp);
 
 	size = PAGE_ALIGN(size);
 	if (attrs & DMA_ATTR_NO_WARN)

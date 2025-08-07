@@ -147,6 +147,8 @@ static void *__dma_alloc_from_coherent(struct device *dev,
 	int pageno;
 	void *ret;
 
+	pr_info("[Debug] %s\n", __func__);
+
 	spin_lock_irqsave(&mem->spinlock, flags);
 
 	if (unlikely(size > ((dma_addr_t)mem->size << PAGE_SHIFT)))
@@ -188,6 +190,8 @@ int dma_alloc_from_dev_coherent(struct device *dev, ssize_t size,
 		dma_addr_t *dma_handle, void **ret)
 {
 	struct dma_coherent_mem *mem = dev_get_coherent_memory(dev);
+
+	pr_info("[Debug] %s\n", __func__);
 
 	if (!mem)
 		return 0;
@@ -282,6 +286,8 @@ static struct dma_coherent_mem *dma_coherent_default_memory __ro_after_init;
 void *dma_alloc_from_global_coherent(struct device *dev, ssize_t size,
 				     dma_addr_t *dma_handle)
 {
+	pr_info("[Debug] %s\n", __func__);
+
 	if (!dma_coherent_default_memory)
 		return NULL;
 

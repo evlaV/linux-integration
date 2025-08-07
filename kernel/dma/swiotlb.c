@@ -1756,6 +1756,8 @@ struct page *swiotlb_alloc(struct device *dev, size_t size)
 	unsigned int align;
 	int index;
 
+	pr_info("[Debug] %s\n", __func__);
+
 	if (!mem)
 		return NULL;
 

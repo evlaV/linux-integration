@@ -541,6 +541,8 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	void *cpu_addr;
 
+	pr_info("[Debug] %s %x\n", __func__, flag);
+
 	WARN_ON_ONCE(!dev->coherent_dma_mask);
 
 	/*
@@ -556,6 +558,8 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 
 	/* let the implementation decide on the zone to allocate from: */
 	flag &= ~(__GFP_DMA | __GFP_DMA32 | __GFP_HIGHMEM);
+
+	pr_info("[Debug] %s after clearing %x\n", __func__, flag);
 
 	if (dma_alloc_direct(dev, ops))
 		cpu_addr = dma_direct_alloc(dev, size, dma_handle, flag, attrs);

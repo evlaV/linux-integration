@@ -4202,6 +4202,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	int reserve_flags;
 
 restart:
+	pr_info("[Debug] %s allowed %x\n", __func__, gfp_mask);
 	compaction_retries = 0;
 	no_progress_loops = 0;
 	compact_priority = DEF_COMPACT_PRIORITY;
@@ -4215,6 +4216,7 @@ restart:
 	 */
 	alloc_flags = gfp_to_alloc_flags(gfp_mask, order);
 
+	pr_info("[Debug] %s alloc_flags %x\n", __func__, alloc_flags);
 	/*
 	 * We need to recalculate the starting point for the zonelist iterator
 	 * because we might have used different nodemask in the fast path, or
@@ -4263,6 +4265,7 @@ restart:
 			(costly_order ||
 			   (order > 0 && ac->migratetype != MIGRATE_MOVABLE))
 			&& !gfp_pfmemalloc_allowed(gfp_mask)) {
+		pr_info("[Debug] %s: direct compaction\n", __func__);
 		page = __alloc_pages_direct_compact(gfp_mask, order,
 						alloc_flags, ac,
 						INIT_COMPACT_PRIORITY,
@@ -4303,6 +4306,8 @@ restart:
 			 */
 			compact_priority = INIT_COMPACT_PRIORITY;
 		}
+	} else {
+		pr_info("[Debug] %s: skipping direct compaction\n", __func__);
 	}
 
 retry:
@@ -4406,6 +4411,7 @@ retry:
 	}
 
 nopage:
+	pr_info("[Debug] %s: no page found\n", __func__);
 	/*
 	 * Deal with possible cpuset update races or zonelist updates to avoid
 	 * a unnecessary OOM kill.
@@ -4419,6 +4425,7 @@ nopage:
 	 * we always retry
 	 */
 	if (gfp_mask & __GFP_NOFAIL) {
+		pr_info("GFP_NOFAIL handling\n");
 		/*
 		 * All existing users of the __GFP_NOFAIL are blockable, so warn
 		 * of any new users that actually require GFP_NOWAIT
@@ -4461,12 +4468,13 @@ fail:
 got_pg:
 	return page;
 }
-
+extern int mhi_print;
 static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		int preferred_nid, nodemask_t *nodemask,
 		struct alloc_context *ac, gfp_t *alloc_gfp,
 		unsigned int *alloc_flags)
 {
+	if (mhi_print) pr_info("[Debug] %s allowed %x %x\n", __func__, alloc_gfp, alloc_flags);
 	ac->highest_zoneidx = gfp_zone(gfp_mask);
 	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
 	ac->nodemask = nodemask;
@@ -4675,6 +4683,7 @@ failed:
 }
 EXPORT_SYMBOL_GPL(alloc_pages_bulk_noprof);
 
+int mhi_print;
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
@@ -4686,6 +4695,7 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
+	if (mhi_print) pr_info("[Debug] %s %x\n", __func__, gfp);
 	/*
 	 * There are several places where we assume that the order value is sane
 	 * so bail out early if the request is out of bound.
@@ -4694,6 +4704,10 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 		return NULL;
 
 	gfp &= gfp_allowed_mask;
+
+
+	if (mhi_print) pr_info("[Debug] %s allowed %x\n", __func__, gfp);
+
 	/*
 	 * Apply scoped allocation constraints. This is mainly about GFP_NOFS
 	 * resp. GFP_NOIO which has to be inherited for all allocation requests
@@ -4703,6 +4717,9 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	 */
 	gfp = current_gfp_context(gfp);
 	alloc_gfp = gfp;
+
+	if (mhi_print) pr_info("[Debug] %s %x\n", __func__, alloc_gfp);
+
 	if (!prepare_alloc_pages(gfp, order, preferred_nid, nodemask, &ac,
 			&alloc_gfp, &alloc_flags))
 		return NULL;
