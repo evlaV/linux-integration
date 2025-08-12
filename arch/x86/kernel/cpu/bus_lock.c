@@ -299,9 +299,16 @@ void bus_lock_init(void)
 
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, val);
 
-	if ((boot_cpu_has(X86_FEATURE_SPLIT_LOCK_DETECT) &&
-	    (sld_state == sld_warn || sld_state == sld_fatal)) ||
-	    sld_state == sld_off) {
+	/* Explicitly disable bus lock detection if split lock detection is disabled */
+	if (sld_state == sld_off) {
+		val &= ~DEBUGCTLMSR_BUS_LOCK_DETECT;
+		wrmsrl(MSR_IA32_DEBUGCTLMSR, val);
+		pr_info("Bus lock detection explicitly disabled via MSR_IA32_DEBUGCTLMSR\n");
+		return;
+	}
+
+	if (boot_cpu_has(X86_FEATURE_SPLIT_LOCK_DETECT) &&
+	    (sld_state == sld_warn || sld_state == sld_fatal)) {
 		/*
 		 * Warn and fatal are handled by #AC for split lock if #AC for
 		 * split lock is supported.
@@ -362,6 +369,21 @@ static void __init split_lock_setup(struct cpuinfo_x86 *c)
 	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
 		return;
 
+	/* Explicitly disable split lock detection if disabled via kernel parameter */
+	if (sld_state == sld_off) {
+		/* Check if CPU supports split lock detection to safely disable it */
+		m = x86_match_cpu(split_lock_cpu_ids);
+		if (m)
+			goto disable_split_lock;
+
+		if (cpu_has(c, X86_FEATURE_CORE_CAPABILITIES)) {
+			rdmsrl(MSR_IA32_CORE_CAPS, ia32_core_caps);
+			if (ia32_core_caps & MSR_IA32_CORE_CAPS_SPLIT_LOCK_DETECT)
+				goto disable_split_lock;
+		}
+		return;
+	}
+
 	/* Check for CPUs that have support but do not enumerate it: */
 	m = x86_match_cpu(split_lock_cpu_ids);
 	if (m)
@@ -380,6 +402,14 @@ static void __init split_lock_setup(struct cpuinfo_x86 *c)
 		goto supported;
 
 	/* CPU is not in the model list and does not have the MSR bit: */
+	return;
+
+disable_split_lock:
+	/* Explicitly disable MSR_TEST_CTRL split lock detection bit */
+	if (split_lock_verify_msr(false)) {
+		cpu_model_supports_sld = true;  /* Set flag so split_lock_init() runs */
+		pr_info("Split lock detection explicitly disabled via MSR_TEST_CTRL\n");
+	}
 	return;
 
 supported:
@@ -425,7 +455,8 @@ static void sld_state_show(void)
 
 void __init sld_setup(struct cpuinfo_x86 *c)
 {
-	split_lock_setup(c);
+	/* Parse kernel parameters first so split_lock_setup can check sld_state */
 	sld_state_setup();
+	split_lock_setup(c);
 	sld_state_show();
 }
