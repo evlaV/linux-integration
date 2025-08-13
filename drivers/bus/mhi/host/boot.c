@@ -384,7 +384,7 @@ static void mhi_firmware_copy(struct mhi_controller *mhi_cntrl,
 		mhi_buf++;
 	}
 }
-extern int mhi_print;
+
 void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 {
 	const struct firmware *firmware = NULL;
@@ -397,10 +397,10 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 	size_t size, fw_sz;
 	int ret;
 
-	mhi_print = 1;
+	pr_info("%s:\n", __func__);
+
 	if (MHI_PM_IN_ERROR_STATE(mhi_cntrl->pm_state)) {
 		dev_err(dev, "Device MHI is not in valid state\n");
-		mhi_print = 0;
 		return;
 	}
 
@@ -518,7 +518,6 @@ fw_load_ready_state:
 	}
 
 	dev_info(dev, "Wait for device to enter SBL or Mission mode\n");
-	mhi_print = 0;
 	return;
 
 error_ready_state:
@@ -533,7 +532,6 @@ error_fw_load:
 	write_unlock_irq(&mhi_cntrl->pm_lock);
 	if (new_state == MHI_PM_FW_DL_ERR)
 		wake_up_all(&mhi_cntrl->state_event);
-	mhi_print = 0;
 }
 
 int mhi_download_amss_image(struct mhi_controller *mhi_cntrl)

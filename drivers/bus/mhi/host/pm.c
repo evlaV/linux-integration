@@ -774,7 +774,7 @@ void mhi_pm_sys_err_handler(struct mhi_controller *mhi_cntrl)
 
 	mhi_queue_state_transition(mhi_cntrl, DEV_ST_TRANSITION_SYS_ERR);
 }
-
+extern int mhi_print;
 /* Device State Transition worker */
 void mhi_pm_st_worker(struct work_struct *work)
 {
@@ -784,6 +784,8 @@ void mhi_pm_st_worker(struct work_struct *work)
 							struct mhi_controller,
 							st_worker);
 
+	pr_info("[Debug] %s\n", __func__);
+	mhi_print = 1;
 	spin_lock_irq(&mhi_cntrl->transition_lock);
 	list_splice_tail_init(&mhi_cntrl->transition_list, &head);
 	spin_unlock_irq(&mhi_cntrl->transition_lock);
@@ -840,6 +842,7 @@ void mhi_pm_st_worker(struct work_struct *work)
 		}
 		kfree(itr);
 	}
+	mhi_print = 0;
 }
 
 int mhi_pm_suspend(struct mhi_controller *mhi_cntrl)

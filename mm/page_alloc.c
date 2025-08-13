@@ -3544,6 +3544,7 @@ __alloc_pages_cpuset_fallback(gfp_t gfp_mask, unsigned int order,
 {
 	struct page *page;
 
+	pr_info("[Debug] %s\n", __func__);
 	page = get_page_from_freelist(gfp_mask, order,
 			alloc_flags|ALLOC_CPUSET, ac);
 	/*
@@ -4182,7 +4183,7 @@ check_retry_cpuset(int cpuset_mems_cookie, struct alloc_context *ac)
 
 	return false;
 }
-
+extern int mhi_print;
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 						struct alloc_context *ac)
@@ -4202,7 +4203,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	int reserve_flags;
 
 restart:
-	pr_info("[Debug] %s allowed %x\n", __func__, gfp_mask);
+	if (mhi_print) pr_info("[Debug] %s [restart] gfp_mask %x\n", __func__, gfp_mask);
 	compaction_retries = 0;
 	no_progress_loops = 0;
 	compact_priority = DEF_COMPACT_PRIORITY;
@@ -4216,7 +4217,7 @@ restart:
 	 */
 	alloc_flags = gfp_to_alloc_flags(gfp_mask, order);
 
-	pr_info("[Debug] %s alloc_flags %x\n", __func__, alloc_flags);
+	if (mhi_print) pr_info("[Debug] %s alloc_flags %x\n", __func__, alloc_flags);
 	/*
 	 * We need to recalculate the starting point for the zonelist iterator
 	 * because we might have used different nodemask in the fast path, or
@@ -4265,7 +4266,7 @@ restart:
 			(costly_order ||
 			   (order > 0 && ac->migratetype != MIGRATE_MOVABLE))
 			&& !gfp_pfmemalloc_allowed(gfp_mask)) {
-		pr_info("[Debug] %s: direct compaction\n", __func__);
+		if (mhi_print) pr_info("[Debug] %s: direct compaction\n", __func__);
 		page = __alloc_pages_direct_compact(gfp_mask, order,
 						alloc_flags, ac,
 						INIT_COMPACT_PRIORITY,
@@ -4307,13 +4308,16 @@ restart:
 			compact_priority = INIT_COMPACT_PRIORITY;
 		}
 	} else {
-		pr_info("[Debug] %s: skipping direct compaction\n", __func__);
+		if (mhi_print) pr_info("[Debug] %s: skipping direct compaction\n", __func__);
 	}
 
 retry:
+	if (mhi_print) pr_info("[Debug] %s [retry]\n", __func__);
 	/* Ensure kswapd doesn't accidentally go to sleep as long as we loop */
-	if (alloc_flags & ALLOC_KSWAPD)
+	if (alloc_flags & ALLOC_KSWAPD) {
+		if (mhi_print) pr_info("[Debug] %s wake_all_kswapds", __func__);
 		wake_all_kswapds(order, gfp_mask, ac);
+	}
 
 	reserve_flags = __gfp_pfmemalloc_flags(gfp_mask);
 	if (reserve_flags)
@@ -4411,7 +4415,7 @@ retry:
 	}
 
 nopage:
-	pr_info("[Debug] %s: no page found\n", __func__);
+	if (mhi_print) pr_info("[Debug] %s: [nopage] no page found\n", __func__);
 	/*
 	 * Deal with possible cpuset update races or zonelist updates to avoid
 	 * a unnecessary OOM kill.
@@ -4425,7 +4429,7 @@ nopage:
 	 * we always retry
 	 */
 	if (gfp_mask & __GFP_NOFAIL) {
-		pr_info("GFP_NOFAIL handling\n");
+		if (mhi_print) pr_info("GFP_NOFAIL handling\n");
 		/*
 		 * All existing users of the __GFP_NOFAIL are blockable, so warn
 		 * of any new users that actually require GFP_NOWAIT
@@ -4461,6 +4465,8 @@ nopage:
 
 		cond_resched();
 		goto retry;
+	} else {
+		if (mhi_print) pr_info("GFP_NOFAIL not set\n");
 	}
 fail:
 	warn_alloc(gfp_mask, ac->nodemask,
@@ -4468,13 +4474,13 @@ fail:
 got_pg:
 	return page;
 }
-extern int mhi_print;
+
 static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 		int preferred_nid, nodemask_t *nodemask,
 		struct alloc_context *ac, gfp_t *alloc_gfp,
 		unsigned int *alloc_flags)
 {
-	if (mhi_print) pr_info("[Debug] %s allowed %x %x\n", __func__, alloc_gfp, alloc_flags);
+	if (mhi_print) pr_info("[Debug] %s allowed alloc_gfp = %x alloc_flags = %x\n", __func__, *alloc_gfp, *alloc_flags);
 	ac->highest_zoneidx = gfp_zone(gfp_mask);
 	ac->zonelist = node_zonelist(preferred_nid, gfp_mask);
 	ac->nodemask = nodemask;
@@ -4494,8 +4500,10 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 
 	might_alloc(gfp_mask);
 
-	if (should_fail_alloc_page(gfp_mask, order))
+	if (should_fail_alloc_page(gfp_mask, order)) {
+		if (mhi_print) pr_info("[Debug] %s allowed alloc_gfp = %x alloc_flags = %x\n", __func__, *alloc_gfp, *alloc_flags);
 		return false;
+	}
 
 	*alloc_flags = gfp_to_alloc_flags_cma(gfp_mask, *alloc_flags);
 
@@ -4510,6 +4518,7 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	ac->preferred_zoneref = first_zones_zonelist(ac->zonelist,
 					ac->highest_zoneidx, ac->nodemask);
 
+	if (mhi_print) pr_info("[Debug] %s allowed alloc_gfp = %x alloc_flags = %x\n", __func__, *alloc_gfp, *alloc_flags);
 	return true;
 }
 
@@ -4718,7 +4727,7 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	gfp = current_gfp_context(gfp);
 	alloc_gfp = gfp;
 
-	if (mhi_print) pr_info("[Debug] %s %x\n", __func__, alloc_gfp);
+	if (mhi_print) pr_info("[Debug] %s alloc_gfp = %x\n", __func__, alloc_gfp);
 
 	if (!prepare_alloc_pages(gfp, order, preferred_nid, nodemask, &ac,
 			&alloc_gfp, &alloc_flags))
@@ -4756,6 +4765,7 @@ out:
 	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
 	kmsan_alloc_page(page, order, alloc_gfp);
 
+	if (mhi_print) pr_info("[Debug] %s ret\n", __func__);
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_noprof);
