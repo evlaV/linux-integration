@@ -27,70 +27,70 @@
 struct drm_dmi_panel_orientation_data {
 	int width;
 	int height;
-	const char * const *bios_dates;
+	const char *const *bios_dates;
 	int orientation;
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_micropc = {
 	.width = 720,
 	.height = 1280,
-	.bios_dates = (const char * const []){ "04/26/2019",
-		NULL },
+	.bios_dates = (const char *const[]){ "04/26/2019", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_onemix2s = {
 	.width = 1200,
 	.height = 1920,
-	.bios_dates = (const char * const []){ "05/21/2018", "10/26/2018",
-		"03/04/2019", NULL },
+	.bios_dates = (const char *const[]){ "05/21/2018", "10/26/2018",
+					     "03/04/2019", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_pocket = {
 	.width = 1200,
 	.height = 1920,
-	.bios_dates = (const char * const []){ "05/26/2017", "06/28/2017",
-		"07/05/2017", "08/07/2017", NULL },
+	.bios_dates = (const char *const[]){ "05/26/2017", "06/28/2017",
+					     "07/05/2017", "08/07/2017", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_pocket2 = {
 	.width = 1200,
 	.height = 1920,
-	.bios_dates = (const char * const []){ "06/28/2018", "08/28/2018",
-		"12/07/2018", NULL },
+	.bios_dates = (const char *const[]){ "06/28/2018", "08/28/2018",
+					     "12/07/2018", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_win = {
 	.width = 720,
 	.height = 1280,
-	.bios_dates = (const char * const []){
-		"10/25/2016", "11/18/2016", "12/23/2016", "12/26/2016",
-		"02/21/2017", "03/20/2017", "05/25/2017", NULL },
+	.bios_dates = (const char *const[]){ "10/25/2016", "11/18/2016",
+					     "12/23/2016", "12/26/2016",
+					     "02/21/2017", "03/20/2017",
+					     "05/25/2017", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data gpd_win2 = {
 	.width = 720,
 	.height = 1280,
-	.bios_dates = (const char * const []){
-		"12/07/2017", "05/24/2018", "06/29/2018", NULL },
+	.bios_dates = (const char *const[]){ "12/07/2017", "05/24/2018",
+					     "06/29/2018", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data itworks_tw891 = {
 	.width = 800,
 	.height = 1280,
-	.bios_dates = (const char * const []){ "10/16/2015", NULL },
+	.bios_dates = (const char *const[]){ "10/16/2015", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
 static const struct drm_dmi_panel_orientation_data onegx1_pro = {
 	.width = 1200,
 	.height = 1920,
-	.bios_dates = (const char * const []){ "12/17/2020", NULL },
+	.bios_dates = (const char *const[]){ "12/17/2020", NULL },
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
@@ -504,6 +504,30 @@ static const struct dmi_system_id orientation_data[] = {
 		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ONE XPLAYER"),
 		},
 		.driver_data = (void *)&lcd1200x1920_leftside_up,
+	}, {	/* OneXPlayer X1 AMD */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ONE-NETBOOK"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ONEXPLAYER X1 A"),
+		},
+		.driver_data = (void *)&lcd1600x2560_leftside_up,
+	}, {	/* OneXPlayer X1 Intel */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ONE-NETBOOK"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ONEXPLAYER X1 i"),
+		},
+		.driver_data = (void *)&lcd1600x2560_leftside_up,
+	}, {	/* OneXPlayer X1 AMD Strix Point */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ONE-NETBOOK"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ONEXPLAYER X1Pro"),
+		},
+		.driver_data = (void *)&lcd1600x2560_leftside_up,
+	}, {	/* OneXPlayer X1Pro EVA variant with Intel */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ONE-NETBOOK"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "ONEXPLAYER X1Pro EVA-02"),
+		},
+		.driver_data = (void *)&lcd1600x2560_leftside_up,
 	}, {	/* Zotac Gaming Zone (OLED) */
 		.matches = {
 		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ZOTAC"),
@@ -586,13 +610,11 @@ int drm_get_panel_orientation_quirk(int width, int height)
 	const char *bios_date;
 	int i;
 
-	for (match = dmi_first_match(orientation_data);
-	     match;
+	for (match = dmi_first_match(orientation_data); match;
 	     match = dmi_first_match(match + 1)) {
 		data = match->driver_data;
 
-		if (data->width != width ||
-		    data->height != height)
+		if (data->width != width || data->height != height)
 			continue;
 
 		if (!data->bios_dates)
