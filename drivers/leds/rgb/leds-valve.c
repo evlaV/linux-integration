@@ -97,13 +97,13 @@ struct valve_leds {
 		int index;
 	} leds[VALVE_NUM_LEDS];
 
-	// cached so we can restore state on `enabled` toggle
+	/* cached so we can restore state on `enabled` toggle */
 	int effect_index;
 };
 
 static struct platform_device *pdev;
 
-// Index that corresponds to off and normal states for `enabled` cycling
+/* Index that corresponds to off and normal states for `enabled` cycling */
 #define VALVE_INDEX_DISABLED 4
 #define VALVE_INDEX_NORMAL   3
 static const char *const effect_names[] = {
@@ -137,11 +137,12 @@ static ssize_t enabled_store(struct device *dev, struct device_attribute *attr,
 	const char *buf, size_t count)
 {
 	struct valve_leds *leds = dev_get_drvdata(dev->parent);
-	int mode, enabled, ret;
+	int mode, ret;
+	bool enabled;
 
-	enabled = __sysfs_match_string(effect_names, ARRAY_SIZE(effect_names), buf);
-	if (enabled < 0)
-		return enabled;
+	ret = kstrtobool(buf, &enabled);
+	if (ret < 0)
+		return ret;
 
 	mode = enabled ? leds->effect_index : VALVE_INDEX_DISABLED;
 	ret = regmap_write(leds->regmap, VALVE_PORT_MODE, mode);
@@ -182,7 +183,7 @@ static ssize_t effect_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	// cache last enabled mode for enabled node to restore
+	/* cache last enabled mode for enabled node to restore */
 	if (mode != VALVE_INDEX_DISABLED)
 		leds->effect_index = mode;
 
@@ -340,13 +341,17 @@ static int valve_leds_probe(struct platform_device *pdev)
 	if (IS_ERR(vleds->regmap))
 		return PTR_ERR(vleds->regmap);
 
-	// Read current state at load time
-	// Cached for `enabled` node but also serves as a self-test
+	/* Read current state at load time
+	   Cached for `enabled` node but also serves as a self-test */
 	ret = regmap_read(vleds->regmap, VALVE_PORT_MODE, &vleds->effect_index);
 	if (ret) {
 		pr_err("%s(): Failed to read led state: %ld\n", __func__, PTR_ERR(pdev));
 		return ret;
 	}
+
+	/* If the initial state is disabled use the normal state as default */
+	if (vleds->effect_index == VALVE_INDEX_DISABLED)
+		vleds->effect_index = VALVE_INDEX_NORMAL;
 
 	vleds->pdev = pdev;
 	for (i = 0; i < VALVE_NUM_LEDS; i++) {
