@@ -606,6 +606,9 @@ static int system_clock_control(struct snd_soc_dapm_widget *w,
 	struct snd_soc_component *component =
 		snd_soc_dapm_to_component(w->dapm);
 	struct nau8821 *nau8821 = snd_soc_component_get_drvdata(component);
+	struct regmap *regmap = nau8821->regmap;
+	unsigned int value;
+	bool clk_fll, error;
 
 	if (SND_SOC_DAPM_EVENT_OFF(event)) {
 		dev_dbg(nau8821->dev, "system clock control : POWER OFF\n");
@@ -620,13 +623,43 @@ static int system_clock_control(struct snd_soc_dapm_widget *w,
 		} else {
 			nau8821_configure_sysclk(nau8821, NAU8821_CLK_DIS, 0);
 		}
+	} else {
+		dev_dbg(nau8821->dev, "system clock control : POWER ON\n");
+		/* Check the clock source setting is proper or not
+		 * no matter the source is from FLL or MCLK.
+		 */
+		regmap_read(regmap, NAU8821_R04_FLL1, &value);
+		clk_fll = value & NAU8821_FLL_RATIO_MASK;
+		/* It's error to use internal clock when playback */
+		regmap_read(regmap, NAU8821_R09_FLL6, &value);
+		error = value & NAU8821_DCO_EN;
+		if (!error) {
+			/* Check error depending on source is FLL or MCLK. */
+			regmap_read(regmap, NAU8821_R03_CLK_DIVIDER, &value);
+			if (clk_fll)
+				error = !(value & NAU8821_CLK_SRC_MASK);
+			else
+				error = value & NAU8821_CLK_SRC_MASK;
+		}
+		/* Recover the clock source setting if error. */
+		if (error) {
+			if (clk_fll) {
+				regmap_update_bits(regmap, NAU8821_R09_FLL6,
+						   NAU8821_DCO_EN, 0);
+				regmap_update_bits(regmap, NAU8821_R03_CLK_DIVIDER,
+						   NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
+			} else {
+				nau8821_configure_sysclk(nau8821, NAU8821_CLK_MCLK, 0);
+			}
+		}
 	}
 	return 0;
 }
 
 static const struct snd_soc_dapm_widget nau8821_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("System Clock", SND_SOC_NOPM, 0, 0,
-		system_clock_control, SND_SOC_DAPM_POST_PMD),
+			    system_clock_control, SND_SOC_DAPM_POST_PMD |
+			    SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_SUPPLY("MICBIAS", NAU8821_R74_MIC_BIAS,
 		NAU8821_MICBIAS_POWERUP_SFT, 0, NULL, 0),
 	SND_SOC_DAPM_SUPPLY("DMIC Clock", SND_SOC_NOPM, 0, 0,
@@ -1386,10 +1419,10 @@ static int nau8821_set_fll(struct snd_soc_component *component,
 	mdelay(2);
 	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
 		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
-	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
-		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_MCLK);
-	regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
-		NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
+	//regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
+	//	NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_MCLK);
+	//regmap_update_bits(nau8821->regmap, NAU8821_R03_CLK_DIVIDER,
+	//	NAU8821_CLK_SRC_MASK, NAU8821_CLK_SRC_VCO);
 
 	return 0;
 }
