@@ -892,6 +892,12 @@ bool pm_wakeup_pending(void)
 		pm_print_active_wakeup_sources();
 	}
 
+	if (ret || atomic_read(&pm_abort_suspend) > 0) {
+		pr_info("\n\nDebug %s: ret: %d, pm_abort_suspend: %d\n",
+			__func__, ret, atomic_read(&pm_abort_suspend));
+		dump_stack();
+	}
+
 	return ret || atomic_read(&pm_abort_suspend) > 0;
 }
 EXPORT_SYMBOL_GPL(pm_wakeup_pending);
