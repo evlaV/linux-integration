@@ -1173,9 +1173,8 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 		/*
 		 * Allocate RDDM table for debugging purpose if specified
 		 */
-		if (!mhi_cntrl->rddm_image)
-			mhi_alloc_bhie_table(mhi_cntrl, &mhi_cntrl->rddm_image,
-					     mhi_cntrl->rddm_size);
+		mhi_alloc_bhie_table(mhi_cntrl, &mhi_cntrl->rddm_image,
+				     mhi_cntrl->rddm_size);
 		if (mhi_cntrl->rddm_image) {
 			ret = mhi_rddm_prepare(mhi_cntrl,
 					       mhi_cntrl->rddm_image);
