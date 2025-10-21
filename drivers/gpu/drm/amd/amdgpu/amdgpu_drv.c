@@ -2677,7 +2677,7 @@ static int amdgpu_pmops_thaw(struct device *dev)
 
 	/* do not resume device if it's normal hibernation */
 	if (!pm_hibernate_is_recovering())
-		return 0;
+		return -EBUSY;
 
 	r = amdgpu_device_resume(drm_dev, true);
 	adev->in_s4 = false;
