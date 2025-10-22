@@ -2673,12 +2673,19 @@ static int amdgpu_pmops_freeze(struct device *dev)
 static int amdgpu_pmops_thaw(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	int ret;
 
+	pr_info("Debug: %s called\n", __func__);
+	dump_stack();
 	/* do not resume device if it's normal hibernation */
-	if (!pm_hibernate_is_recovering() && !pm_hibernation_mode_is_suspend())
+	if (!pm_hibernate_is_recovering() && !pm_hibernation_mode_is_suspend()) {
+		pr_info("Debug: %s complete -EBUSY\n", __func__);
 		return -EBUSY;
+	}
+	ret = amdgpu_device_resume(drm_dev, true);
 
-	return amdgpu_device_resume(drm_dev, true);
+	pr_info("Debug: %s complete ret=%d\n", __func__, ret);
+	return ret;
 }
 
 static int amdgpu_pmops_poweroff(struct device *dev)

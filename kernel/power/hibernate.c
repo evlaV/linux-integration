@@ -488,6 +488,7 @@ int hibernation_snapshot(int platform_mode)
 	console_resume_all();
 	dpm_complete(msg);
 
+	// pm_system_wakeup();
  Close:
 	platform_end(platform_mode);
 	return error;
