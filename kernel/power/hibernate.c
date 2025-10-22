@@ -482,14 +482,19 @@ int hibernation_snapshot(int platform_mode)
 		swsusp_free();
 
 	msg = in_suspend ? (error ? PMSG_RECOVER : PMSG_THAW) : PMSG_RESTORE;
+	pr_info("HIBERNATE_DEBUG: BEFORE dpm_resume, msg=%d(%s) in_suspend=%d error=%d\n",
++		msg.event, msg.event == PM_EVENT_THAW ? "THAW" : "OTHER", in_suspend, error);
 	dpm_resume(msg);
 
+	pr_info("HIBERNATE_DEBUG: AFTER dpm_resume, BEFORE dpm_complete\n");
 	if (error || !in_suspend)
 		pm_restore_gfp_mask();
 
 	console_resume_all();
 	dpm_complete(msg);
+	pr_info("HIBERNATE_DEBUG: AFTER dpm_complete - thaw transition COMPLETE\n");
 
+	// pm_system_wakeup();
  Close:
 	platform_end(platform_mode);
 	return error;

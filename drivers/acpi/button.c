@@ -445,6 +445,7 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	struct input_dev *input;
 	int keycode;
 
+	pr_info("Debug: %s event -> %d\n", __func__, event);
 	switch (event) {
 	case ACPI_BUTTON_NOTIFY_STATUS:
 		break;
@@ -461,12 +462,16 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	button = acpi_driver_data(device);
 	input = button->input;
 	keycode = test_bit(KEY_SLEEP, input->keybit) ? KEY_SLEEP : KEY_POWER;
+	pr_info("Debug: %s keycode -> %d pm_sleep_transition_in_progress() -> %d\n",
+		__func__, keycode, pm_sleep_transition_in_progress());
 	if (event == ACPI_BUTTON_NOTIFY_STATUS && keycode == KEY_POWER &&
 	    pm_sleep_transition_in_progress()) {
 		pm_wakeup_dev_event(&device->dev, 0, true);
 		return;
 	}
 
+	pr_info("Debug: %s button->suspended -> %d event -> %d\n",
+		__func__, button->suspended, event);
 	if (button->suspended || event == ACPI_BUTTON_NOTIFY_WAKE)
 		return;
 
