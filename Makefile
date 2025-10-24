@@ -2,7 +2,7 @@
 VERSION = 6
 PATCHLEVEL = 16
 SUBLEVEL = 12
-EXTRAVERSION = -valve2
+EXTRAVERSION = -valve2-4brenton
 NAME = Baby Opossum Posse
 
 # *DOCUMENTATION*
