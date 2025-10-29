@@ -1864,6 +1864,31 @@ static const struct hid_device_id steam_controllers[] = {
 		USB_DEVICE_ID_STEAM_DECK),
 	  .driver_data = STEAM_QUIRK_DECK
 	},
+	{ /* Generic Handhelds */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_CONTROLLER_GENERIC),
+	  .driver_data = STEAM_QUIRK_DECK
+	},
+	{ /* Zotac Zone/Pro */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_CONTROLLER_ZONE),
+	  .driver_data = STEAM_QUIRK_DECK
+	},
+	{ /* ROG Ally/X/Xbox */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_CONTROLLER_ALLY),
+	  .driver_data = STEAM_QUIRK_DECK
+	},
+	{ /* Legion Go/2 */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_CONTROLLER_GO),
+	  .driver_data = STEAM_QUIRK_DECK
+	},
+	{ /* Legion Go S */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_CONTROLLER_GO_S),
+	  .driver_data = STEAM_QUIRK_DECK
+	},
 	{}
 };
 
