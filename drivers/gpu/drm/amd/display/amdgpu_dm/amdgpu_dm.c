@@ -4902,6 +4902,9 @@ static void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 	u32 brightness;
 	u32 prev_brightness;
 	bool rc, reallow_idle = false;
+	static DEFINE_RATELIMIT_STATE(rls, DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST);
+	static struct task_struct *prev_task = NULL;
+	static char task_name[TASK_COMM_LEN];
 
 	amdgpu_dm_update_backlight_caps(dm, bl_idx);
 	caps = &dm->backlight_caps[bl_idx];
@@ -4947,6 +4950,17 @@ static void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 		dc_allow_idle_optimizations(dm->dc, true);
 
 	mutex_unlock(&dm->dc_lock);
+
+	if (__ratelimit(&rls) || current != prev_task) {
+		get_task_comm(task_name, current);
+		dev_info(dm->adev->dev, "comm=%s requested=%u scaled=%u previous=%u\n",
+			 task_name, user_brightness, brightness, prev_brightness);
+		if (prev_task)
+			put_task_struct(prev_task);
+		get_task_struct(current);
+		prev_task = current;
+		ratelimit_state_reset_interval(&rls, DEFAULT_RATELIMIT_INTERVAL);
+	}
 
 	if (!rc)
 		dm->actual_brightness[bl_idx] = prev_brightness;
