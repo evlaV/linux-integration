@@ -65,6 +65,7 @@ struct hid_lgo_cfg {
 	u32 mcu_version_hardware;
 	u32 mcu_version_product;
 	u32 mcu_version_protocol;
+	u32 mouse_dpi;
 	u8 rgb_en;
 	u8 tp_en;
 	u8 tp_vibration_en;
@@ -225,6 +226,9 @@ static const char *const rumble_mode_text[] = {
 	[RUMBLE_MODE_SPG] = "spg",
 	[RUMBLE_MODE_RPG] = "rpg",
 };
+
+/* CALIBRATION ENUMS */
+#define FPS_MODE_DPI           0x02
 
 static int hid_lgo_version_event(struct command_report *cmd_rep)
 {
@@ -433,6 +437,16 @@ static int hid_lgo_motor_event(struct command_report *cmd_rep)
 	return -EINVAL;
 }
 
+static int hid_lgo_fps_dpi_event(struct command_report *cmd_rep)
+{
+	if (cmd_rep->sub_cmd != FPS_MODE_DPI)
+		return -EINVAL;
+
+	drvdata.mouse_dpi = get_unaligned_le32(cmd_rep->data);
+
+	return 0;
+}
+
 static int hid_lgo_set_event_return(struct command_report *cmd_rep)
 {
 	if (cmd_rep->data[0] != 0)
@@ -479,8 +493,12 @@ static int hid_lgo_raw_event(struct hid_device *hdev, struct hid_report *report,
 		case GET_MOTOR_CFG:
 			ret = hid_lgo_motor_event(cmd_rep);
 			break;
+		case GET_DPI_CFG:
+			ret = hid_lgo_fps_dpi_event(cmd_rep);
+			break;
 		case SET_FEATURE_STATUS:
 		case SET_MOTOR_CFG:
+		case SET_DPI_CFG:
 			ret = hid_lgo_set_event_return(cmd_rep);
 			break;
 		default:
@@ -1086,6 +1104,53 @@ static ssize_t motor_config_options(struct device *dev,
 	}                                                                      \
 	DEVICE_ATTR_RW_NAMED(_name, _attrname)
 
+/* DPI_CFG_INDEX */
+static ssize_t fps_mode_dpi_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+
+{
+	size_t size = 4;
+	u32 value;
+	u8 val[4];
+	int ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret)
+		return ret;
+
+	if (value != 500 && value != 800 && value != 1200 && value != 1800)
+		return -EINVAL;
+
+	put_unaligned_le32(value, val);
+
+	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, SET_DPI_CFG,
+			       FPS_MODE_DPI, UNSPECIFIED, val, size);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t fps_mode_dpi_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	int ret;
+
+	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
+			       FPS_MODE_DPI, UNSPECIFIED, 0, 0);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", drvdata.mouse_dpi);
+}
+
+static ssize_t fps_mode_dpi_index_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "500 800 1200 1800\n");
+}
+
 /* Gamepad - MCU */
 struct go_cfg_attr version_product_mcu = { PRODUCT_VERSION };
 ATTR_GO_VERSION_RO(version_product_mcu, "product_version", USB_MCU);
@@ -1118,7 +1183,12 @@ ATTR_GO_MOTOR_RW(gamepad_rumble_intensity, "rumble_intensity", index,
 static DEVICE_ATTR_RO_NAMED(gamepad_rumble_intensity_index,
 			    "rumble_intensity_index");
 
+static DEVICE_ATTR_RW(fps_mode_dpi);
+static DEVICE_ATTR_RO(fps_mode_dpi_index);
+
 static struct attribute *mcu_attrs[] = {
+	&dev_attr_fps_mode_dpi.attr,
+	&dev_attr_fps_mode_dpi_index.attr,
 	&dev_attr_fps_switch_status.attr,
 	&dev_attr_gamepad_mode.attr,
 	&dev_attr_gamepad_mode_index.attr,
