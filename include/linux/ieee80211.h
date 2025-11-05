@@ -2804,5 +2804,6 @@ struct ieee80211_tbtt_info_ge_11 {
 #include "ieee80211-mesh.h"
 #include "ieee80211-s1g.h"
 #include "ieee80211-p2p.h"
+#include "ieee80211-nan.h"
 
 #endif /* LINUX_IEEE80211_H */
