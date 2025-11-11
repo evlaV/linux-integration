@@ -4960,6 +4960,7 @@ static void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 		get_task_struct(current);
 		prev_task = current;
 		ratelimit_state_reset_interval(&rls, DEFAULT_RATELIMIT_INTERVAL);
+		dump_stack();
 	}
 
 	if (!rc)
