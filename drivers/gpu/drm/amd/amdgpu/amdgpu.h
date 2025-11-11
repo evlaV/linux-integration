@@ -208,6 +208,7 @@ extern uint amdgpu_smu_memory_pool_size;
 extern int amdgpu_smu_pptable_id;
 extern uint amdgpu_dc_feature_mask;
 extern uint amdgpu_freesync_vid_mode;
+extern int amdgpu_freesync_pcon_allow_all;
 extern uint amdgpu_dc_debug_mask;
 extern uint amdgpu_dc_visual_confirm;
 extern int amdgpu_dm_abm_level;
