@@ -976,7 +976,7 @@ module_param_named(freesync_video, amdgpu_freesync_vid_mode, uint, 0444);
 MODULE_PARM_DESC(
 	freesync_pcon_allow_all,
 	"Allow any DP-HDMI adapter to pass freesync whitelist and log adapter id (0 = off (default), 1 = on)");
-module_param_named(	freesync_pcon_allow_all, amdgpu_freesync_pcon_allow_all, int, 0444);
+module_param_named(freesync_pcon_allow_all, amdgpu_freesync_pcon_allow_all, int, 0444);
 
 /**
  * DOC: reset_method (int)
