@@ -668,10 +668,14 @@ static int hid_lgo_raw_event(struct hid_device *hdev, struct hid_report *report,
 			     u8 *data, int size)
 {
 	struct command_report *cmd_rep;
-	int ret;
+	int ep, ret;
 
 	if (size != GO_PACKET_SIZE)
-		return -EINVAL;
+		goto passthrough;
+
+	ep = get_endpoint_address(hdev);
+	if (ep != GO_GP_INTF_IN)
+		goto passthrough;
 
 	cmd_rep = (struct command_report *)data;
 
@@ -714,13 +718,18 @@ static int hid_lgo_raw_event(struct hid_device *hdev, struct hid_report *report,
 		ret = hid_lgo_os_mode_cfg_event(cmd_rep);
 		break;
 	default:
-		return 0;
+		goto passthrough;
 	};
 	dev_dbg(&hdev->dev, "Rx data as raw input report: [%*ph]\n",
 		GO_PACKET_SIZE, data);
 
 	complete(&drvdata.send_cmd_complete);
 	return ret;
+
+passthrough:
+        /* Forward other HID reports so they generate events */
+        hid_input_report(hdev, HID_INPUT_REPORT, data, size, 1);
+        return 0;
 }
 
 static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
@@ -2340,9 +2349,7 @@ static int hid_lgo_probe(struct hid_device *hdev,
 {
 	int ret, ep;
 
-	ep = get_endpoint_address(hdev);
-	if (ep <= 0)
-		return ep;
+	hdev->quirks |= HID_QUIRK_INPUT_PER_APP | HID_QUIRK_MULTI_INPUT;
 
 	ret = hid_parse(hdev);
 	if (ret) {
@@ -2350,7 +2357,7 @@ static int hid_lgo_probe(struct hid_device *hdev,
 		return ret;
 	}
 
-	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
+	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
 		hid_err(hdev, "Failed to start HID device\n");
 		return ret;
@@ -2363,13 +2370,15 @@ static int hid_lgo_probe(struct hid_device *hdev,
 		return ret;
 	}
 
-	switch (ep) {
-	case GO_GP_INTF_IN:
-		ret = hid_lgo_cfg_probe(hdev, id);
-		break;
-	default:
-		break;
+	ep = get_endpoint_address(hdev);
+	if (ep != GO_GP_INTF_IN) {
+		dev_dbg(&hdev->dev, "Started interface %x as generic HID device.\n", ep);
+		return 0;
 	}
+
+	ret = hid_lgo_cfg_probe(hdev, id);
+	if (ret)
+		dev_err_probe(&hdev->dev, ret, "Failed to start configuration interface");
 
 	dev_dbg(&hdev->dev, "Started Legion Go HID Device: %x\n", ep);
 
