@@ -1650,6 +1650,7 @@ STATIC_IFN_KUNIT const uint32_t dm_freesync_pcon_whitelist[] = {
 	DP_BRANCH_DEVICE_ID_90CC24,
 	DP_BRANCH_DEVICE_ID_001CF8,
 	DP_BRANCH_DEVICE_ID_001FF2,
+	DP_BRANCH_DEVICE_ID_2B02F0,
 };
 EXPORT_IF_KUNIT(dm_freesync_pcon_whitelist);
 
