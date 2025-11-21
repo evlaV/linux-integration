@@ -228,6 +228,7 @@ int amdgpu_noretry = -1;
 int amdgpu_force_asic_type = -1;
 int amdgpu_tmz = -1; /* auto */
 uint amdgpu_freesync_vid_mode;
+int amdgpu_freesync_pcon_allow_all;
 int amdgpu_reset_method = -1; /* auto */
 int amdgpu_num_kcq = -1;
 int amdgpu_smartshift_bias;
@@ -961,6 +962,20 @@ MODULE_PARM_DESC(
 	freesync_video,
 	"Enable freesync modesetting optimization feature (0 = off (default), 1 = on)");
 module_param_named(freesync_video, amdgpu_freesync_vid_mode, uint, 0444);
+
+/**
+ * DOC: freesync_pcon_allow_all (int)
+ * Ignore DP-HDMI adapter Freesync PCON whitelist and log the provided branch_dev_id.
+ * This will allow the adapter to report functional freesync, provided vrr capbits
+ * are met so that adapters which have not yet been added to the whitelist can be
+ * more easily identified and tested.
+ *
+ * The default value: 0 (off).
+ */
+MODULE_PARM_DESC(
+	freesync_pcon_allow_all,
+	"Allow any DP-HDMI adapter to pass freesync whitelist and log adapter id (0 = off (default), 1 = on)");
+module_param_named(freesync_pcon_allow_all, amdgpu_freesync_pcon_allow_all, int, 0444);
 
 /**
  * DOC: reset_method (int)
