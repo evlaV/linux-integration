@@ -1664,6 +1664,11 @@ STATIC_IFN_KUNIT bool dm_is_freesync_pcon_whitelist(const uint32_t branch_dev_id
 {
 	u32 i;
 
+	if (amdgpu_freesync_pcon_allow_all) {
+		DRM_INFO("DP-HDMI adapter Freesync PCON whitelist bypassed - Device branch_dev_id : %u\n", branch_dev_id);
+		return true;
+	}
+
 	for (i = 0; i < dm_freesync_pcon_whitelist_count(); i++)
 		if (dm_freesync_pcon_whitelist[i] == branch_dev_id)
 			return true;
