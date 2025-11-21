@@ -74,6 +74,8 @@ struct dmub_notification;
 #define MAX_DPIA_PER_HOST_ROUTER 3
 #define MAX_DPIA_NUM  (MAX_HOST_ROUTERS_NUM * MAX_DPIA_PER_HOST_ROUTER)
 
+#define NUM_FAST_FLIPS_TO_STEADY_STATE 20
+
 /* Display Core Interfaces */
 struct dc_versions {
 	const char *dc_ver;
@@ -285,6 +287,9 @@ struct dc_check_config {
 	 */
 	unsigned int max_optimizable_video_width;
 	bool enable_legacy_fast_update;
+
+	bool deferred_transition_state;
+	unsigned int transition_countdown_to_steady_state;
 };
 
 struct dc_caps {
@@ -1167,6 +1172,9 @@ struct dc_debug_options {
 	unsigned int auxless_alpm_lfps_t1t2_us;
 	short auxless_alpm_lfps_t1t2_offset_us;
 	bool disable_stutter_for_wm_program;
+	uint32_t custom_psp_footer_size;
+	bool disable_deferred_minimal_transitions;
+	unsigned int num_fast_flips_to_steady_state_override;
 };
 
 
