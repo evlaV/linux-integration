@@ -33,7 +33,7 @@ static unsigned int wakeup_irq[2] __read_mostly;
 static DEFINE_RAW_SPINLOCK(wakeup_irq_lock);
 
 /* If greater than 0 and the system is suspending, terminate the suspend. */
-static atomic_t pm_abort_suspend __read_mostly;
+atomic_t pm_abort_suspend __read_mostly;
 
 /*
  * Combined counters of registered wakeup events and wakeup events in progress.
@@ -893,6 +893,7 @@ bool pm_wakeup_pending(void)
 	}
 
 	if (ret || atomic_read(&pm_abort_suspend) > 0) {
+		pr_info("[dbg-clear] %s\n", __func__);
 		pr_info("Debug: %s ret -> %d atomic_read(&pm_abort_suspend) -> %d\n",
 			__func__, ret, atomic_read(&pm_abort_suspend));
 		dump_stack();

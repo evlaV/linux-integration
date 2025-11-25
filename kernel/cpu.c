@@ -1921,6 +1921,7 @@ int freeze_secondary_cpus(int primary)
 
 		if (pm_wakeup_pending()) {
 			pr_info("Wakeup pending. Abort CPU freeze\n");
+			pr_info("[dbg-clear] %s NOT CLEARING\n", __func__);
 			error = -EBUSY;
 			break;
 		}

@@ -349,8 +349,10 @@ static int create_image(int platform_mode)
 		goto Enable_irqs;
 	}
 
-	if (hibernation_test(TEST_CORE) || pm_wakeup_pending())
+	if (hibernation_test(TEST_CORE) || pm_wakeup_pending()) {
+		pr_info("[dbg-clear] %s NOT CLEARING\n", __func__);
 		goto Power_up;
+	}
 
 	in_suspend = 1;
 	save_processor_state();
@@ -663,6 +665,7 @@ int hibernation_platform_enter(void)
 		goto Enable_irqs;
 
 	if (pm_wakeup_pending()) {
+		pr_info("[dbg-clear] %s NOT CLEARING\n", __func__);
 		error = -EAGAIN;
 		goto Power_up;
 	}

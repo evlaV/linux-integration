@@ -67,6 +67,7 @@ static int try_to_freeze_tasks(bool user_only)
 			break;
 
 		if (pm_wakeup_pending()) {
+			pr_info("[dbg-clear] %s NOT CLEARING\n", __func__);
 			wakeup = true;
 			break;
 		}
@@ -118,10 +119,12 @@ static int try_to_freeze_tasks(bool user_only)
  *
  * On success, returns 0.  On failure, -errno and system is fully thawed.
  */
+ extern atomic_t pm_abort_suspend;
 int freeze_processes(void)
 {
 	int error;
 
+	pr_info("[dbg-clear] %s\n", __func__);
 	error = __usermodehelper_disable(UMH_FREEZING);
 	if (error)
 		return error;
@@ -132,6 +135,7 @@ int freeze_processes(void)
 	if (!pm_freezing)
 		static_branch_inc(&freezer_active);
 
+	pr_info("[dbg-clear] %s unconditionally clear %u\n", __func__, pm_abort_suspend.counter);
 	pm_wakeup_clear(0);
 	pm_freezing = true;
 	error = try_to_freeze_tasks(true);
