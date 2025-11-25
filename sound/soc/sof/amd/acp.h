@@ -225,6 +225,12 @@ struct acp_quirk_entry {
 	bool post_fw_run_delay;
 };
 
+enum dsp_crash_ctl_mode {
+ 	DSP_CRASH_CTL_DISABLED = 0,
+ 	DSP_CRASH_CTL_ENABLED = 1,
+ 	DSP_CRASH_CTL_SUSPEND = 2,
+};
+
 /* Common device data struct for ACP devices */
 struct acp_dev_data {
 	struct snd_sof_dev  *dev;
@@ -268,6 +274,7 @@ struct acp_dev_data {
 	/* acp70_sdw1_wake_event flag set to true when wake irq asserted for SW1 instance */
 	bool acp70_sdw1_wake_event;
 	unsigned int pci_rev;
+	int dsp_crash_ctl;
 };
 
 void memcpy_to_scratch(struct snd_sof_dev *sdev, u32 offset, unsigned int *src, size_t bytes);

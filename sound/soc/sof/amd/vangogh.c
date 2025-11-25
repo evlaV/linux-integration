@@ -133,16 +133,74 @@ static struct snd_soc_dai_driver vangogh_sof_dai[] = {
 	},
 };
 
+static ssize_t dsp_crash_ctl_write(struct file *file, const char __user *from,
+				   size_t count, loff_t *ppos)
+{
+	struct acp_dev_data *adata = file->private_data;
+	struct snd_sof_dev *sdev = adata->dev;
+	char *cmd;
+	int ret = count;
+
+	cmd = memdup_user_nul(from, count);
+	if (IS_ERR(cmd))
+		return PTR_ERR(cmd);
+
+	if (cmd[count - 1] == '\n')
+		cmd[count - 1] = '\0';
+
+	if (!strcmp(cmd, "start")) {
+		adata->dsp_crash_ctl = DSP_CRASH_CTL_ENABLED;
+		dev_info(sdev->dev, "scheduled dsp crash\n");
+	} else if (!strcmp(cmd, "stop")) {
+		adata->dsp_crash_ctl = DSP_CRASH_CTL_DISABLED;
+		dev_info(sdev->dev, "unscheduled dsp crash\n");
+	} else if (!strcmp(cmd, "suspend")) {
+		adata->dsp_crash_ctl = DSP_CRASH_CTL_SUSPEND;
+	} else {
+		dev_err(sdev->dev, "invalid dsp crash ctl cmd: %s\n", cmd);
+		ret = -EINVAL;
+	}
+
+	kfree(cmd);
+	return ret;
+}
+
+static const struct file_operations sof_dsp_crash_ctl_fops = {
+	.open = simple_open,
+	.write = dsp_crash_ctl_write,
+	.llseek = default_llseek,
+};
+
+#include <linux/debugfs.h>
+static int debugfs_create_dsp_crash_ctl(struct snd_sof_dev *sdev)
+{
+	struct acp_dev_data *adata = sdev->pdata->hw_pdata;
+
+	debugfs_create_file("dsp_crash_ctl", 0200, adata->dev->debugfs_root, adata,
+			    &sof_dsp_crash_ctl_fops);
+
+	return 0;
+}
+
 static int sof_vangogh_post_fw_run_delay(struct snd_sof_dev *sdev)
 {
+	struct acp_dev_data *adata = sdev->pdata->hw_pdata;
 	/*
 	 * Resuming from suspend in some cases my cause the DSP firmware
 	 * to enter an unrecoverable faulty state.  Delaying a bit any host
 	 * to DSP transmission right after firmware boot completion seems
 	 * to resolve the issue.
 	 */
-	if (!sdev->first_boot)
+	if (!sdev->first_boot) {
 		usleep_range(100, 150);
+		if (adata->dsp_crash_ctl == DSP_CRASH_CTL_SUSPEND) {
+			adata->dsp_crash_ctl = DSP_CRASH_CTL_ENABLED;
+			sof_set_fw_state(sdev, SOF_FW_BOOT_READY_FAILED);
+			return -EIO;
+		}
+	} else {
+		debugfs_create_dsp_crash_ctl(sdev);
+	}
 
 	return 0;
 }

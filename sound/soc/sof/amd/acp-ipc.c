@@ -190,17 +190,31 @@ irqreturn_t acp_sof_ipc_irq_thread(int irq, void *context)
 	dsp_ack = snd_sof_dsp_read(sdev, ACP_DSP_BAR, ACP_SCRATCH_REG_0 + dsp_ack_write);
 	if (dsp_ack) {
 		if (likely(sdev->fw_state == SOF_FW_BOOT_COMPLETE)) {
-			spin_lock_irq(&sdev->ipc_lock);
+			bool trigger_timeout = false;
+			if (adata->dsp_crash_ctl == DSP_CRASH_CTL_ENABLED) {
+				struct snd_sof_ipc_msg *msg = sdev->msg;
+				struct sof_ipc_cmd_hdr *hdr = msg->msg_data;
+				if ((hdr->cmd & SOF_GLB_TYPE_MASK) == SOF_IPC_GLB_STREAM_MSG &&
+					(hdr->cmd & SOF_CMD_TYPE_MASK) == SOF_IPC_STREAM_TRIG_START) {
+					dev_warn(sdev->dev, "triggering dsp timeout\n");
+					trigger_timeout = true;
+					/* adata->dsp_crash_ctl = 0; */
+				}
+			}
 
-			/* handle immediate reply from DSP core */
-			acp_dsp_ipc_get_reply(sdev);
-			snd_sof_ipc_reply(sdev, 0);
-			/* set the done bit */
-			acp_dsp_ipc_dsp_done(sdev);
+			if (!trigger_timeout) {
+				spin_lock_irq(&sdev->ipc_lock);
 
-			spin_unlock_irq(&sdev->ipc_lock);
+				/* handle immediate reply from DSP core */
+				acp_dsp_ipc_get_reply(sdev);
+				snd_sof_ipc_reply(sdev, 0);
+				/* set the done bit */
+				acp_dsp_ipc_dsp_done(sdev);
+
+				spin_unlock_irq(&sdev->ipc_lock);
+			}
 		} else {
-			dev_dbg_ratelimited(sdev->dev, "IPC reply before FW_BOOT_COMPLETE: %#x\n",
+			dev_err_ratelimited(sdev->dev, "IPC reply before FW_BOOT_COMPLETE: %#x\n",
 					    dsp_ack);
 		}
 
