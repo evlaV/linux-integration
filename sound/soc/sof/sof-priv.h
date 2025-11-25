@@ -585,6 +585,9 @@ struct snd_sof_dev {
 	struct work_struct probe_work;
 	bool probe_completed;
 
+	/* DSP reset */
+	struct work_struct dsp_reset_work;
+
 	/* DSP HW differentiation */
 	struct snd_sof_pdata *pdata;
 

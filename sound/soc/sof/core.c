@@ -606,6 +606,73 @@ static void sof_probe_work(struct work_struct *work)
 	}
 }
 
+static int sof_reset_dsp(struct snd_sof_dev *sdev)
+{
+	dev_warn(sdev->dev, "Resetting DSP\n");
+
+	const struct sof_ipc_tplg_ops *tplg_ops = sof_ipc_get_ops(sdev, tplg);
+	u32 old_state = sdev->dsp_power_state.state;
+
+	if (tplg_ops && tplg_ops->tear_down_all_pipelines && (old_state == SOF_DSP_PM_D0))
+		tplg_ops->tear_down_all_pipelines(sdev, false);
+
+	int ret = snd_sof_dsp_suspend(sdev, 0);
+	if (ret)
+		dev_warn(sdev->dev, "Failed to suspend DSP: %d\n", ret);
+
+	sof_set_fw_state(sdev, SOF_FW_BOOT_NOT_STARTED);
+	/* sdev->enabled_cores_mask = 0; */
+
+	ret = snd_sof_dsp_resume(sdev);
+	if (ret) {
+		dev_err(sdev->dev, "Failed to resume DSP: %d\n", ret);
+		return ret;
+	}
+
+	sof_set_fw_state(sdev, SOF_FW_BOOT_PREPARE);
+
+	ret = snd_sof_load_firmware(sdev);
+	if (ret) {
+		dev_err(sdev->dev, "Failed to load firmware: %d\n", ret);
+		sof_set_fw_state(sdev, SOF_FW_BOOT_FAILED);
+		return ret;
+	}
+
+	sof_set_fw_state(sdev, SOF_FW_BOOT_IN_PROGRESS);
+
+	ret = snd_sof_run_firmware(sdev);
+	if (ret) {
+		dev_err(sdev->dev, "Failed to run firmware: %d\n", ret);
+		sof_set_fw_state(sdev, SOF_FW_BOOT_FAILED);
+		return ret;
+	}
+
+	if (tplg_ops && tplg_ops->set_up_all_pipelines) {
+		ret = tplg_ops->set_up_all_pipelines(sdev, false);
+		if (ret < 0) {
+			dev_err(sdev->dev, "Failed to restore pipeline after resume %d\n", ret);
+			return ret;
+		}
+	}
+
+	dev_info(sdev->dev, "DSP recovery completed\n");
+
+	return 0;
+}
+
+static void sof_dsp_reset_work(struct work_struct *work)
+{
+	struct snd_sof_dev *sdev =
+		container_of(work, struct snd_sof_dev, dsp_reset_work);
+	int ret;
+
+	ret = sof_reset_dsp(sdev);
+	if (ret < 0) {
+		/* errors cannot be propagated, log */
+		dev_err(sdev->dev, "error: %s failed err: %d\n", __func__, ret);
+	}
+}
+
 static void
 sof_apply_profile_override(struct sof_loadable_file_profile *path_override,
 			   struct snd_sof_pdata *plat_data)
@@ -701,6 +768,8 @@ int snd_sof_device_probe(struct device *dev, struct snd_sof_pdata *plat_data)
 #endif
 
 	sof_set_fw_state(sdev, SOF_FW_BOOT_NOT_STARTED);
+
+	INIT_WORK(&sdev->dsp_reset_work, sof_dsp_reset_work);
 
 	/*
 	 * first pass of probe which isn't allowed to run in a work-queue,
