@@ -209,6 +209,7 @@ struct input_dev {
 	ktime_t timestamp[INPUT_CLK_MAX];
 
 	bool inhibited;
+	bool suspended;
 };
 #define to_input_dev(d) container_of(d, struct input_dev, dev)
 
