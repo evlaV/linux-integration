@@ -363,7 +363,13 @@ void input_handle_event(struct input_dev *dev,
 
 	lockdep_assert_held(&dev->event_lock);
 
-	if (code == KEY_POWER && pm_sleep_transition_in_progress()) {
+	/*
+	 * During hibernation/suspend, consume KEY_POWER events in the kernel
+	 * to cancel the sleep transition. Don't forward to userspace to prevent
+	 * userspace (e.g., systemd-logind) from triggering another suspend or
+	 * poweroff action after the system wakes up.
+	 */
+	if (dev->suspended && type == EV_KEY && code == KEY_POWER) {
 		pm_wakeup_dev_event(&dev->dev, 0, true);
 		return;
 	}
