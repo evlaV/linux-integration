@@ -457,18 +457,18 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 		return;
 	}
 
-	acpi_pm_wakeup_event(&device->dev);
+	pr_info("Debug: %s keycode -> %d pm_sleep_transition_in_progress() -> %d\n",
+		__func__, keycode, pm_sleep_transition_in_progress());
+	acpi_pm_wakeup_event_hard(&device->dev, acpi_s2idle_wakeup() || button->suspended);
 
 	button = acpi_driver_data(device);
 	input = button->input;
 	keycode = test_bit(KEY_SLEEP, input->keybit) ? KEY_SLEEP : KEY_POWER;
-	pr_info("Debug: %s keycode -> %d pm_sleep_transition_in_progress() -> %d\n",
-		__func__, keycode, pm_sleep_transition_in_progress());
-	if (event == ACPI_BUTTON_NOTIFY_STATUS && keycode == KEY_POWER &&
-	    pm_sleep_transition_in_progress()) {
-		pm_wakeup_dev_event(&device->dev, 0, true);
-		return;
-	}
+	// if (event == ACPI_BUTTON_NOTIFY_STATUS && keycode == KEY_POWER &&
+	//     pm_sleep_transition_in_progress()) {
+	// 	pm_wakeup_dev_event(&device->dev, 0, true);
+	// 	return;
+	// }
 
 	pr_info("Debug: %s button->suspended -> %d event -> %d\n",
 		__func__, button->suspended, event);
