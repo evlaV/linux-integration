@@ -454,3 +454,16 @@ Description:
 		disables it.  Reads from the file return the current value.
 		The default is "1" if the build-time "SUSPEND_SKIP_SYNC" config
 		flag is unset, or "0" otherwise.
+
+What:		/sys/power/lps0_screen_off
+Date:		May 2026
+Contact:	Dmitrii Osipenko <dmitry.osipenko@collabora.com>
+Description:
+		This file is available if the ACPI/OSPM system supports
+		Display Off/On DSM notifications. It controls state of the
+		notification.
+
+		Writing a "1" to this file invokes Display Off Notification.
+		Writing a "0" to this file invokes Display On Notification.
+
+		Notifications are only triggered on state transitions.
