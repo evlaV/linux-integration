@@ -612,11 +612,26 @@ static int sof_reset_dsp(struct snd_sof_dev *sdev)
 
 	const struct sof_ipc_tplg_ops *tplg_ops = sof_ipc_get_ops(sdev, tplg);
 	u32 old_state = sdev->dsp_power_state.state;
+	pm_message_t pm_state;
+	int ret;
 
 	if (tplg_ops && tplg_ops->tear_down_all_pipelines && (old_state == SOF_DSP_PM_D0))
 		tplg_ops->tear_down_all_pipelines(sdev, false);
 
-	int ret = snd_sof_dsp_suspend(sdev, 0);
+	ret = snd_sof_dsp_hw_params_upon_resume(sdev);
+	if (ret < 0) {
+		dev_err(sdev->dev,
+			"error: setting hw_params flag during suspend %d\n",
+			ret);
+		return ret;
+	}
+
+	pm_state.event = SOF_DSP_PM_D3;
+
+	/* Notify clients not managed by pm framework about core suspend */
+	sof_suspend_clients(sdev, pm_state);
+
+	ret = snd_sof_dsp_suspend(sdev, 0);
 	if (ret)
 		dev_warn(sdev->dev, "Failed to suspend DSP: %d\n", ret);
 
@@ -654,6 +669,9 @@ static int sof_reset_dsp(struct snd_sof_dev *sdev)
 			return ret;
 		}
 	}
+
+	/* Notify clients not managed by pm framework about core resume */
+	sof_resume_clients(sdev);
 
 	dev_info(sdev->dev, "DSP recovery completed\n");
 
