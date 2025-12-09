@@ -611,6 +611,7 @@ static int sof_reset_dsp(struct snd_sof_dev *sdev)
 	dev_warn(sdev->dev, "Resetting DSP\n");
 
 	const struct sof_ipc_tplg_ops *tplg_ops = sof_ipc_get_ops(sdev, tplg);
+	const struct sof_ipc_pm_ops *pm_ops = sof_ipc_get_ops(sdev, pm);
 	u32 old_state = sdev->dsp_power_state.state;
 	pm_message_t pm_state;
 	int ret;
@@ -630,6 +631,12 @@ static int sof_reset_dsp(struct snd_sof_dev *sdev)
 
 	/* Notify clients not managed by pm framework about core suspend */
 	sof_suspend_clients(sdev, pm_state);
+
+	/* if (pm_ops && pm_ops->ctx_save) { */
+	/* 	ret = pm_ops->ctx_save(sdev); */
+	/* 	if (ret) */
+	/* 		dev_warn(sdev->dev, "ctx_save IPC error during suspend: %d\n", ret); */
+	/* } */
 
 	ret = snd_sof_dsp_suspend(sdev, 0);
 	if (ret)
@@ -672,6 +679,12 @@ static int sof_reset_dsp(struct snd_sof_dev *sdev)
 
 	/* Notify clients not managed by pm framework about core resume */
 	sof_resume_clients(sdev);
+
+	if (pm_ops && pm_ops->ctx_restore) {
+		ret = pm_ops->ctx_restore(sdev);
+		if (ret < 0)
+			dev_warn(sdev->dev, "ctx_restore IPC error during resume: %d\n", ret);
+	}
 
 	dev_info(sdev->dev, "DSP recovery completed\n");
 
