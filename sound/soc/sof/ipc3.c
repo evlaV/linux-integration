@@ -305,7 +305,7 @@ static int ipc3_wait_tx_done(struct snd_sof_ipc *ipc, void *reply_data)
 		ret = -ETIMEDOUT;
 
 		//TODO: add a quirk to conditionally reset DSP
-		schedule_work(&sdev->dsp_reset_work);
+		/* schedule_work(&sdev->dsp_reset_work); */
 	} else {
 		ret = msg->reply_error;
 		if (ret < 0) {
