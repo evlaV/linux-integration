@@ -995,7 +995,7 @@ void sof_ipc3_do_rx_work(struct snd_sof_dev *sdev, struct sof_ipc_cmd_hdr *hdr, 
 	u32 cmd;
 	int err;
 
-	ipc3_log_header(sdev->dev, "ipc rx", hdr->cmd);
+	/* ipc3_log_header(sdev->dev, "ipc rx", hdr->cmd); */
 
 	if (hdr->size < sizeof(*hdr) || hdr->size > SOF_IPC_MSG_MAX_SIZE) {
 		dev_err(sdev->dev, "The received message size is invalid: %u\n",
@@ -1048,7 +1048,7 @@ void sof_ipc3_do_rx_work(struct snd_sof_dev *sdev, struct sof_ipc_cmd_hdr *hdr, 
 	/* Notify registered clients */
 	sof_client_ipc_rx_dispatcher(sdev, msg_buf);
 
-	ipc3_log_header(sdev->dev, "ipc rx done", hdr->cmd);
+	/* ipc3_log_header(sdev->dev, "ipc rx done", hdr->cmd); */
 }
 EXPORT_SYMBOL(sof_ipc3_do_rx_work);
 
