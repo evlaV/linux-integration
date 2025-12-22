@@ -291,11 +291,21 @@ static int ipc3_wait_tx_done(struct snd_sof_ipc *ipc, void *reply_data)
 	struct snd_sof_ipc_msg *msg = &ipc->msg;
 	struct sof_ipc_cmd_hdr *hdr = msg->msg_data;
 	struct snd_sof_dev *sdev = ipc->sdev;
+	//TODO: adjust max-tries
+	const int max_tries = 1;
 	int ret;
 
 	/* wait for DSP IPC completion */
-	ret = wait_event_timeout(msg->waitq, msg->ipc_complete,
-				 msecs_to_jiffies(sdev->ipc_timeout));
+	for (int i = 0; i < max_tries; i++) {
+		ret = wait_event_timeout(msg->waitq, msg->ipc_complete,
+					 msecs_to_jiffies(sdev->ipc_timeout));
+
+		if (ret == 0)
+			dev_err(sdev->dev,
+				"ipc tx timed out on try %d\n", i + 1);
+		else
+			break;
+	}
 
 	if (ret == 0) {
 		dev_err(sdev->dev,
@@ -342,6 +352,10 @@ static int ipc3_tx_msg_unlocked(struct snd_sof_ipc *ipc,
 
 	ipc3_log_header(sdev->dev, "ipc tx", hdr->cmd);
 
+	/* if ((hdr->cmd & SOF_GLB_TYPE_MASK) == SOF_IPC_GLB_STREAM_MSG && */
+	/* 	(hdr->cmd & SOF_CMD_TYPE_MASK) == SOF_IPC_STREAM_TRIG_START) { */
+	/* 	WARN(1, "TRIG_START"); */
+	/* } */
 	ret = sof_ipc_send_msg(sdev, msg_data, msg_bytes, reply_bytes);
 
 	if (ret) {
