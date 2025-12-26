@@ -557,6 +557,9 @@ static u8 acpi_s2idle_get_standby_states(void)
 		if (lps0_dsm_func_mask_microsoft &
 		    (1 << ACPI_LPS0_MS_ENTRY | 1 << ACPI_LPS0_MS_EXIT))
 			states |= BIT(PM_STANDBY_SLEEP);
+		if (lps0_dsm_func_mask_microsoft &
+		    (1 << ACPI_MS_TURN_ON_DISPLAY))
+			states |= BIT(PM_STANDBY_RESUME);
 	}
 
 	if (lps0_dsm_func_mask > 0) {
@@ -576,6 +579,59 @@ static u8 acpi_s2idle_get_standby_states(void)
 	return states;
 }
 
+static int acpi_s2idle_do_notification(standby_notification_t state)
+{
+	switch ((__force unsigned int)state) {
+	case PM_SN_INACTIVE_ENTRY:
+		if (lps0_dsm_func_mask > 0)
+			acpi_sleep_run_lps0_dsm(
+				acpi_s2idle_vendor_amd() ?
+					ACPI_LPS0_SCREEN_OFF_AMD :
+					ACPI_LPS0_SCREEN_OFF,
+				lps0_dsm_func_mask, lps0_dsm_guid);
+
+		if (lps0_dsm_func_mask_microsoft > 0)
+			acpi_sleep_run_lps0_dsm(ACPI_LPS0_SCREEN_OFF,
+						lps0_dsm_func_mask_microsoft,
+						lps0_dsm_guid_microsoft);
+		break;
+	case PM_SN_INACTIVE_EXIT:
+		if (lps0_dsm_func_mask > 0)
+			acpi_sleep_run_lps0_dsm(
+				acpi_s2idle_vendor_amd() ?
+					ACPI_LPS0_SCREEN_ON_AMD :
+					ACPI_LPS0_SCREEN_ON,
+				lps0_dsm_func_mask, lps0_dsm_guid);
+		if (lps0_dsm_func_mask_microsoft > 0)
+			acpi_sleep_run_lps0_dsm(ACPI_LPS0_SCREEN_ON,
+						lps0_dsm_func_mask_microsoft,
+						lps0_dsm_guid_microsoft);
+		break;
+	case PM_SN_SLEEP_ENTRY:
+		if (lps0_dsm_func_mask_microsoft > 0)
+			acpi_sleep_run_lps0_dsm(ACPI_LPS0_MS_ENTRY,
+						lps0_dsm_func_mask_microsoft,
+						lps0_dsm_guid_microsoft);
+		break;
+	case PM_SN_SLEEP_EXIT:
+		if (lps0_dsm_func_mask_microsoft > 0)
+			acpi_sleep_run_lps0_dsm(ACPI_LPS0_MS_EXIT,
+						lps0_dsm_func_mask_microsoft,
+						lps0_dsm_guid_microsoft);
+		break;
+	case PM_SN_RESUME:
+		if (lps0_dsm_func_mask_microsoft > 0)
+			acpi_sleep_run_lps0_dsm(ACPI_MS_TURN_ON_DISPLAY,
+						lps0_dsm_func_mask_microsoft,
+						lps0_dsm_guid_microsoft);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int acpi_s2idle_prepare_late(void)
 {
 	struct acpi_s2idle_dev_ops *handler;
@@ -586,33 +642,16 @@ int acpi_s2idle_prepare_late(void)
 	if (pm_debug_messages_on)
 		lpi_check_constraints();
 
-	/* Screen off */
+	/* LPS0 entry */
 	if (lps0_dsm_func_mask > 0)
 		acpi_sleep_run_lps0_dsm(acpi_s2idle_vendor_amd() ?
-					ACPI_LPS0_SCREEN_OFF_AMD :
-					ACPI_LPS0_SCREEN_OFF,
+					ACPI_LPS0_ENTRY_AMD :
+					ACPI_LPS0_ENTRY,
 					lps0_dsm_func_mask, lps0_dsm_guid);
 
 	if (lps0_dsm_func_mask_microsoft > 0)
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_SCREEN_OFF,
-				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-
-	/* LPS0 entry */
-	if (lps0_dsm_func_mask > 0 && acpi_s2idle_vendor_amd())
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_ENTRY_AMD,
-					lps0_dsm_func_mask, lps0_dsm_guid);
-
-	if (lps0_dsm_func_mask_microsoft > 0) {
-		/* Modern Standby entry */
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_MS_ENTRY,
-				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
 		acpi_sleep_run_lps0_dsm(ACPI_LPS0_ENTRY,
 				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-	}
-
-	if (lps0_dsm_func_mask > 0 && !acpi_s2idle_vendor_amd())
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_ENTRY,
-					lps0_dsm_func_mask, lps0_dsm_guid);
 
 	list_for_each_entry(handler, &lps0_s2idle_devops_head, list_node) {
 		if (handler->prepare)
@@ -653,30 +692,14 @@ void acpi_s2idle_restore_early(void)
 					ACPI_LPS0_EXIT,
 					lps0_dsm_func_mask, lps0_dsm_guid);
 
-	if (lps0_dsm_func_mask_microsoft > 0) {
+	if (lps0_dsm_func_mask_microsoft > 0)
 		acpi_sleep_run_lps0_dsm(ACPI_LPS0_EXIT,
 				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-		/* Intent to turn on display */
-		acpi_sleep_run_lps0_dsm(ACPI_MS_TURN_ON_DISPLAY,
-				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-		/* Modern Standby exit */
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_MS_EXIT,
-				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-	}
-
-	/* Screen on */
-	if (lps0_dsm_func_mask_microsoft > 0)
-		acpi_sleep_run_lps0_dsm(ACPI_LPS0_SCREEN_ON,
-				lps0_dsm_func_mask_microsoft, lps0_dsm_guid_microsoft);
-	if (lps0_dsm_func_mask > 0)
-		acpi_sleep_run_lps0_dsm(acpi_s2idle_vendor_amd() ?
-					ACPI_LPS0_SCREEN_ON_AMD :
-					ACPI_LPS0_SCREEN_ON,
-					lps0_dsm_func_mask, lps0_dsm_guid);
 }
 
 static const struct platform_s2idle_ops acpi_s2idle_ops_lps0 = {
 	.get_standby_states = acpi_s2idle_get_standby_states,
+	.do_notification = acpi_s2idle_do_notification,
 	.begin = acpi_s2idle_begin,
 	.prepare = acpi_s2idle_prepare,
 	.prepare_late = acpi_s2idle_prepare_late,
