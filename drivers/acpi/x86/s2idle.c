@@ -542,6 +542,40 @@ static struct acpi_scan_handler lps0_handler = {
 	.attach = lps0_device_attach,
 };
 
+static u8 acpi_s2idle_get_standby_states(void)
+{
+	u8 states = 0;
+
+	if (!lps0_device_handle || sleep_no_lps0)
+		return 0;
+
+	if (lps0_dsm_func_mask_microsoft > 0) {
+		states |= BIT(PM_STANDBY_ACTIVE);
+		if (lps0_dsm_func_mask_microsoft &
+		    (1 << ACPI_LPS0_SCREEN_OFF | 1 << ACPI_LPS0_SCREEN_ON))
+			states |= BIT(PM_STANDBY_INACTIVE);
+		if (lps0_dsm_func_mask_microsoft &
+		    (1 << ACPI_LPS0_MS_ENTRY | 1 << ACPI_LPS0_MS_EXIT))
+			states |= BIT(PM_STANDBY_SLEEP);
+	}
+
+	if (lps0_dsm_func_mask > 0) {
+		states |= BIT(PM_STANDBY_ACTIVE);
+		if (acpi_s2idle_vendor_amd()) {
+			if (lps0_dsm_func_mask &
+			    (1 << ACPI_LPS0_SCREEN_OFF_AMD |
+			     1 << ACPI_LPS0_SCREEN_ON_AMD))
+				states |= BIT(PM_STANDBY_INACTIVE);
+		} else {
+			if (lps0_dsm_func_mask & (1 << ACPI_LPS0_SCREEN_OFF |
+						  1 << ACPI_LPS0_SCREEN_ON))
+				states |= BIT(PM_STANDBY_INACTIVE);
+		}
+	}
+
+	return states;
+}
+
 int acpi_s2idle_prepare_late(void)
 {
 	struct acpi_s2idle_dev_ops *handler;
@@ -642,6 +676,7 @@ void acpi_s2idle_restore_early(void)
 }
 
 static const struct platform_s2idle_ops acpi_s2idle_ops_lps0 = {
+	.get_standby_states = acpi_s2idle_get_standby_states,
 	.begin = acpi_s2idle_begin,
 	.prepare = acpi_s2idle_prepare,
 	.prepare_late = acpi_s2idle_prepare_late,
