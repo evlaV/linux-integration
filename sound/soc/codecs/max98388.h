@@ -229,7 +229,6 @@ struct max98388_priv {
 	bool interleave_mode;
 	unsigned int ch_size;
 	bool tdm_mode;
-	unsigned int saved_vol;
 };
 
 #endif
