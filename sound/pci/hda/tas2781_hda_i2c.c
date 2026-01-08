@@ -48,6 +48,7 @@
 struct tas2781_hda_i2c_priv {
 	struct snd_kcontrol *snd_ctls[2];
 	int (*save_calibration)(struct tas2781_hda *h);
+	bool skip_calibration;
 };
 
 static int tas2781_get_i2c_res(struct acpi_resource *ares, void *data)
@@ -489,7 +490,8 @@ static void tasdev_fw_ready(const struct firmware *fmw, void *context)
 	/* If calibrated data occurs error, dsp will still works with default
 	 * calibrated data inside algo.
 	 */
-	hda_priv->save_calibration(tas_hda);
+	if (!hda_priv->skip_calibration)
+		hda_priv->save_calibration(tas_hda);
 
 	tasdevice_tuning_switch(tas_hda->priv, 0);
 	tas_hda->priv->playback_started = true;
@@ -505,6 +507,7 @@ static int tas2781_hda_bind(struct device *dev, struct device *master,
 	void *master_data)
 {
 	struct tas2781_hda *tas_hda = dev_get_drvdata(dev);
+	struct tas2781_hda_i2c_priv *hda_priv = tas_hda->hda_priv;
 	struct hda_component_parent *parent = master_data;
 	struct hda_component *comp;
 	struct hda_codec *codec;
@@ -529,6 +532,14 @@ static int tas2781_hda_bind(struct device *dev, struct device *master,
 		tas_hda->catlog_id = LENOVO;
 		break;
 	}
+
+	/*
+	 * Using ASUS ROG Xbox Ally X (RC73XA) UEFI calibration data
+	 * causes audio dropouts during playback, use fallback data
+	 * from DSP firmware as a workaround.
+	 */
+	if (codec->core.subsystem_id == 0x10431384)
+		hda_priv->skip_calibration = true;
 
 	pm_runtime_get_sync(dev);
 
