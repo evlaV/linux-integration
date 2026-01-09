@@ -23817,6 +23817,7 @@ F:	drivers/extcon/extcon-steamdeck.c
 F:	drivers/hwmon/steamdeck-hwmon.c
 F:	drivers/leds/leds-steamdeck.c
 F:	drivers/mfd/steamdeck.c
+F:	drivers/power/supply/steamdeck-charge-control.c
 
 STI AUDIO (ASoC) DRIVERS
 M:	Arnaud Pouliquen <arnaud.pouliquen@foss.st.com>

@@ -50,6 +50,7 @@ static const struct mfd_cell steamdeck_cells[] = {
 	{ .name = "steamdeck-hwmon"  },
 	{ .name = "steamdeck-leds"   },
 	{ .name = "steamdeck-extcon" },
+	{ .name = "steamdeck-charge-control" },
 };
 
 static void steamdeck_remove_sysfs_groups(void *data)
