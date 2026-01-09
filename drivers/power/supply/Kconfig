@@ -1132,4 +1132,15 @@ config FUEL_GAUGE_MM8013
 	  the state of charge, temperature, cycle count, actual and design
 	  capacity, etc.
 
+config STEAMDECK_CHARGE_CONTROL
+	tristate "Steam Deck EC Battery Charge Control"
+	depends on ACPI_BATTERY
+	depends on MFD_STEAMDECK
+	default MFD_STEAMDECK
+	help
+	  Enable support for battery charge control features provided
+	  by the Embedded Controller present on Steam Deck
+	  devices. Presently the only feature exposed is the mechanism to
+	  control battery charge threshold.
+
 endif # POWER_SUPPLY
