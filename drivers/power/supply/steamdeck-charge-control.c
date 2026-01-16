@@ -32,6 +32,7 @@ static int steamdeck_chctl_psy_ext_get_prop(struct power_supply *psy,
 	unsigned long long acpi_val;
 	unsigned int scaling = 1;
 	const char *method;
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
@@ -49,9 +50,11 @@ static int steamdeck_chctl_psy_ext_get_prop(struct power_supply *psy,
 		return -EINVAL;
 	}
 
-	if (ACPI_FAILURE(acpi_evaluate_integer(sd->adev->handle,
-					       (char *)method, NULL, &acpi_val)))
-		return -EIO;
+	ret = ACPI_FAILURE(acpi_evaluate_integer(sd->adev->handle, (char *)method, NULL, &acpi_val));
+	if (ret) {
+		dev_warn(&sd->pdev->dev, "ACPI get returned error %d\n", ret);
+		return ret;
+	}
 
 	val->intval = acpi_val * scaling;
 	return 0;
@@ -66,13 +69,14 @@ steamdeck_chctl_psy_ext_set_prop(struct power_supply *psy,
 	struct steamdeck_chctl *sd = data;
 	const char *method;
 	int acpi_val;
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
 		acpi_val = val->intval;
 
-		if (acpi_val < 0 || acpi_val > 100)
-			return -EINVAL;
+		// if (acpi_val < 0 || acpi_val > 100)
+		// 	return -EINVAL;
 
 		method = "FCBL";
 		break;
@@ -80,9 +84,9 @@ steamdeck_chctl_psy_ext_set_prop(struct power_supply *psy,
 		/* Convert from sysfs's uA to ACPI's mA */
 		acpi_val = val->intval / 1000;
 
-		if (acpi_val < CHARGE_CONTROL_LIMIT_MIN_MA ||
-		    acpi_val > CHARGE_CONTROL_LIMIT_MAX_MA)
-			return -EINVAL;
+		// if (acpi_val < CHARGE_CONTROL_LIMIT_MIN_MA ||
+		//     acpi_val > CHARGE_CONTROL_LIMIT_MAX_MA)
+		// 	return -EINVAL;
 
 		method = "CHGR";
 		break;
@@ -90,11 +94,12 @@ steamdeck_chctl_psy_ext_set_prop(struct power_supply *psy,
 		return -EINVAL;
 	}
 
-
-	if (ACPI_FAILURE(acpi_execute_simple_method(sd->adev->handle,
-						    (char *)method,
-						    acpi_val)))
-		return -EIO;
+	ret = ACPI_FAILURE(acpi_execute_simple_method(
+		sd->adev->handle, (char *)method, acpi_val));
+	if (ret) {
+		dev_warn(&sd->pdev->dev, "ACPI set returned error %d\n", ret);
+		return ret;
+	}
 
 	return 0;
 }
