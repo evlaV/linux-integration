@@ -22,6 +22,20 @@ struct steamdeck_chctl {
 	struct power_supply *hooked_battery;
 };
 
+static const char * psp_name(enum power_supply_property psp)
+{
+	switch (psp) {
+		case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+			return "POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD";
+		case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
+			return "POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT";
+		case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX:
+			return "POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX";
+		default:
+			return "<unknown>";
+	}
+}
+
 static int steamdeck_chctl_psy_ext_get_prop(struct power_supply *psy,
 					    const struct power_supply_ext *ext,
 					    void *data,
@@ -33,6 +47,7 @@ static int steamdeck_chctl_psy_ext_get_prop(struct power_supply *psy,
 	unsigned int scaling = 1;
 	const char *method;
 	int ret;
+	char buf[TASK_COMM_LEN];
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
@@ -57,6 +72,8 @@ static int steamdeck_chctl_psy_ext_get_prop(struct power_supply *psy,
 	}
 
 	val->intval = acpi_val * scaling;
+
+	pr_info("%s:%d: %s(): psp=%s acpi_val=%llu scaled=%d\n", get_task_comm(buf, current), task_pid_nr(current), __func__, psp_name(psp), acpi_val, val->intval);
 	return 0;
 }
 
@@ -70,6 +87,7 @@ steamdeck_chctl_psy_ext_set_prop(struct power_supply *psy,
 	const char *method;
 	int acpi_val;
 	int ret;
+	char buf[TASK_COMM_LEN];
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
@@ -96,6 +114,7 @@ steamdeck_chctl_psy_ext_set_prop(struct power_supply *psy,
 
 	ret = ACPI_FAILURE(acpi_execute_simple_method(
 		sd->adev->handle, (char *)method, acpi_val));
+	pr_info("%s:%d: %s(): psp=%s acpi_val=%d val=%d ret=%d\n", get_task_comm(buf, current), task_pid_nr(current), __func__, psp_name(psp), acpi_val, val->intval, ret);
 	if (ret) {
 		dev_warn(&sd->pdev->dev, "ACPI set returned error %d\n", ret);
 		return ret;
