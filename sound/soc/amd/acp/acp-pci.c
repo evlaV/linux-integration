@@ -174,6 +174,7 @@ static int acp_pci_probe(struct pci_dev *pci, const struct pci_device_id *pci_id
 
 	chip->addr = addr;
 
+	pr_info("BOB_DEBUG: %s(): %s:%s chip->name=%s acp_init=%pS", __func__, dev ? dev_bus_name(dev):"<BUS?>", dev ? dev_name(dev) : "<DEV?>", chip->name ? chip->name : "<CHIP?>", (chip->acp_hw_ops && chip->acp_hw_ops->acp_init) ? chip->acp_hw_ops->acp_init : NULL);
 	chip->acp_hw_ops_init(chip);
 	ret = acp_hw_init(chip);
 	if (ret)

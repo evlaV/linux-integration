@@ -17,6 +17,7 @@
 //   o Add more codecs and platforms to ensure good API coverage.
 //   o Support TDM on PCM and I2S
 
+#include "linux/printk.h"
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -2816,9 +2817,20 @@ static void snd_soc_del_component_unlocked(struct snd_soc_component *component)
 
 	if (card) {
 		instantiated = card->instantiated;
+		pr_info("BOB_DEBUG: %s(): component={.name=%s .id=%d .name_prefix=%s .dev=%s:%s .card={.name=%s .long_name=%s .driver_name=%s .components=%s .dev=%s:%s .instantiated=%d}}\n",
+			__func__, component->name, component->id, component->name_prefix,
+			dev_bus_name(component->dev), dev_name(component->dev),
+			component->card->name, component->card->long_name, component->card->driver_name,
+			component->card->components,
+			dev_bus_name(component->card->dev), dev_name(component->card->dev),
+			component->card->instantiated);
 		snd_soc_unbind_card(card);
 		if (instantiated)
 			list_add(&card->list, &unbind_card_list);
+	} else {
+		pr_info("BOB_DEBUG: %s(): component={.name=%s .id=%d .name_prefix=%s .dev=%s:%s .card=<NULL>}\n",
+			__func__, component->name, component->id, component->name_prefix,
+			dev_bus_name(component->dev), dev_name(component->dev));
 	}
 
 	list_del(&component->list);
@@ -2889,8 +2901,30 @@ int snd_soc_add_component(struct snd_soc_component *component,
 	/* see for_each_component */
 	list_add(&component->list, &component_list);
 
-	list_for_each_entry_safe(card, c, &unbind_card_list, list)
+	if (component->card)
+		pr_info("BOB_DEBUG: %s(): component={.name=%s .id=%d .name_prefix=%s .dev=%s:%s .card={.name=%s .long_name=%s .driver_name=%s .components=%s .dev=%s:%s .instantiated=%d}}\n",
+			__func__, component->name, component->id, component->name_prefix,
+			dev_bus_name(component->dev), dev_name(component->dev),
+			component->card->name, component->card->long_name, component->card->driver_name,
+			component->card->components,
+			dev_bus_name(component->card->dev), dev_name(component->card->dev),
+			component->card->instantiated);
+
+	if (list_empty(&unbind_card_list))
+		pr_info("BOB_DEBUG: %s(): component={.name=%s .id=%d .name_prefix=%s .dev=%s:%s} list empty\n",
+			__func__, component->name, component->id, component->name_prefix,
+			dev_bus_name(component->dev), dev_name(component->dev));
+
+	list_for_each_entry_safe(card, c, &unbind_card_list, list) {
+		pr_info("BOB_DEBUG: %s(): component={.name=%s .id=%d .name_prefix=%s .dev=%s:%s} card={.name=%s .long_name=%s .driver_name=%s .components=%s .dev=%s:%s .instantiated=%d}}\n",
+			__func__, component->name, component->id, component->name_prefix,
+			dev_bus_name(component->dev), dev_name(component->dev),
+			card->name, card->long_name, card->driver_name,
+			card->components,
+			dev_bus_name(card->dev), dev_name(card->dev),
+			card->instantiated);
 		snd_soc_rebind_card(card);
+	}
 
 err_cleanup:
 	if (ret < 0)
@@ -2913,6 +2947,7 @@ int snd_soc_register_component(struct device *dev,
 	if (!component)
 		return -ENOMEM;
 
+	pr_info("BOB_DEBUG: %s(): %s:%s component_driver=%s dai_drv=%s:%d\n", __func__, dev_bus_name(dev), dev_name(dev), component_driver->name ? component_driver->name : "<COMPONENT_DRIVER?>", (dai_drv && dai_drv->name) ? dai_drv->name : "<DAI_DRV?>", dai_drv ? dai_drv->id : -1);
 	ret = snd_soc_component_initialize(component, component_driver, dev);
 	if (ret < 0)
 		return ret;
@@ -2932,6 +2967,7 @@ void snd_soc_unregister_component_by_driver(struct device *dev,
 					    const struct snd_soc_component_driver *component_driver)
 {
 	const char *driver_name = NULL;
+	int found = 0;
 
 	if (component_driver)
 		driver_name = component_driver->name;
@@ -2943,8 +2979,10 @@ void snd_soc_unregister_component_by_driver(struct device *dev,
 		if (!component)
 			break;
 
+		found++;
 		snd_soc_del_component_unlocked(component);
 	}
+	pr_info("BOB_DEBUG: %s(): %s:%s component_driver=%s found=%d\n", __func__, dev_bus_name(dev), dev_name(dev), component_driver->name ? component_driver->name : "<COMPONENT_DRIVER?>", found);
 	mutex_unlock(&client_mutex);
 }
 EXPORT_SYMBOL_GPL(snd_soc_unregister_component_by_driver);

@@ -529,6 +529,13 @@ int snd_soc_pcm_dai_probe(struct snd_soc_pcm_runtime *rtd, int order)
 			if (dai->driver->ops->probe_order != order)
 				continue;
 
+			pr_info("BOB_DEBUG: %s(): %s:%s: dai={.name=%s .id=%d .device=%s:%s .driver={.name=%s .id=%u .ops->probe=%ps}}\n",
+				__func__, dev_bus_name(rtd->dev), dev_name(rtd->dev),
+				dai->name, dai->id,
+				dev_bus_name(dai->dev), dev_name(dai->dev),
+				dai->driver->name, dai->driver->id,
+				dai->driver->ops->probe);
+
 			if (dai->driver->ops->probe) {
 				int ret = dai->driver->ops->probe(dai);
 
@@ -554,6 +561,13 @@ int snd_soc_pcm_dai_remove(struct snd_soc_pcm_runtime *rtd, int order)
 		if (dai->driver->ops) {
 			if (dai->driver->ops->remove_order != order)
 				continue;
+
+			pr_info("BOB_DEBUG: %s(): %s:%s: dai={.name=%s .id=%d .device=%s:%s .driver={.name=%s .id=%u .ops->remove=%ps}}\n",
+				__func__, dev_bus_name(rtd->dev), dev_name(rtd->dev),
+				dai->name, dai->id,
+				dev_bus_name(dai->dev), dev_name(dai->dev),
+				dai->driver->name, dai->driver->id,
+				dai->driver->ops->remove);
 
 			if (dai->driver->ops->remove) {
 				r = dai->driver->ops->remove(dai);

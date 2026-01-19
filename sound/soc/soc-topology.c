@@ -1302,6 +1302,8 @@ static int soc_tplg_dapm_complete(struct soc_tplg *tplg)
 	struct snd_soc_card *card = tplg->comp->card;
 	int ret;
 
+	pr_info("%s(): BOB_DEBUG: card={.name=\"%s\" .long_name=\"%s\" .driver_name=\"%s\" .components=\"%s\"}",
+		__func__, card->name, card->long_name, card->driver_name, card->components);
 	/* Card might not have been registered at this point.
 	 * If so, just return success.
 	*/

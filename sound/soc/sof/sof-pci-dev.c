@@ -269,6 +269,7 @@ int sof_pci_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	/* set callback to be called on successful device probe to enable runtime_pm */
 	sof_pdata->sof_probe_complete = sof_pci_probe_complete;
 
+	pr_info("BOB_DEBUG: %s(): %s:%s", __func__, dev_bus_name(dev), dev_name(dev));
 	/* call sof helper for DSP hardware probe */
 	return snd_sof_device_probe(dev, sof_pdata);
 }
@@ -276,6 +277,7 @@ EXPORT_SYMBOL_NS(sof_pci_probe, "SND_SOC_SOF_PCI_DEV");
 
 void sof_pci_remove(struct pci_dev *pci)
 {
+	pr_info("BOB_DEBUG: %s(): %s:%s", __func__, dev_bus_name(&pci->dev), dev_name(&pci->dev));
 	/* call sof helper for DSP hardware remove */
 	snd_sof_device_remove(&pci->dev);
 
@@ -288,6 +290,7 @@ EXPORT_SYMBOL_NS(sof_pci_remove, "SND_SOC_SOF_PCI_DEV");
 
 void sof_pci_shutdown(struct pci_dev *pci)
 {
+	pr_info("BOB_DEBUG: %s(): %s:%s", __func__, dev_bus_name(&pci->dev), dev_name(&pci->dev));
 	snd_sof_device_shutdown(&pci->dev);
 }
 EXPORT_SYMBOL_NS(sof_pci_shutdown, "SND_SOC_SOF_PCI_DEV");

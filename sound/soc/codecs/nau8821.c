@@ -1664,6 +1664,7 @@ int nau8821_enable_jack_detect(struct snd_soc_component *component,
 {
 	struct nau8821 *nau8821 = snd_soc_component_get_drvdata(component);
 
+	pr_info("BOB_DEBUG: %s(): %s:%s component=%s:%d", __func__, nau8821->dev ? dev_bus_name(nau8821->dev) : "<BUS?>", nau8821->dev ? dev_name(nau8821->dev) : "<DEV?>", component->name ? component->name : "<COMPONENT?>", component->id);
 	nau8821->jack = jack;
 	enable_irq(nau8821->irq);
 
@@ -1686,6 +1687,7 @@ int nau8821_disable_jack_detect(struct snd_soc_component *component)
 
 	disable_irq(nau8821->irq);
 	nau8821->jack = NULL;
+	pr_info("BOB_DEBUG: %s(): %s:%s component=%s:%d", __func__, nau8821->dev ? dev_bus_name(nau8821->dev) : "<BUS?>", nau8821->dev ? dev_name(nau8821->dev) : "<DEV?>", component->name ? component->name : "<COMPONENT?>", component->id);
 
 	return 0;
 }

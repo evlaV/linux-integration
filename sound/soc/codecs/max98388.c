@@ -326,6 +326,8 @@ static int max98388_resume_mute_switch_put(struct snd_kcontrol *kcontrol,
 		val = max98388->saved_vol;
 	}
 
+	pr_info("BOB_DEBUG: %s(): val=0x%2x\n", __func__, val);
+
 	ret = regmap_write(max98388->regmap, MAX98388_R2090_SPK_CH_VOL_CTRL, val);
 
 	return ret;
@@ -485,6 +487,7 @@ static int max98388_probe(struct snd_soc_component *component)
 {
 	struct max98388_priv *max98388 = snd_soc_component_get_drvdata(component);
 
+	dev_info(component->dev, "BOB_DEBUG: %s(): %s:%d\n", __func__, component->name, component->id);
 	/* Software Reset */
 	max98388_reset(max98388, component->dev);
 	usleep_range(400, 1000);
@@ -537,6 +540,7 @@ static int max98388_dai_set_fmt(struct snd_soc_dai *codec_dai,
 	unsigned int invert = 0;
 
 	dev_dbg(component->dev, "%s: fmt 0x%08X\n", __func__, fmt);
+	dev_info(component->dev, "BOB_DEBUG: %s(): %s:%d fmt=0x%08x\n", __func__, component->name, component->id, fmt);
 
 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
 	case SND_SOC_DAIFMT_NB_NF:
@@ -613,6 +617,7 @@ static int max98388_set_clock(struct snd_soc_component *component,
 			return -EINVAL;
 		}
 
+	dev_info(component->dev, "BOB_DEBUG: %s(): %s:%d\n", __func__, component->name, component->id);
 		regmap_update_bits(max98388->regmap,
 				   MAX98388_R2041_PCM_CLK_SETUP,
 				   MAX98388_PCM_CLK_SETUP_BSEL_MASK,
@@ -632,6 +637,7 @@ static int max98388_dai_hw_params(struct snd_pcm_substream *substream,
 	int ret, reg;
 	int status = 0;
 
+	dev_info(component->dev, "BOB_DEBUG: %s(): %s:%d\n", __func__, component->name, component->id);
 	/* pcm mode configuration */
 	switch (snd_pcm_format_width(params_format(params))) {
 	case 16:
@@ -764,6 +770,7 @@ static int max98388_dai_tdm_slot(struct snd_soc_dai *dai,
 	int cnt, slot_found;
 	int addr, bits;
 
+	dev_info(component->dev, "BOB_DEBUG: %s(): %s:%d\n", __func__, component->name, component->id);
 	if (!tx_mask && !rx_mask && !slots && !slot_width)
 		max98388->tdm_mode = false;
 	else
@@ -926,6 +933,7 @@ static int max98388_suspend(struct device *dev)
 {
 	struct max98388_priv *max98388 = dev_get_drvdata(dev);
 
+	dev_info(dev, "BOB_DEBUG: %s()\n", __func__);
 	regcache_cache_only(max98388->regmap, true);
 	regcache_mark_dirty(max98388->regmap);
 
@@ -936,6 +944,7 @@ static int max98388_resume(struct device *dev)
 {
 	struct max98388_priv *max98388 = dev_get_drvdata(dev);
 
+	dev_info(dev, "BOB_DEBUG: %s()\n", __func__);
 	regcache_cache_only(max98388->regmap, false);
 	max98388_reset(max98388, dev);
 	usleep_range(400, 1000);
@@ -999,6 +1008,7 @@ static int max98388_i2c_probe(struct i2c_client *i2c)
 
 	struct max98388_priv *max98388 = NULL;
 
+	dev_info(&i2c->dev, "BOB_DEBUG: %s()\n", __func__);
 	max98388 = devm_kzalloc(&i2c->dev, sizeof(*max98388), GFP_KERNEL);
 	if (!max98388)
 		return -ENOMEM;
@@ -1021,6 +1031,7 @@ static int max98388_i2c_probe(struct i2c_client *i2c)
 		return dev_err_probe(&i2c->dev, PTR_ERR(max98388->reset_gpio),
 				     "Unable to request GPIO\n");
 
+	pr_info("BOB_DEBUG: %s(): %s:%s: reset_gpio=%ps\n", __func__, dev_bus_name(&i2c->dev), dev_name(&i2c->dev), max98388->reset_gpio);
 	if (max98388->reset_gpio) {
 		usleep_range(5000, 6000);
 		gpiod_set_value_cansleep(max98388->reset_gpio, 0);
