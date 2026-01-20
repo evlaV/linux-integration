@@ -1225,6 +1225,14 @@ static int acp_8821_init(struct snd_soc_pcm_runtime *rtd)
 				       ARRAY_SIZE(nau8821_audio_route));
 }
 
+static void acp_8821_exit(struct snd_soc_pcm_runtime *rtd)
+{
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_component *component = codec_dai->component;
+
+	nau8821_disable_jack_detect(component);
+}
+
 static int acp_8821_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -1430,6 +1438,7 @@ int acp_sofdsp_dai_links_create(struct snd_soc_card *card)
 			links[i].codecs = nau8821;
 			links[i].num_codecs = ARRAY_SIZE(nau8821);
 			links[i].init = acp_8821_init;
+			links[i].exit = acp_8821_exit;
 			links[i].ops = &acp_8821_ops;
 		}
 		i++;

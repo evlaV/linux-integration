@@ -114,6 +114,13 @@ static int acp5x_8821_init(struct snd_soc_pcm_runtime *rtd)
 	return ret;
 }
 
+static void acp5x_8821_exit(struct snd_soc_pcm_runtime *rtd)
+{
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
+
+	nau8821_disable_jack_detect(component);
+}
+
 static const unsigned int rates[] = {
 	48000,
 };
@@ -278,6 +285,7 @@ static struct snd_soc_dai_link acp5x_8821_35l41_dai[] = {
 			   SND_SOC_DAIFMT_CBC_CFC,
 		.ops = &acp5x_8821_ops,
 		.init = acp5x_8821_init,
+		.exit = acp5x_8821_exit,
 		SND_SOC_DAILINK_REG(acp5x_i2s, nau8821, platform),
 	},
 	{
@@ -374,6 +382,7 @@ static struct snd_soc_dai_link acp5x_8821_98388_dai[] = {
 			   SND_SOC_DAIFMT_CBC_CFC,
 		.ops = &acp5x_8821_ops,
 		.init = acp5x_8821_init,
+		.exit = acp5x_8821_exit,
 		SND_SOC_DAILINK_REG(acp5x_i2s, nau8821, platform),
 	},
 	{

@@ -7,6 +7,7 @@
 // Co-author: Seven Lee <wtli@nuvoton.com>
 //
 
+#include "linux/interrupt.h"
 #include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -1662,24 +1663,33 @@ int nau8821_enable_jack_detect(struct snd_soc_component *component,
 	struct snd_soc_jack *jack)
 {
 	struct nau8821 *nau8821 = snd_soc_component_get_drvdata(component);
-	int ret;
 
 	nau8821->jack = jack;
-	/* Initiate jack detection work queue */
-	INIT_DELAYED_WORK(&nau8821->jdet_work, nau8821_jdet_work);
+	enable_irq(nau8821->irq);
 
-	ret = devm_request_threaded_irq(nau8821->dev, nau8821->irq, NULL,
-		nau8821_interrupt, IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-		"nau8821", nau8821);
-	if (ret) {
-		dev_err(nau8821->dev, "Cannot request irq %d (%d)\n",
-			nau8821->irq, ret);
-		return ret;
-	}
-
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(nau8821_enable_jack_detect);
+
+/**
+ * nau8821_disable_jack_detect - Disable a jack for event reporting
+ *
+ * @component:  component to register the jack with
+ * @jack: jack to stop reporting headset and button events on
+ *
+ * After this function has been called the headset insert/remove and button
+ * events will no longer be routed to a jack.
+ */
+int nau8821_disable_jack_detect(struct snd_soc_component *component)
+{
+	struct nau8821 *nau8821 = snd_soc_component_get_drvdata(component);
+
+	disable_irq(nau8821->irq);
+	nau8821->jack = NULL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nau8821_disable_jack_detect);
 
 static void nau8821_reset_chip(struct regmap *regmap)
 {
@@ -1829,6 +1839,7 @@ static void nau8821_init_regs(struct nau8821 *nau8821)
 static int nau8821_setup_irq(struct nau8821 *nau8821)
 {
 	struct regmap *regmap = nau8821->regmap;
+	int ret;
 
 	/* Jack detection */
 	regmap_update_bits(regmap, NAU8821_R1A_GPIO12_CTRL,
@@ -1860,6 +1871,18 @@ static int nau8821_setup_irq(struct nau8821 *nau8821)
 	/* Disable interruption before codec initiation done */
 	/* Mask unneeded IRQs: 1 - disable, 0 - enable */
 	regmap_update_bits(regmap, NAU8821_R0F_INTERRUPT_MASK, 0x3f5, 0x3f5);
+
+	/* Initiate jack detection work queue */
+	INIT_DELAYED_WORK(&nau8821->jdet_work, nau8821_jdet_work);
+
+	ret = devm_request_threaded_irq(nau8821->dev, nau8821->irq, NULL,
+		nau8821_interrupt, IRQF_TRIGGER_LOW | IRQF_ONESHOT | IRQF_NO_AUTOEN,
+		"nau8821", nau8821);
+	if (ret) {
+		dev_err(nau8821->dev, "Cannot request irq %d (%d)\n",
+			nau8821->irq, ret);
+		return ret;
+	}
 
 	return 0;
 }

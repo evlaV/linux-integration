@@ -582,5 +582,6 @@ struct nau8821 {
 
 int nau8821_enable_jack_detect(struct snd_soc_component *component,
 	struct snd_soc_jack *jack);
+int nau8821_disable_jack_detect(struct snd_soc_component *component);
 
 #endif  /* __NAU8821_H__ */
