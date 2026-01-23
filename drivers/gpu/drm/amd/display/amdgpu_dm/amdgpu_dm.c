@@ -12398,7 +12398,19 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 			drm_dbg_atomic(dev, "MST drm_dp_mst_atomic_check() failed\n");
 			goto fail;
 		}
-		status = dc_validate_global_state(dc, dm_state->context, DC_VALIDATE_MODE_ONLY);
+
+		/*
+		 * If dc_validate_mode set as DC_VALIDATE_MODE_ONLY, validate_bandwidth() will skip the wm
+		 * and dlg calculation. But during commit_tail, validate_bandwidth() is called with
+		 * dc_validate_mode set as DC_VALIDATE_MODE_AND_PROGRAMMING.
+		 * dc_state->bw_ctx.dml.soc.sr_exit_time_us might get changed after the wm_calculation.
+		 * As the result, dc->current_state->bw_ctx.dml.soc.sr_exit_time_us might not aligned with the
+		 * one in dm_state->context. Which cause duplicated dm_state->context not aligned with
+		 * dc->current_state, and might have bandwidth validation pass in atomic_check and fail in
+		 * commit_tail later.  Hence, we have to set DC_VALIDATE_MODE_AND_PROGRAMMING when call
+		 * dc_validate_global_state()
+		 */
+		status = dc_validate_global_state(dc, dm_state->context, DC_VALIDATE_MODE_AND_PROGRAMMING);
 		if (status != DC_OK) {
 			drm_dbg_atomic(dev, "DC global validation failure: %s (%d)",
 				       dc_status_to_str(status), status);
