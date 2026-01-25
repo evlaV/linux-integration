@@ -466,10 +466,13 @@ cfg80211_add_nontrans_list(struct cfg80211_bss *trans_bss,
 }
 
 static void __cfg80211_bss_expire(struct cfg80211_registered_device *rdev,
-				  unsigned long expire_time)
+				  unsigned long expire_time,
+				  struct ieee80211_channel **channels,
+				  int n_channels)
 {
 	struct cfg80211_internal_bss *bss, *tmp;
 	bool expired = false;
+	int i;
 
 	lockdep_assert_held(&rdev->bss_lock);
 
@@ -478,6 +481,20 @@ static void __cfg80211_bss_expire(struct cfg80211_registered_device *rdev,
 			continue;
 		if (!time_after(expire_time, bss->ts))
 			continue;
+
+		/*
+		 * If a channel list is provided, only expire BSSes on those
+		 * channels. This is to avoid clearing non-scanned channels
+		 * during partial scans.
+		 */
+		if (channels) {
+			for (i = 0; i < n_channels; i++) {
+				if (bss->pub.channel == channels[i])
+					break;
+			}
+			if (i == n_channels)
+				continue;
+		}
 
 		if (__cfg80211_unlink_bss(rdev, bss))
 			expired = true;
@@ -1137,9 +1154,10 @@ void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev,
 
 	if (!request->info.aborted &&
 	    request->flags & NL80211_SCAN_FLAG_FLUSH) {
-		/* flush entries from previous scans */
+		/* flush old entries on scanned channels */
 		spin_lock_bh(&rdev->bss_lock);
-		__cfg80211_bss_expire(rdev, request->scan_start);
+		__cfg80211_bss_expire(rdev, request->scan_start,
+				      request->channels, request->n_channels);
 		spin_unlock_bh(&rdev->bss_lock);
 	}
 
@@ -1277,9 +1295,11 @@ void cfg80211_sched_scan_results_wk(struct work_struct *work)
 		if (req->report_results) {
 			req->report_results = false;
 			if (req->flags & NL80211_SCAN_FLAG_FLUSH) {
-				/* flush entries from previous scans */
+				/* flush old entries on scanned channels */
 				spin_lock_bh(&rdev->bss_lock);
-				__cfg80211_bss_expire(rdev, req->scan_start);
+				__cfg80211_bss_expire(rdev, req->scan_start,
+						      req->channels,
+						      req->n_channels);
 				spin_unlock_bh(&rdev->bss_lock);
 				req->scan_start = jiffies;
 			}
@@ -1375,7 +1395,8 @@ void cfg80211_bss_age(struct cfg80211_registered_device *rdev,
 
 void cfg80211_bss_expire(struct cfg80211_registered_device *rdev)
 {
-	__cfg80211_bss_expire(rdev, jiffies - IEEE80211_SCAN_RESULT_EXPIRE);
+	__cfg80211_bss_expire(rdev, jiffies - IEEE80211_SCAN_RESULT_EXPIRE,
+			      NULL, 0);
 }
 
 void cfg80211_bss_flush(struct wiphy *wiphy)
@@ -1383,7 +1404,7 @@ void cfg80211_bss_flush(struct wiphy *wiphy)
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 
 	spin_lock_bh(&rdev->bss_lock);
-	__cfg80211_bss_expire(rdev, jiffies);
+	__cfg80211_bss_expire(rdev, jiffies, NULL, 0);
 	spin_unlock_bh(&rdev->bss_lock);
 }
 EXPORT_SYMBOL(cfg80211_bss_flush);
