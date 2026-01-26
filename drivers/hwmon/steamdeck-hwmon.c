@@ -8,6 +8,7 @@
 #include <linux/acpi.h>
 #include <linux/hwmon.h>
 #include <linux/platform_device.h>
+#include <linux/mm.h>
 
 #define STEAMDECK_HWMON_NAME	"steamdeck-hwmon"
 
@@ -188,6 +189,21 @@ steamdeck_hwmon_simple_store(struct device *dev, const char *buf, size_t count,
 {
 	struct steamdeck_hwmon *sd = dev_get_drvdata(dev);
 	unsigned long value;
+	char tbuf[TASK_COMM_LEN];
+	char pbuf[TASK_COMM_LEN];
+	char tcmdline[1024];
+	char pcmdline[1024];
+
+	rcu_read_lock();
+	get_cmdline(current, tcmdline, 1024);
+	get_cmdline(rcu_dereference(current->real_parent), pcmdline, 1024);
+
+	pr_info("%s:%d(%s)->%s:%d(%s): %s(): method=%s buf=%s upper_limit=%lu\n",
+		get_task_comm(pbuf, rcu_dereference(current->real_parent)),
+		task_pid_nr(rcu_dereference(current->real_parent)), pcmdline,
+		get_task_comm(tbuf, current), task_pid_nr(current), tcmdline,
+		__func__, method, buf, upper_limit);
+	rcu_read_unlock();
 
 	if (kstrtoul(buf, 10, &value) || value >= upper_limit)
 		return -EINVAL;
@@ -205,8 +221,22 @@ steamdeck_hwmon_simple_show(struct device *dev, char *buf,
 {
 	struct steamdeck_hwmon *sd = dev_get_drvdata(dev);
 	unsigned long value;
+	char tbuf[TASK_COMM_LEN];
+	char pbuf[TASK_COMM_LEN];
+	char tcmdline[1024];
+	char pcmdline[1024];
 
 	value = steamdeck_hwmon_get(sd, method);
+	rcu_read_lock();
+	get_cmdline(current, tcmdline, 1024);
+	get_cmdline(rcu_dereference(current->real_parent), pcmdline, 1024);
+
+	pr_info("%s->%d(%s))->%s:%d(%s): %s(): method=%s value=%lu\n",
+		get_task_comm(pbuf, rcu_dereference(current->real_parent)),
+		task_pid_nr(rcu_dereference(current->real_parent)), pcmdline,
+		get_task_comm(tbuf, current), task_pid_nr(current), tcmdline,
+		__func__, method, value);
+	rcu_read_unlock();
 	if (value < 0)
 		return value;
 
