@@ -633,6 +633,8 @@ static bool drm_client_firmware_config(struct drm_client_dev *client,
 	int num_tiled_conns = 0;
 	struct drm_modeset_acquire_ctx ctx;
 
+	dump_stack();
+
 	if (!drm_drv_uses_atomic_modeset(dev))
 		return false;
 
