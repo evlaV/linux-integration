@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include "linux/debugfs.h"
+#include "linux/device/devres.h"
+#include "linux/stddef.h"
 #include <linux/aperture.h>
 #include <linux/clk.h>
 #include <linux/of_clk.h>
@@ -745,6 +748,24 @@ static struct simpledrm_device *simpledrm_device_create(struct drm_driver *drv,
 		iosys_map_set_vaddr_iomem(&sysfb->fb_addr, screen_base);
 	}
 
+	struct debugfs_blob_wrapper *blob = devm_kzalloc(dev->dev, sizeof(*blob), GFP_KERNEL);
+
+	if (!blob) {
+		pr_warn("nfrap: failed to alloc blob\n");
+		goto debugend;
+	}
+
+	blob->data = sysfb->fb_addr.vaddr_iomem;
+	blob->size = sysfb->fb_pitch * sysfb->fb_mode.vdisplay;
+
+	struct dentry *debugfsd = debugfs_create_blob("sysfb_buffer", 0644, NULL, blob);
+	if (!debugfsd) {
+		pr_warn("nfrap: failed to create debugfs entry\n");
+		goto debugend;
+	}
+	/* Leak debugfs entry, its just temporary */
+
+debugend:
 	/*
 	 * Modesetting
 	 */
