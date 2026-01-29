@@ -9401,6 +9401,57 @@ static void amdgpu_dm_enable_self_refresh(struct amdgpu_crtc *acrtc_attach,
 	}
 }
 
+static void amdgpu_dm_wait_next_vactive(struct drm_crtc *crtc,
+					struct drm_crtc_state *new_crtc_state,
+					bool wait_for_vblank)
+{
+	struct dm_crtc_state *acrtc_state = to_dm_crtc_state(new_crtc_state);
+	struct amdgpu_crtc *acrtc_attach = to_amdgpu_crtc(crtc);
+	u32 target_vblank, last_flip_vblank;
+	int vpos, hpos;
+	unsigned long flags;
+
+	if (!amdgpu_dm_crtc_vrr_active(acrtc_state)) {
+		/* Use old throttling in non-vrr fixed refresh rate mode
+		 * to keep flip scheduling based on target vblank counts
+		 * working in a backwards compatible way, e.g., for
+		 * clients using the GLX_OML_sync_control extension or
+		 * DRI3/Present extension with defined target_msc.
+		 */
+		last_flip_vblank = amdgpu_get_vblank_counter_kms(crtc);
+	} else {
+		/* For variable refresh rate mode only:
+		 * Get vblank of last completed flip to avoid > 1 vrr
+		 * flips per video frame by use of throttling, but allow
+		 * flip programming anywhere in the possibly large
+		 * variable vrr vblank interval for fine-grained flip
+		 * timing control and more opportunity to avoid stutter
+		 * on late submission of flips.
+		 */
+		spin_lock_irqsave(&crtc->dev->event_lock, flags);
+		last_flip_vblank = acrtc_attach->dm_irq_params.last_flip_vblank;
+		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
+	}
+
+	target_vblank = last_flip_vblank + wait_for_vblank;
+
+	/*
+	 * Wait until we're out of the vertical blank period before the one
+	 * targeted by the flip
+	 */
+	while ((acrtc_attach->enabled &&
+		(amdgpu_display_get_crtc_scanoutpos(crtc->dev,
+						    acrtc_attach->crtc_id,
+						    0, &vpos, &hpos, NULL,
+						    NULL, &crtc->hwmode)
+		 & (DRM_SCANOUTPOS_VALID | DRM_SCANOUTPOS_IN_VBLANK)) ==
+		(DRM_SCANOUTPOS_VALID | DRM_SCANOUTPOS_IN_VBLANK) &&
+		(int)(target_vblank -
+		  amdgpu_get_vblank_counter_kms(crtc)) > 0)) {
+		usleep_range(1000, 1100);
+	}
+}
+
 static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 				    struct drm_device *dev,
 				    struct amdgpu_display_manager *dm,
@@ -9417,9 +9468,8 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 	struct dm_crtc_state *acrtc_state = to_dm_crtc_state(new_pcrtc_state);
 	struct dm_crtc_state *dm_old_crtc_state =
 			to_dm_crtc_state(drm_atomic_get_old_crtc_state(state, pcrtc));
-	int planes_count = 0, vpos, hpos;
+	int planes_count = 0;
 	unsigned long flags;
-	u32 target_vblank, last_flip_vblank;
 	bool vrr_active = true;//amdgpu_dm_crtc_vrr_active(acrtc_state);
 	bool cursor_update = false;
 	bool pflip_present = false;
@@ -9617,43 +9667,11 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 	}
 
 	if (pflip_present) {
-		if (!vrr_active) {
-			/* Use old throttling in non-vrr fixed refresh rate mode
-			 * to keep flip scheduling based on target vblank counts
-			 * working in a backwards compatible way, e.g., for
-			 * clients using the GLX_OML_sync_control extension or
-			 * DRI3/Present extension with defined target_msc.
-			 */
-			last_flip_vblank = amdgpu_get_vblank_counter_kms(pcrtc);
-		} else {
-			/* For variable refresh rate mode only:
-			 * Get vblank of last completed flip to avoid > 1 vrr
-			 * flips per video frame by use of throttling, but allow
-			 * flip programming anywhere in the possibly large
-			 * variable vrr vblank interval for fine-grained flip
-			 * timing control and more opportunity to avoid stutter
-			 * on late submission of flips.
-			 */
-			spin_lock_irqsave(&pcrtc->dev->event_lock, flags);
-			last_flip_vblank = acrtc_attach->dm_irq_params.last_flip_vblank;
-			spin_unlock_irqrestore(&pcrtc->dev->event_lock, flags);
-		}
 
-		target_vblank = last_flip_vblank + wait_for_vblank;
-
-		/*
-		 * Wait until we're out of the vertical blank period before the one
-		 * targeted by the flip
-		 */
-		while ((acrtc_attach->enabled &&
-			(amdgpu_display_get_crtc_scanoutpos(dm->ddev, acrtc_attach->crtc_id,
-							    0, &vpos, &hpos, NULL,
-							    NULL, &pcrtc->hwmode)
-			 & (DRM_SCANOUTPOS_VALID | DRM_SCANOUTPOS_IN_VBLANK)) ==
-			(DRM_SCANOUTPOS_VALID | DRM_SCANOUTPOS_IN_VBLANK) &&
-			(int)(target_vblank -
-			  amdgpu_get_vblank_counter_kms(pcrtc)) > 0)) {
-			usleep_range(1000, 1100);
+		scoped_guard(mutex, &dm->dc_lock) {
+			dc_exit_ips_for_hw_access(dm->dc);
+			amdgpu_dm_wait_next_vactive(pcrtc, new_pcrtc_state,
+						    wait_for_vblank);
 		}
 
 		/**
