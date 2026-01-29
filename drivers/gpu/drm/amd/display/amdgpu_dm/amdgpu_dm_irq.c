@@ -725,8 +725,7 @@ static inline int dm_irq_state(struct amdgpu_device *adev,
 
 	st = (state == AMDGPU_IRQ_STATE_ENABLE);
 
-	if (dc && dc->caps.ips_support && dc->idle_optimizations_allowed)
-		dc_allow_idle_optimizations(dc, false);
+	ASSERT(!READ_ONCE(dc->idle_optimizations_allowed));
 
 	dc_interrupt_set(adev->dm.dc, irq_source, st);
 	return 0;

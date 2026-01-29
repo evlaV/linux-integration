@@ -290,6 +290,13 @@ static u32 dm_vblank_get_counter(struct amdgpu_device *adev, int crtc)
 		return 0;
 	}
 
+	/*
+	 * Idle disallow requires dc_lock, and thus is blocking. Whereas this
+	 * function can be called from any context. Assert that idle is not
+	 * allowed
+	 */
+	ASSERT(!READ_ONCE(adev->dm.dc->idle_optimizations_allowed));
+
 	return dc_stream_get_vblank_counter(acrtc->dm_irq_params.stream);
 }
 
@@ -303,6 +310,13 @@ static int dm_crtc_get_scanoutpos(struct amdgpu_device *adev, int crtc,
 	if ((crtc < 0) || (crtc >= adev->mode_info.num_crtc))
 		return -EINVAL;
 
+	/*
+	 * -EINVAL if idle is allowed, as idle disallow requires dc_lock mutex
+	 * acquire, and this can be called from any context.
+	 */
+	if (READ_ONCE(dc->idle_optimizations_allowed))
+		return -EINVAL;
+
 	acrtc = adev->mode_info.crtcs[crtc];
 
 	if (!acrtc->dm_irq_params.stream) {
@@ -310,9 +324,6 @@ static int dm_crtc_get_scanoutpos(struct amdgpu_device *adev, int crtc,
 			  crtc);
 		return 0;
 	}
-
-	if (dc && dc->caps.ips_support && dc->idle_optimizations_allowed)
-		dc_allow_idle_optimizations(dc, false);
 
 	/*
 	 * TODO rework base driver to use values directly.

@@ -5656,7 +5656,7 @@ void dc_allow_idle_optimizations_internal(struct dc *dc, bool allow, char const 
 
 	if (dc->hwss.apply_idle_power_optimizations && dc->clk_mgr != NULL &&
 	    dc->hwss.apply_idle_power_optimizations(dc, allow)) {
-		dc->idle_optimizations_allowed = allow;
+		WRITE_ONCE(dc->idle_optimizations_allowed, allow);
 		DC_LOG_DEBUG("%s: %s\n", __func__, allow ? "enabled" : "disabled");
 	}
 
