@@ -771,8 +771,6 @@ bool amdgpu_ring_sched_ready(struct amdgpu_ring *ring)
 void amdgpu_ring_reset_helper_begin(struct amdgpu_ring *ring,
 				    struct amdgpu_fence *guilty_fence)
 {
-	/* Stop the scheduler to prevent anybody else from touching the ring buffer. */
-	drm_sched_wqueue_stop(&ring->sched);
 	/* back up the non-guilty commands */
 	amdgpu_ring_backup_unprocessed_commands(ring, guilty_fence);
 }
@@ -789,9 +787,6 @@ int amdgpu_ring_reset_helper_end(struct amdgpu_ring *ring,
 
 	/* set an error on all fences from the context and reemit */
 	amdgpu_ring_set_fence_errors_and_reemit(ring, guilty_fence);
-
-	/* Start the scheduler again */
-	drm_sched_wqueue_start(&ring->sched);
 
 	return 0;
 }
