@@ -1366,7 +1366,7 @@ void dm_helpers_dp_mst_update_branch_bandwidth(
 	// TODO
 }
 
-bool dm_helpers_is_vrr_pcon_allowed(const struct dc_link *link)
+bool dm_helpers_is_vrr_pcon_allowed(const struct dc_link *link, const struct drm_device *dev)
 {
 	if (amdgpu_freesync_pcon_allow_all) {
 		DRM_INFO("DP-HDMI adapter Freesync PCON whitelist bypassed - Device branch_dev_id : %u\n", link->dpcd_caps.branch_dev_id);
@@ -1387,6 +1387,12 @@ bool dm_helpers_is_vrr_pcon_allowed(const struct dc_link *link)
 	case DP_BRANCH_DEVICE_ID_00E04C:
 	case DP_BRANCH_DEVICE_ID_90CC24:
 	case DP_BRANCH_DEVICE_ID_2B02F0:
+		return true;
+	}
+
+	if (link->dc->debug.override_pcon_vrr_id_check) {
+		drm_info(dev, "Overriding VRR PCON check for ID: 0x%06x\n",
+			 link->dpcd_caps.branch_dev_id);
 		return true;
 	}
 
