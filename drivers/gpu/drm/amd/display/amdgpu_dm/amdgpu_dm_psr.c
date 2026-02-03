@@ -185,9 +185,6 @@ void amdgpu_dm_psr_enable(struct dc_stream_state *stream)
 		power_opt |= psr_power_opt_z10_static_screen;
 
 	dc_link_set_psr_allow_active(link, &psr_enable, false, false, &power_opt);
-
-	if (link->ctx->dc->caps.ips_support)
-		dc_allow_idle_optimizations(link->ctx->dc, true);
 }
 
 /*
