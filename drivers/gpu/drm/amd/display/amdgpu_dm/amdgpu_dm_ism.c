@@ -72,11 +72,9 @@ static bool dm_ism_next_state(enum amdgpu_dm_ism_state current_state,
 		break;
 	case STATE_EVENT(DM_ISM_STATE_HYSTERESIS_WAITING,
 			 DM_ISM_EVENT_TIMER_ELAPSED):
-		*next_state = DM_ISM_STATE_OPTIMIZED_IDLE;
-		break;
 	case STATE_EVENT(DM_ISM_STATE_HYSTERESIS_WAITING,
 			 DM_ISM_EVENT_IMMEDIATE):
-		*next_state = DM_ISM_STATE_OPTIMIZED_IDLE_SSO;
+		*next_state = DM_ISM_STATE_OPTIMIZED_IDLE;
 		break;
 
 	case STATE_EVENT(DM_ISM_STATE_HYSTERESIS_BUSY,
