@@ -6,6 +6,7 @@
  *  Copyright (C) 2001, 2002 Paul Diefenbaugh <paul.s.diefenbaugh@intel.com>
  */
 
+
 #define pr_fmt(fmt) "ACPI: button: " fmt
 
 #include <linux/compiler.h>
@@ -22,6 +23,8 @@
 #include <linux/platform_device.h>
 #include <acpi/button.h>
 #include <linux/suspend.h>
+
+void acpi_pm_wakeup_event_hard(struct device *dev, bool hard);
 
 #define ACPI_BUTTON_CLASS		"button"
 #define ACPI_BUTTON_FILE_STATE		"state"
