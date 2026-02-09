@@ -449,6 +449,8 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	int keycode;
 	bool hard = false;
 
+	pr_warn("nfrap: %s() run\n", __func__);
+
 	switch (event) {
 	case ACPI_BUTTON_NOTIFY_STATUS:
 		break;
@@ -463,13 +465,16 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	input = button->input;
 	keycode = test_bit(KEY_SLEEP, input->keybit) ? KEY_SLEEP : KEY_POWER;
 
+	pr_warn("nfrap: %s: event=%d\n", __func__, event);
 	if (event == ACPI_BUTTON_NOTIFY_STATUS) {
 		hard = pm_sleep_transition_in_progress();
+		pr_warn("nfrap: %s: is NOTIFY_STATUS, and hard=%d\n", __func__, hard);
 	}
 	acpi_pm_wakeup_event_hard(button->dev, hard);
 
 	if (button->suspended || event == ACPI_BUTTON_NOTIFY_WAKE)
 		return;
+	pr_warn("nfrap: %s: didn't early return\n", __func__);
 
 	input_report_key(input, keycode, 1);
 	input_sync(input);
