@@ -476,10 +476,8 @@ int hibernation_snapshot(int platform_mode)
 	 */
 
 	/* We may need to release the preallocated image pages here. */
-	if (error || !in_suspend) {
+	if (error || !in_suspend)
 		swsusp_free();
-		// in_suspend = 0;
-	}
 
 	msg = in_suspend ? (error ? PMSG_RECOVER : PMSG_THAW) : PMSG_RESTORE;
 	dpm_resume(msg);
@@ -842,7 +840,6 @@ int hibernate(void)
 		goto Thaw;
 
 	error = hibernation_snapshot(hibernation_mode == HIBERNATION_PLATFORM);
-	// error = -EINVAL;
 	if (error || freezer_test_done)
 		goto Free_bitmaps;
 
@@ -870,7 +867,6 @@ int hibernate(void)
 		}
 
 		pm_pr_dbg("Writing hibernation image.\n");
-		//  error = -EINVAL;
 		error = swsusp_write(flags);
 		swsusp_free();
 		if (!error) {
@@ -879,43 +875,13 @@ int hibernate(void)
 			else
 				power_down();
 		}
-		else {
-			pr_err("nfrap: %s: Image write failed, recovering devices via suspend/restore cycle.\n", __func__);
-			console_suspend_all();
-			if (dpm_suspend_start(PMSG_QUIESCE) == 0 &&
-				dpm_suspend_end(PMSG_QUIESCE) == 0) {
-				dpm_resume_start(PMSG_RESTORE);
-				dpm_resume_end(PMSG_RESTORE);
-			}
-			console_resume_all();
-			error = 0;
-		}
 		in_suspend = 0;
 		pm_restore_gfp_mask();
 	} else {
-		pr_info("Hibernation image restored successfully.\n");
+		pm_pr_dbg("Hibernation image restored successfully.\n");
 	}
 
  Free_bitmaps:
-	if (error) {
-		in_suspend = 0;
-		pr_err("nfrap: %s: Image write failed, recovering devices via suspend/restore cycle. (2)\n", __func__);
-		/*
-		* Writing the image failed. Devices were thawed with PMSG_THAW
-		* earlier, but drivers like amdgpu refuse to resume in thaw() for
-		* normal hibernation (they return -EBUSY). Since devices are now
-		* in "completed" state, we can't just call dpm_resume() again.
-		* We must re-suspend them first, then resume with PMSG_RESTORE
-		* to trigger the ->restore() callbacks which always fully resume.
-		*/
-		// console_suspend_all();
-		// if (dpm_suspend_start(PMSG_QUIESCE) == 0 &&
-		// 	dpm_suspend_end(PMSG_QUIESCE) == 0) {
-			dpm_resume_start(PMSG_RESTORE);
-			dpm_resume_end(PMSG_RESTORE);
-		// }
-		console_resume_all();
-	}
 	free_basic_memory_bitmaps();
  Thaw:
 	unlock_device_hotplug();
