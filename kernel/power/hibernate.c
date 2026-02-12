@@ -762,7 +762,7 @@ static int load_image_and_restore(void)
 	int error;
 	unsigned int flags;
 
-	pm_pr_dbg("Loading hibernation image.\n");
+	pr_info("Loading hibernation image.\n");
 
 	lock_device_hotplug();
 	error = create_basic_memory_bitmaps();
@@ -798,7 +798,7 @@ int hibernate(void)
 	int error;
 
 	if (!hibernation_available()) {
-		pm_pr_dbg("Hibernation not available.\n");
+		pr_info("Hibernation not available.\n");
 		return -EPERM;
 	}
 
@@ -869,7 +869,7 @@ int hibernate(void)
 				flags |= SF_COMPRESSION_ALG_LZO;
 		}
 
-		pm_pr_dbg("Writing hibernation image.\n");
+		pr_info("Writing hibernation image.\n");
 		error = swsusp_write(flags);
 		swsusp_free();
 		if (!error) {
@@ -881,7 +881,7 @@ int hibernate(void)
 		in_suspend = 0;
 		pm_restore_gfp_mask();
 	} else {
-		pm_pr_dbg("Hibernation image restored successfully.\n");
+		pr_info("Hibernation image restored successfully.\n");
 	}
 
  Free_bitmaps:
@@ -889,7 +889,7 @@ int hibernate(void)
  Thaw:
 	unlock_device_hotplug();
 	if (snapshot_test) {
-		pm_pr_dbg("Checking hibernation image\n");
+		pr_info("Checking hibernation image\n");
 		error = swsusp_check(false);
 		if (!error)
 			error = load_image_and_restore();
@@ -1018,7 +1018,7 @@ static int __init find_resume_device(void)
 	if (!strlen(resume_file))
 		return -ENOENT;
 
-	pm_pr_dbg("Checking hibernation image partition %s\n", resume_file);
+	pr_info("Checking hibernation image partition %s\n", resume_file);
 
 	if (resume_delay) {
 		pr_info("Waiting %dsec before reading resume device ...\n",
@@ -1048,10 +1048,10 @@ static int software_resume(void)
 {
 	int error;
 
-	pm_pr_dbg("Hibernation image partition %d:%d present\n",
+	pr_info("Hibernation image partition %d:%d present\n",
 		MAJOR(swsusp_resume_device), MINOR(swsusp_resume_device));
 
-	pm_pr_dbg("Looking for hibernation image.\n");
+	pr_info("Looking for hibernation image.\n");
 
 	mutex_lock(&system_transition_mutex);
 	error = swsusp_check(true);
@@ -1089,7 +1089,7 @@ static int software_resume(void)
 
 	filesystems_freeze(filesystem_freeze_enabled);
 
-	pm_pr_dbg("Preparing processes for hibernation restore.\n");
+	pr_info("Preparing processes for hibernation restore.\n");
 	error = freeze_processes();
 	if (error) {
 		filesystems_thaw();
@@ -1115,7 +1115,7 @@ static int software_resume(void)
 	/* For success case, the suspend path will release the lock */
  Unlock:
 	mutex_unlock(&system_transition_mutex);
-	pm_pr_dbg("Hibernation image not present or could not be loaded.\n");
+	pr_info("Hibernation image not present or could not be loaded.\n");
 	return error;
  Close_Finish:
 	swsusp_close();
@@ -1276,7 +1276,7 @@ static ssize_t disk_store(struct kobject *kobj, struct kobj_attribute *attr,
 		error = -EINVAL;
 
 	if (!error)
-		pm_pr_dbg("Hibernation mode set to '%s'\n",
+		pr_info("Hibernation mode set to '%s'\n",
 			       hibernation_modes[mode]);
 	unlock_system_sleep(sleep_flags);
 	return error ? error : n;
@@ -1335,7 +1335,7 @@ static ssize_t resume_store(struct kobject *kobj, struct kobj_attribute *attr,
 	swsusp_resume_device = dev;
 	unlock_system_sleep(sleep_flags);
 
-	pm_pr_dbg("Configured hibernation resume from disk to %u\n",
+	pr_info("Configured hibernation resume from disk to %u\n",
 		  swsusp_resume_device);
 	noresume = 0;
 	software_resume();
