@@ -1372,7 +1372,7 @@ void dm_helpers_dp_mst_update_branch_bandwidth(
 bool dm_helpers_is_vrr_pcon_allowed(const struct dc_link *link, const struct drm_device *dev)
 {
 	if (amdgpu_freesync_pcon_allow_all) {
-		DRM_INFO("DP-HDMI adapter Freesync PCON whitelist bypassed - Device branch_dev_id : %u\n", branch_dev_id);
+		DRM_INFO("DP-HDMI adapter Freesync PCON whitelist bypassed - Device branch_dev_id : %u\n", link->dpcd_caps.branch_dev_id);
 		return true;
 	}
 
