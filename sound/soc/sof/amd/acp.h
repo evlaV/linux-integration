@@ -230,6 +230,8 @@ enum dsp_crash_ctl_mode {
  	DSP_CRASH_CTL_ENABLED = 1,
  	DSP_CRASH_CTL_ONCE = 2,
  	DSP_CRASH_CTL_SUSPEND = 3,
+	DSP_CRASH_CTL_PANIC = 4,
+	DSP_CRASH_CTL_PANIC_RESUME = 5,
 };
 
 static inline bool dsp_crash_enabled(enum dsp_crash_ctl_mode mode)

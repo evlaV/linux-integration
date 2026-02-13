@@ -159,6 +159,10 @@ static ssize_t dsp_crash_ctl_write(struct file *file, const char __user *from,
 		dev_info(sdev->dev, "scheduled one-time dsp crash\n");
 	} else if (!strcmp(cmd, "suspend")) {
 		adata->dsp_crash_ctl = DSP_CRASH_CTL_SUSPEND;
+	} else if (!strcmp(cmd, "panic")) {
+		adata->dsp_crash_ctl = DSP_CRASH_CTL_PANIC;
+	} else if (!strcmp(cmd, "panic-resume")) {
+		adata->dsp_crash_ctl = DSP_CRASH_CTL_PANIC_RESUME;
 	} else {
 		dev_err(sdev->dev, "invalid dsp crash ctl cmd: %s\n", cmd);
 		ret = -EINVAL;
@@ -200,6 +204,8 @@ static int sof_vangogh_post_fw_run_delay(struct snd_sof_dev *sdev)
 			adata->dsp_crash_ctl = DSP_CRASH_CTL_ENABLED;
 			sof_set_fw_state(sdev, SOF_FW_BOOT_READY_FAILED);
 			return -EIO;
+		} else if (adata->dsp_crash_ctl == DSP_CRASH_CTL_PANIC_RESUME) {
+			adata->dsp_crash_ctl = DSP_CRASH_CTL_PANIC;
 		}
 	} else {
 		debugfs_create_dsp_crash_ctl(sdev);

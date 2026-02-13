@@ -224,7 +224,8 @@ irqreturn_t acp_sof_ipc_irq_thread(int irq, void *context)
 	}
 
 	acp_mailbox_read(sdev, sdev->debug_box.offset, &status, sizeof(u32));
-	if ((status & SOF_IPC_PANIC_MAGIC_MASK) == SOF_IPC_PANIC_MAGIC) {
+	if ((status & SOF_IPC_PANIC_MAGIC_MASK) == SOF_IPC_PANIC_MAGIC ||
+	    adata->dsp_crash_ctl == DSP_CRASH_CTL_PANIC) {
 		snd_sof_dsp_panic(sdev, sdev->dsp_oops_offset, true);
 		status = 0;
 		acp_mailbox_write(sdev, sdev->debug_box.offset, &status, sizeof(status));
