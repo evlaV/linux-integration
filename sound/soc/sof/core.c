@@ -177,6 +177,16 @@ void sof_set_fw_state(struct snd_sof_dev *sdev, enum sof_fw_state new_state)
 	default:
 		break;
 	}
+
+	switch (new_state) {
+	case SOF_FW_BOOT_FAILED:
+	case SOF_FW_BOOT_READY_FAILED:
+	case SOF_FW_CRASHED:
+		snd_sof_oops_handler(sdev);
+		break;
+	default:
+		break;
+	}
 }
 EXPORT_SYMBOL(sof_set_fw_state);
 

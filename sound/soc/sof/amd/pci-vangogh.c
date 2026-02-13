@@ -11,8 +11,14 @@
  * PCI interface for Vangogh ACP device
  */
 
+#include "linux/container_of.h"
+#include "linux/device.h"
+#include "linux/device/bus.h"
+#include "linux/slab.h"
+#include "linux/workqueue.h"
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/string.h>
 #include <sound/sof.h>
 #include <sound/soc-acpi.h>
 
@@ -32,6 +38,79 @@ static const struct sof_amd_acp_desc vangogh_chip_info = {
 	.hw_semaphore_offset = ACP5X_AXI2DAGB_SEM_0,
 	.probe_reg_offset = ACP5X_FUTURE_REG_ACLK_0,
 };
+
+struct oops_data {
+	struct pci_dev *pdev;
+	struct device *amp0, *amp1;
+	struct work_struct work;
+};
+
+static void acp_pci_vgh_driver_reload_workfn(struct work_struct *work)
+{
+	struct oops_data *data = container_of(work, struct oops_data, work);
+	struct pci_bus *bus = data->pdev->bus;
+	int ret;
+
+	device_release_driver(data->amp0);
+	device_release_driver(data->amp1);
+
+	pci_lock_rescan_remove();
+	pci_stop_and_remove_bus_device(data->pdev);
+	pci_rescan_bus(bus);
+	pci_unlock_rescan_remove();
+
+	ret = device_attach(data->amp0);
+	if (ret < 0)
+		dev_err(data->amp0, "Failed to attach driver: %d\n", ret);
+
+	ret = device_attach(data->amp1);
+	if (ret < 0)
+		dev_err(data->amp1, "Failed to attach driver: %d\n", ret);
+
+	kfree(data);
+}
+
+static int acp_pci_vgh_oops_handler(struct snd_sof_dev *sdev)
+{
+	struct snd_soc_card *card = sdev->component->card;
+	struct snd_soc_component *component;
+	struct oops_data *data;
+	struct device *amp0 = NULL, *amp1 = NULL;
+
+	for_each_card_components(card, component) {
+		if (!strcmp(component->name, "i2c-ADS8388:00"))
+			amp0 = get_device(component->dev);
+		if (!strcmp(component->name, "i2c-ADS8388:01"))
+			amp1 = get_device(component->dev);
+	}
+
+	if (!amp0 || !amp1)
+		return -ENODEV;
+
+	data = kzalloc(sizeof(struct oops_data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	data->pdev = to_pci_dev(sdev->dev);
+	data->amp0 = amp0;
+	data->amp1 = amp1;
+	INIT_WORK(&data->work, acp_pci_vgh_driver_reload_workfn);
+
+	queue_work(system_unbound_wq, &data->work);
+
+	return 0;
+}
+
+static int acp_pci_vgh_ops_init(struct snd_sof_dev *sdev)
+{
+	int ret = sof_vangogh_ops_init(sdev);
+	if (ret)
+		return ret;
+
+	sof_vangogh_ops.oops_handler = acp_pci_vgh_oops_handler;
+
+	return 0;
+}
 
 static const struct sof_dev_desc vangogh_desc = {
 	.machines		= snd_soc_acpi_amd_vangogh_sof_machines,
@@ -53,7 +132,7 @@ static const struct sof_dev_desc vangogh_desc = {
 	},
 	.nocodec_tplg_filename	= "sof-acp.tplg",
 	.ops			= &sof_vangogh_ops,
-	.ops_init		= sof_vangogh_ops_init,
+	.ops_init		= acp_pci_vgh_ops_init,
 };
 
 static int acp_pci_vgh_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)

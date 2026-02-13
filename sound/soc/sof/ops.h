@@ -313,6 +313,13 @@ static inline int snd_sof_debugfs_add_region_item(struct snd_sof_dev *sdev,
 	return 0;
 }
 
+static inline int snd_sof_oops_handler(struct snd_sof_dev *sdev)
+{
+	if (!sof_ops(sdev) || !sof_ops(sdev)->oops_handler)
+		return 0;
+	return sof_ops(sdev)->oops_handler(sdev);
+}
+
 /* register IO */
 static inline void snd_sof_dsp_write8(struct snd_sof_dev *sdev, u32 bar,
 				      u32 offset, u8 value)

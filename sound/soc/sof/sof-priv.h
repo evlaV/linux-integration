@@ -317,6 +317,7 @@ struct snd_sof_dsp_ops {
 				       enum snd_sof_fw_blk_type blk_type, u32 offset,
 				       size_t size, const char *name,
 				       enum sof_debugfs_access_type access_type); /* optional */
+	int (*oops_handler)(struct snd_sof_dev *sdev); /* optional */
 
 	/* host DMA trace (IPC3) */
 	int (*trace_init)(struct snd_sof_dev *sdev,
