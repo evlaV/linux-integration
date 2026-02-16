@@ -7805,7 +7805,7 @@ create_stream_for_sink(struct drm_connector *connector,
 
 	if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A ||
 	    stream->signal == SIGNAL_TYPE_HDMI_FRL)
-		mod_build_hf_vsif_infopacket(stream, &stream->hfvsif_infopacket, false, false);
+		mod_build_hf_vsif_infopacket(stream, &stream->hfvsif_infopacket);
 
 	if (stream->signal == SIGNAL_TYPE_DISPLAY_PORT ||
 	    stream->signal == SIGNAL_TYPE_DISPLAY_PORT_MST ||
