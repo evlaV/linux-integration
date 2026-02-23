@@ -1263,6 +1263,8 @@ static void drm_vblank_deferred_enable_worker(struct work_struct *work)
 	if (drm_WARN_ON(dev, !crtc))
 		return;
 
+	trace_drm_deferred_vblank_enable(crtc->index);
+
 	if (crtc->funcs->pre_enable_vblank)
 		crtc->funcs->pre_enable_vblank(crtc);
 
@@ -1291,6 +1293,8 @@ static void drm_vblank_deferred_disable_worker(struct work_struct *work)
 
 	if (drm_WARN_ON(dev, !crtc))
 		return;
+
+	trace_drm_deferred_vblank_disable(crtc->index);
 
 	if (crtc->funcs->pre_disable_vblank)
 		crtc->funcs->pre_disable_vblank(crtc);
@@ -1321,10 +1325,14 @@ void drm_crtc_vblank_wait_deferred_enable(struct drm_crtc *crtc)
 	if (!drm_crtc_needs_deferred_vblank(crtc))
 		return;
 
+	trace_drm_deferred_vblank_wait_enable_start(crtc->index);
+
 	if (!wait_for_completion_timeout(&vblank->enable_done,
 	    msecs_to_jiffies(1000)))
 		drm_err(crtc->dev, "CRTC-%d: Timed out waiting for deferred vblank enable\n",
 			 drm_crtc_index(crtc));
+
+	trace_drm_deferred_vblank_wait_enable_end(crtc->index);
 }
 EXPORT_SYMBOL(drm_crtc_vblank_wait_deferred_enable);
 
@@ -1345,11 +1353,15 @@ int drm_vblank_get(struct drm_device *dev, unsigned int pipe)
 		drm_crtc_needs_deferred_vblank(drm_crtc_from_index(dev, pipe));
 
 	spin_lock_irqsave(&dev->vbl_lock, irqflags);
+
+	trace_drm_vblank_get(pipe, atomic_read(&vblank->refcount));
+
 	/* Going from 0->1 means we have to enable interrupts again */
 	if (atomic_add_return(1, &vblank->refcount) == 1) {
 		if (needs_deferred_enable) {
 			/* Arm completion before queueing deferred enable */
 			reinit_completion(&vblank->enable_done);
+			trace_drm_deferred_vblank_enable_queued(pipe);
 			queue_work(dev->deferred_vblank_wq, &vblank->enable_work);
 		} else {
 			ret = drm_vblank_enable(dev, pipe);
@@ -1396,6 +1408,8 @@ void drm_vblank_put(struct drm_device *dev, unsigned int pipe)
 	needs_deferred_disable =
 		drm_crtc_needs_deferred_vblank(drm_crtc_from_index(dev, pipe));
 
+	trace_drm_vblank_put(pipe, atomic_read(&vblank->refcount));
+
 	/* Last user schedules interrupt disable */
 	if (!atomic_dec_and_test(&vblank->refcount))
 		return;
@@ -1403,18 +1417,21 @@ void drm_vblank_put(struct drm_device *dev, unsigned int pipe)
 	if (!vblank_offdelay)
 		return;
 	else if (vblank_offdelay < 0) {
-		if (needs_deferred_disable)
+		if (needs_deferred_disable) {
+			trace_drm_deferred_vblank_disable_queued(pipe, 0);
 			mod_delayed_work(dev->deferred_vblank_wq,
 					 &vblank->disable_work,
 					 0);
-		else
+		} else
 			vblank_disable_fn(&vblank->disable_timer);
 	} else if (!vblank->config.disable_immediate) {
-		if (needs_deferred_disable)
+		if (needs_deferred_disable) {
+			trace_drm_deferred_vblank_disable_queued(
+				pipe, vblank_offdelay);
 			mod_delayed_work(dev->deferred_vblank_wq,
 					 &vblank->disable_work,
 					 msecs_to_jiffies(vblank_offdelay));
-		else
+		} else
 			mod_timer(&vblank->disable_timer,
 				  jiffies + ((vblank_offdelay * HZ) / 1000));
 	}
@@ -1520,6 +1537,8 @@ void drm_crtc_vblank_off(struct drm_crtc *crtc)
 	spin_lock(&dev->vbl_lock);
 	drm_dbg_vbl(dev, "crtc %d, vblank enabled %d, inmodeset %d\n",
 		    pipe, vblank->enabled, vblank->inmodeset);
+	trace_drm_vblank_off(pipe, atomic_read(&vblank->refcount),
+			     vblank->enabled, vblank->inmodeset);
 
 	/* Avoid redundant vblank disables without previous
 	 * drm_crtc_vblank_on(). */
@@ -1661,6 +1680,8 @@ void drm_crtc_vblank_on_config(struct drm_crtc *crtc,
 	spin_lock_irq(&dev->vbl_lock);
 	drm_dbg_vbl(dev, "crtc %d, vblank enabled %d, inmodeset %d\n",
 		    pipe, vblank->enabled, vblank->inmodeset);
+	trace_drm_vblank_on(pipe, atomic_read(&vblank->refcount),
+			    vblank->enabled, vblank->inmodeset);
 
 	vblank->config = *config;
 
@@ -2135,11 +2156,12 @@ bool drm_handle_vblank(struct drm_device *dev, unsigned int pipe)
 	spin_unlock_irqrestore(&dev->event_lock, irqflags);
 
 	if (disable_irq) {
-		if (drm_crtc_needs_deferred_vblank(drm_crtc_from_index(dev, pipe)))
+		if (drm_crtc_needs_deferred_vblank(drm_crtc_from_index(dev, pipe))) {
+			trace_drm_deferred_vblank_disable_queued(pipe, 0);
 			mod_delayed_work(dev->deferred_vblank_wq,
 					 &vblank->disable_work,
 					 0);
-		else
+		} else
 			vblank_disable_fn(&vblank->disable_timer);
 	}
 
