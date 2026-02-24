@@ -46,6 +46,7 @@
 
 #include "drm_crtc_helper_internal.h"
 #include "drm_crtc_internal.h"
+#include "drm_internal.h"
 
 /**
  * DOC: overview
@@ -1230,7 +1231,7 @@ disable_outputs(struct drm_device *dev, struct drm_atomic_state *state)
 
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
 		const struct drm_crtc_helper_funcs *funcs;
-		int ret;
+		bool vblank_off;
 
 		/* Shut down everything that needs a full modeset. */
 		if (!drm_atomic_crtc_needs_modeset(new_crtc_state))
@@ -1258,19 +1259,17 @@ disable_outputs(struct drm_device *dev, struct drm_atomic_state *state)
 		if (!drm_dev_has_vblank(dev))
 			continue;
 
-		ret = drm_crtc_vblank_get(crtc);
+		vblank_off = drm_crtc_vblank_is_off(crtc);
 		/*
 		 * Self-refresh is not a true "disable"; ensure vblank remains
 		 * enabled.
 		 */
 		if (new_crtc_state->self_refresh_active)
-			WARN_ONCE(ret != 0,
+			WARN_ONCE(vblank_off,
 				  "driver disabled vblank in self-refresh\n");
 		else
-			WARN_ONCE(ret != -EINVAL,
+			WARN_ONCE(!vblank_off,
 				  "driver forgot to call drm_crtc_vblank_off()\n");
-		if (ret == 0)
-			drm_crtc_vblank_put(crtc);
 	}
 }
 
