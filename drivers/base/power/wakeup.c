@@ -876,6 +876,7 @@ bool pm_wakeup_pending(void)
 {
 	unsigned long flags;
 	bool ret = false;
+	bool pm_abort = false;
 
 	raw_spin_lock_irqsave(&events_lock, flags);
 	if (events_check_enabled) {
@@ -892,7 +893,19 @@ bool pm_wakeup_pending(void)
 		pm_print_active_wakeup_sources();
 	}
 
-	return ret || atomic_read(&pm_abort_suspend) > 0;
+	pm_abort = atomic_read(&pm_abort_suspend) > 0;
+
+	if (ret | pm_abort) {
+		pr_info("nfrap: %s: pending? YES, ret: %d, pm_abort: %d\n",
+			__func__, ret, pm_abort);
+		pr_info("nfrap: stack dump:\n");
+		dump_stack();
+	} else {
+		pr_debug("nfrap: %s: pending? NO\n", __func__);
+	}
+
+	ret |= pm_abort;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(pm_wakeup_pending);
 
