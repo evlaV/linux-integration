@@ -705,7 +705,7 @@ static const struct drm_crtc_funcs amdgpu_dm_crtc_deferred_vblank_funcs = {
 #if defined(CONFIG_DEBUG_FS)
 	.late_register = amdgpu_dm_crtc_late_register,
 #endif
-#ifdef AMD_PRIVATE_COLOR
+#ifdef CONFIG_DRM_AMD_COLOR_STEAMDECK
 	.atomic_set_property = amdgpu_dm_atomic_crtc_set_property,
 	.atomic_get_property = amdgpu_dm_atomic_crtc_get_property,
 #endif
