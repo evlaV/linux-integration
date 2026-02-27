@@ -4,6 +4,8 @@
  *
  * Copyright (c) 2010 Rafael J. Wysocki <rjw@sisk.pl>, Novell Inc.
  */
+#include "linux/delay.h"
+#include <linux/string.h>
 #define pr_fmt(fmt) "PM: " fmt
 
 #include <linux/device.h>
@@ -904,6 +906,37 @@ bool pm_wakeup_pending(void)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(pm_wakeup_pending);
+
+#define MAX_PM_WAKEUP_PENDING_WAIT_TARGET_LEN 50
+static char pm_wakeup_pending_wait_target[MAX_PM_WAKEUP_PENDING_WAIT_TARGET_LEN];
+
+static int __init pm_wakeup_pending_wait_target_setup(char *str)
+{
+	strscpy(pm_wakeup_pending_wait_target, str,
+		MAX_PM_WAKEUP_PENDING_WAIT_TARGET_LEN);
+	pr_info("nfrap: pm_wakeup_pending_wait param set to wait on target '%s'\n",
+		pm_wakeup_pending_wait_target);
+	return 1;
+}
+__setup("pm_wakeup_pending_wait=", pm_wakeup_pending_wait_target_setup);
+
+bool pm_wakeup_pending_wait(const char *caller);
+
+bool pm_wakeup_pending_wait(const char *caller)
+{
+	pr_info("nfrap: %s: start: caller: %s\n", __func__, caller);
+	if (strncmp(caller, pm_wakeup_pending_wait_target,
+		    MAX_PM_WAKEUP_PENDING_WAIT_TARGET_LEN)) {
+		return false;
+	}
+
+	pr_info("nfrap: %s waiting...\n", __func__);
+	while (!pm_wakeup_pending())
+		msleep(20);
+	pr_info("nfrap: %s finished\n", __func__);
+	return true;
+}
+EXPORT_SYMBOL_GPL(pm_wakeup_pending_wait);
 
 void pm_system_wakeup(void)
 {
