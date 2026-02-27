@@ -10129,7 +10129,7 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 	}
 
 	if (pflip_present) {
-		if (!vrr_active) {
+		if (!vrr_active && !new_pcrtc_state->low_latency_flip) {
 			/* Use old throttling in non-vrr fixed refresh rate mode
 			 * to keep flip scheduling based on target vblank counts
 			 * working in a backwards compatible way, e.g., for
