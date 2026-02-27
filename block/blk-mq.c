@@ -30,6 +30,7 @@
 #include <linux/blk-crypto.h>
 #include <linux/part_stat.h>
 #include <linux/sched/isolation.h>
+#include <linux/hack.h>
 
 #include <trace/events/block.h>
 
@@ -3736,7 +3737,7 @@ static int blk_mq_hctx_notify_offline(unsigned int cpu, struct hlist_node *node)
 			 * pm_wakeup_pending to prevent the deadlock and improve
 			 * suspend latency.
 			 */
-			if (pm_wakeup_pending()) {
+			if (pm_wakeup_pending_debug(__func__)) {
 				clear_bit(BLK_MQ_S_INACTIVE, &hctx->state);
 				ret = -EBUSY;
 				break;

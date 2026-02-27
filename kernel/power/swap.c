@@ -30,6 +30,7 @@
 #include <linux/kthread.h>
 #include <linux/crc32.h>
 #include <linux/ktime.h>
+#include <linux/hack.h>
 
 #include "power.h"
 
@@ -526,6 +527,8 @@ static int swap_writer_finish(struct swap_map_handle *handle,
 #define CMP_MIN_RD_PAGES	1024
 #define CMP_MAX_RD_PAGES	8192
 
+#define MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN 50
+
 /**
  *	save_image - save the suspend image data
  */
@@ -541,6 +544,7 @@ static int save_image(struct swap_map_handle *handle,
 	struct hib_bio_batch hb;
 	ktime_t start;
 	ktime_t stop;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	hib_init_batch(&hb);
 
@@ -561,8 +565,11 @@ static int save_image(struct swap_map_handle *handle,
 		if (!(nr_pages % m)) {
 			pr_info("Image saving progress: %3d%%\n",
 				nr_pages / m * 10);
+			snprintf(pm_wakeup_pending_debug_target,
+				 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN,
+				 "%s-%d", __func__, nr_pages / m * 10);
 			/* Check for wakeup events periodically during image write */
-			if (pm_wakeup_pending()) {
+			if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 				pm_wakeup_clear(0);
 				pr_info("Wakeup pending, aborting image write\n");
 				ret = -EAGAIN;
@@ -701,6 +708,7 @@ static int save_compressed_image(struct swap_map_handle *handle,
 	unsigned char *page = NULL;
 	struct cmp_data *data = NULL;
 	struct crc_data *crc = NULL;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	hib_init_batch(&hb);
 
@@ -817,8 +825,11 @@ static int save_compressed_image(struct swap_map_handle *handle,
 				if (!(nr_pages % m)) {
 					pr_info("Image saving progress: %3d%%\n",
 						nr_pages / m * 10);
+					snprintf(pm_wakeup_pending_debug_target,
+						 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN,
+						 "%s-%d", __func__, nr_pages / m * 10);
 					/* Check for wakeup events periodically during image write */
-					if (pm_wakeup_pending()) {
+					if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 						pm_wakeup_clear(0);
 						pr_info("Wakeup pending, aborting compressed image write\n");
 						ret = -EAGAIN;

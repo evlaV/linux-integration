@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/suspend.h>
 #include <trace/events/power.h>
+#include <linux/hack.h>
 
 static LIST_HEAD(syscore_ops_list);
 static DEFINE_MUTEX(syscore_ops_lock);
@@ -44,16 +45,20 @@ EXPORT_SYMBOL_GPL(unregister_syscore_ops);
  *
  * This function is executed with one CPU on-line and disabled interrupts.
  */
-int syscore_suspend(void)
+int syscore_suspend(const char *caller)
 {
 	struct syscore_ops *ops;
 	int ret = 0;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	trace_suspend_resume(TPS("syscore_suspend"), 0, true);
 	pm_pr_dbg("Checking wakeup interrupts\n");
 
 	/* Return error code if there are any wakeup interrupts pending. */
-	if (pm_wakeup_pending())
+	snprintf(pm_wakeup_pending_debug_target,
+		 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN,
+		 "%s-%s", __func__, caller);
+	if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target))
 		return -EBUSY;
 
 	WARN_ONCE(!irqs_disabled(),

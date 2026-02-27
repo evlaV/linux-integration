@@ -1184,7 +1184,7 @@ int kernel_kexec(void)
 		if (error)
 			goto Enable_cpus;
 		local_irq_disable();
-		error = syscore_suspend();
+		error = syscore_suspend(__func__);
 		if (error)
 			goto Enable_irqs;
 	} else

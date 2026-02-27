@@ -4,6 +4,8 @@
  *
  * Copyright (c) 2010 Rafael J. Wysocki <rjw@sisk.pl>, Novell Inc.
  */
+#include "linux/delay.h"
+#include <linux/string.h>
 #define pr_fmt(fmt) "PM: " fmt
 
 #include <linux/device.h>
@@ -16,6 +18,7 @@
 #include <linux/debugfs.h>
 #include <linux/pm_wakeirq.h>
 #include <trace/events/power.h>
+#include <linux/hack.h>
 
 #include "power.h"
 
@@ -908,6 +911,62 @@ bool pm_wakeup_pending(void)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(pm_wakeup_pending);
+
+static char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
+static bool pm_wakeup_pending_debug_wait;
+
+static int __init pm_wakeup_pending_target_setup(char *str)
+{
+	strscpy(pm_wakeup_pending_debug_target, str,
+		MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN);
+	pr_info("nfrap: pm_wakeup_pending_debug_target param set to wait on target '%s'\n",
+		pm_wakeup_pending_debug_target);
+	return 1;
+}
+__setup("pm_wakeup_pending_debug_target=", pm_wakeup_pending_target_setup);
+
+static int __init pm_wakeup_pending_wait_setup(char *str)
+{
+	unsigned long wait;
+	int ret;
+
+	ret = kstrtoul(str, 0, &wait);
+	if (ret) {
+		pr_info("nfrap: %s: error: %d\n", __func__, ret);
+		return 0;
+	}
+
+	pm_wakeup_pending_debug_wait = !!wait;
+
+	pr_info("nfrap: pm_wakeup_pending_debug_wait param set to %d\n",
+		pm_wakeup_pending_debug_wait);
+	return 1;
+}
+__setup("pm_wakeup_pending_debug_wait=", pm_wakeup_pending_wait_setup);
+
+bool pm_wakeup_pending_debug(const char *caller);
+
+bool pm_wakeup_pending_debug(const char *caller)
+{
+	pr_info("nfrap: %s: start: caller: %s\n", __func__, caller);
+	if (strncmp(caller, pm_wakeup_pending_debug_target,
+		    MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN)) {
+		return false;
+	}
+
+	if (!pm_wakeup_pending_debug_wait) {
+		atomic_inc(&pm_abort_suspend);
+		pr_info("nfrap: %s: forced pm_abort_suspend\n", __func__);
+		return true;
+	}
+
+	pr_info("nfrap: %s: waiting...\n", __func__);
+	while (!pm_wakeup_pending())
+		msleep(20);
+	pr_info("nfrap: %s: finished waiting\n", __func__);
+	return true;
+}
+EXPORT_SYMBOL_GPL(pm_wakeup_pending_debug);
 
 void pm_system_wakeup(void)
 {

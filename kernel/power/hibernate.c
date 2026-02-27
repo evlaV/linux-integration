@@ -34,6 +34,7 @@
 #include <linux/security.h>
 #include <linux/secretmem.h>
 #include <trace/events/power.h>
+#include <linux/hack.h>
 
 #include "power.h"
 
@@ -343,13 +344,13 @@ static int create_image(int platform_mode)
 
 	system_state = SYSTEM_SUSPEND;
 
-	error = syscore_suspend();
+	error = syscore_suspend(__func__);
 	if (error) {
 		pr_err("Some system devices failed to power down, aborting\n");
 		goto Enable_irqs;
 	}
 
-	if (hibernation_test(TEST_CORE) || pm_wakeup_pending())
+	if (hibernation_test(TEST_CORE) || pm_wakeup_pending_debug(__func__))
 		goto Power_up;
 
 	in_suspend = 1;
@@ -536,7 +537,7 @@ static int resume_target_kernel(bool platform_mode)
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
 
-	error = syscore_suspend();
+	error = syscore_suspend(__func__);
 	if (error)
 		goto Enable_irqs;
 
@@ -655,11 +656,11 @@ int hibernation_platform_enter(void)
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
 
-	error = syscore_suspend();
+	error = syscore_suspend(__func__);
 	if (error)
 		goto Enable_irqs;
 
-	if (pm_wakeup_pending()) {
+	if (pm_wakeup_pending_debug(__func__)) {
 		error = -EAGAIN;
 		goto Power_up;
 	}
@@ -704,7 +705,7 @@ static void power_down(void)
 {
 	int error = -EAGAIN;
 
-	if (pm_wakeup_pending()) {
+	if (pm_wakeup_pending_debug(__func__)) {
 		pm_wakeup_clear(0);
 		pr_info("Wakeup event detected after image write, aborting power down.\n");
 		goto exit;

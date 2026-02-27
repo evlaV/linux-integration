@@ -19,6 +19,7 @@
 #include <linux/kmod.h>
 #include <trace/events/power.h>
 #include <linux/cpuset.h>
+#include <linux/hack.h>
 
 /*
  * Timeout for stopping processes
@@ -37,6 +38,7 @@ static int try_to_freeze_tasks(bool user_only)
 	unsigned int elapsed_msecs;
 	bool wakeup = false;
 	int sleep_usecs = USEC_PER_MSEC;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	pr_info("Freezing %s\n", what);
 
@@ -66,7 +68,11 @@ static int try_to_freeze_tasks(bool user_only)
 		if (!todo || time_after(jiffies, end_time))
 			break;
 
-		if (pm_wakeup_pending()) {
+		snprintf(pm_wakeup_pending_debug_target,
+			 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN,
+			 "%s-%s", __func__, user_only ? "user" : "all");
+
+		if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 			wakeup = true;
 			break;
 		}

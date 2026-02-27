@@ -32,6 +32,7 @@
 #include <linux/moduleparam.h>
 #include <linux/fs.h>
 #include <linux/dmi.h>
+#include <linux/hack.h>
 
 #include "power.h"
 
@@ -105,7 +106,7 @@ static void s2idle_enter(void)
 	 * would get lost.
 	 */
 	raw_spin_lock_irq(&s2idle_lock);
-	if (pm_wakeup_pending())
+	if (pm_wakeup_pending_debug(__func__))
 		goto out;
 
 	s2idle_state = S2IDLE_STATE_ENTER;
@@ -149,7 +150,7 @@ static void s2idle_loop(void)
 		if (s2idle_ops && s2idle_ops->wake) {
 			if (s2idle_ops->wake())
 				break;
-		} else if (pm_wakeup_pending()) {
+		} else if (pm_wakeup_pending_debug(__func__)) {
 			break;
 		}
 
@@ -471,9 +472,9 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 
 	system_state = SYSTEM_SUSPEND;
 
-	error = syscore_suspend();
+	error = syscore_suspend(__func__);
 	if (!error) {
-		*wakeup = pm_wakeup_pending();
+		*wakeup = pm_wakeup_pending_debug(__func__);
 		if (!(suspend_test(TEST_CORE) || *wakeup)) {
 			trace_suspend_resume(TPS("machine_suspend"),
 				state, true);

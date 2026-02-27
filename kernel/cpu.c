@@ -38,6 +38,7 @@
 #include <linux/random.h>
 #include <linux/cc_platform.h>
 #include <linux/parser.h>
+#include <linux/hack.h>
 
 #include <trace/events/power.h>
 #define CREATE_TRACE_POINTS
@@ -1897,6 +1898,7 @@ static cpumask_var_t frozen_cpus;
 int freeze_secondary_cpus(int primary)
 {
 	int cpu, error = 0;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	cpu_maps_update_begin();
 	if (primary == -1) {
@@ -1919,7 +1921,11 @@ int freeze_secondary_cpus(int primary)
 		if (!cpu_online(cpu) || cpu == primary)
 			continue;
 
-		if (pm_wakeup_pending()) {
+		snprintf(pm_wakeup_pending_debug_target,
+			 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN,
+			 "%s-%d", __func__, cpu);
+
+		if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 			pr_info("Wakeup pending. Abort CPU freeze\n");
 			error = -EBUSY;
 			break;

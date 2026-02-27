@@ -34,6 +34,7 @@
 #include <linux/cpufreq.h>
 #include <linux/devfreq.h>
 #include <linux/timer.h>
+#include <linux/hack.h>
 
 #include "../base.h"
 #include "power.h"
@@ -1619,6 +1620,7 @@ static void device_suspend_late(struct device *dev, pm_message_t state, bool asy
 	pm_callback_t callback = NULL;
 	const char *info = NULL;
 	int error = 0;
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	TRACE_DEVICE(dev);
 	TRACE_SUSPEND(0);
@@ -1628,7 +1630,11 @@ static void device_suspend_late(struct device *dev, pm_message_t state, bool asy
 	if (READ_ONCE(async_error))
 		goto Complete;
 
-	if (pm_wakeup_pending()) {
+	snprintf(pm_wakeup_pending_debug_target,
+		 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN, "%s-%s", __func__,
+		 dev_name(dev));
+
+	if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 		WRITE_ONCE(async_error, -EBUSY);
 		goto Complete;
 	}
@@ -1858,6 +1864,7 @@ static void device_suspend(struct device *dev, pm_message_t state, bool async)
 	const char *info = NULL;
 	int error = 0;
 	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+	char pm_wakeup_pending_debug_target[MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN];
 
 	TRACE_DEVICE(dev);
 	TRACE_SUSPEND(0);
@@ -1882,7 +1889,11 @@ static void device_suspend(struct device *dev, pm_message_t state, bool async)
 	 */
 	pm_runtime_barrier(dev);
 
-	if (pm_wakeup_pending()) {
+	snprintf(pm_wakeup_pending_debug_target,
+		 MAX_PM_WAKEUP_PENDING_DEBUG_TARGET_LEN, "%s-%s", __func__,
+		 dev_name(dev));
+
+	if (pm_wakeup_pending_debug(pm_wakeup_pending_debug_target)) {
 		dev->power.direct_complete = false;
 		WRITE_ONCE(async_error, -EBUSY);
 		goto Complete;
