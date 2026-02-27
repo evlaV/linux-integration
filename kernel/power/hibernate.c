@@ -798,6 +798,8 @@ int hibernate(void)
 	unsigned int sleep_flags;
 	int error;
 
+	pr_info("nfrap: %s() start\n", __func__);
+
 	if (!hibernation_available()) {
 		pr_info("Hibernation not available.\n");
 		return -EPERM;

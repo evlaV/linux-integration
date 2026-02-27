@@ -284,6 +284,7 @@ acpi_status acpi_enter_sleep_state(u8 sleep_state)
 {
 	acpi_status status;
 
+	pr_info("nfrap: %s() start\n", __func__);
 	ACPI_FUNCTION_TRACE(acpi_enter_sleep_state);
 
 	if ((acpi_gbl_sleep_type_a > ACPI_SLEEP_TYPE_MAX) ||
