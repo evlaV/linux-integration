@@ -1799,6 +1799,15 @@ static unsigned long minimum_image_size(unsigned long saveable)
 	return saveable <= size ? 0 : saveable - size;
 }
 
+void print_delta(const char *label, ktime_t start, ktime_t stop)
+{
+	u64 centisecs;
+	ktime_t diff = ktime_sub(stop, start);
+
+	centisecs = ktime_divns(diff, 10*NSEC_PER_MSEC);
+	pr_info("nfrap: delta for '%s': %u.%02us\n", label, centisecs / 100, centisecs % 100);
+}
+
 /**
  * hibernate_preallocate_memory - Preallocate memory for hibernation image.
  *
@@ -1827,16 +1836,21 @@ int hibernate_preallocate_memory(void)
 	unsigned long saveable, size, max_size, count, highmem, pages = 0;
 	unsigned long alloc, save_highmem, pages_highmem, avail_normal;
 	ktime_t start, stop;
+	ktime_t start_tmp, stop_tmp;
 	int error;
 
 	pr_info("Preallocating image memory\n");
 	start = ktime_get();
 
+	start_tmp = ktime_get();
 	error = memory_bm_create(&orig_bm, GFP_IMAGE, PG_ANY);
 	if (error) {
 		pr_err("Cannot allocate original bitmap\n");
 		goto err_out;
 	}
+	stop_tmp = ktime_get();
+	label = "memory_bm_create1";
+	print_delta(label, start_tmp, stop_tmp);
 
 	error = memory_bm_create(&copy_bm, GFP_IMAGE, PG_ANY);
 	if (error) {
