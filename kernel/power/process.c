@@ -25,6 +25,8 @@
  */
 unsigned int __read_mostly freeze_timeout_msecs = 20 * MSEC_PER_SEC;
 
+bool pm_wakeup_pending_wait(const char *caller);
+
 static int try_to_freeze_tasks(bool user_only)
 {
 	const char *what = user_only ? "user space processes" :
@@ -66,7 +68,7 @@ static int try_to_freeze_tasks(bool user_only)
 		if (!todo || time_after(jiffies, end_time))
 			break;
 
-		if (pm_wakeup_pending()) {
+		if (pm_wakeup_pending_wait(user_only ? "try_to_freeze_tasks-user" : "try_to_freeze_tasks-all")) {
 			wakeup = true;
 			break;
 		}

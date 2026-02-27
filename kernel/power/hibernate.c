@@ -612,6 +612,7 @@ int hibernation_restore(int platform_mode)
 	return error;
 }
 
+bool pm_wakeup_pending_wait(const char *caller);
 /**
  * hibernation_platform_enter - Power off the system using the platform driver.
  */
@@ -659,7 +660,7 @@ int hibernation_platform_enter(void)
 	if (error)
 		goto Enable_irqs;
 
-	if (pm_wakeup_pending()) {
+	if (pm_wakeup_pending_wait(__func__)) {
 		error = -EAGAIN;
 		goto Power_up;
 	}
@@ -704,7 +705,7 @@ static void power_down(void)
 {
 	int error = -EAGAIN;
 
-	if (pm_wakeup_pending()) {
+	if (pm_wakeup_pending_wait(__func__)) {
 		pm_wakeup_clear(0);
 		pr_info("Wakeup event detected after image write, aborting power down.\n");
 		goto exit;

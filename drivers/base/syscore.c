@@ -38,6 +38,8 @@ void unregister_syscore(struct syscore *syscore)
 }
 EXPORT_SYMBOL_GPL(unregister_syscore);
 
+bool pm_wakeup_pending_wait(const char *caller);
+
 #ifdef CONFIG_PM_SLEEP
 /**
  * syscore_suspend - Execute all the registered system core suspend callbacks.
@@ -53,7 +55,7 @@ int syscore_suspend(void)
 	pm_pr_dbg("Checking wakeup interrupts\n");
 
 	/* Return error code if there are any wakeup interrupts pending. */
-	if (pm_wakeup_pending())
+	if (pm_wakeup_pending_wait(__func__))
 		return -EBUSY;
 
 	WARN_ONCE(!irqs_disabled(),
