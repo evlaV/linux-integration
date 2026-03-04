@@ -465,6 +465,8 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	input = button->input;
 	keycode = test_bit(KEY_SLEEP, input->keybit) ? KEY_SLEEP : KEY_POWER;
 
+	pr_info("nfrap: %s: stack dump for power button handling:\n", __func__);
+	dump_stack();
 	pr_warn("nfrap: %s: event=%d\n", __func__, event);
 	if (event == ACPI_BUTTON_NOTIFY_STATUS) {
 		hard = pm_sleep_transition_in_progress();
