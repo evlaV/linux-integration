@@ -25,6 +25,8 @@
 #define VALVE_BRIGHTNESS_DEFAULT 255
 #define VALVE_BRIGHTNESS_MAX 255
 #define VALVE_INTENSITY_DEFAULT 255
+#define VALVE_DELAY_RANGE_MIN 0
+#define VALVE_DELAY_RANGE_MAX 20
 
 #define VALVE_PORT_BASE          0xe39
 #define VALVE_PORT_STRIDE        3
@@ -203,9 +205,21 @@ static ssize_t effect_index_show(struct device *dev, struct device_attribute *at
 	return len;
 }
 
+static ssize_t delay_range_show(struct device *dev, struct device_attribute *attr,
+    char *buf)
+{
+    const ssize_t len = sysfs_emit(buf, "%d-%d ", VALVE_DELAY_RANGE_MIN,
+        VALVE_DELAY_RANGE_MAX);
+
+    buf[len - 1] = '\n';
+
+    return len;
+}
+
 static DEVICE_ATTR_RW(enabled);
 static DEVICE_ATTR_RW(effect);
 static DEVICE_ATTR_RO(effect_index);
+static DEVICE_ATTR_RO(delay_range);
 
 static ssize_t byte_reg_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -256,6 +270,7 @@ static struct attribute *valve_leds_attrs[] = {
 	&dev_attr_effect_index.attr,
 	&dev_attr_enabled.attr,
 	&dev_attr_delay.attr.attr,
+	&dev_attr_delay_range.attr,
 	&dev_attr_breath_offset.attr.attr,
 	&dev_attr_breath_level.attr.attr,
 	&dev_attr_patrol_num.attr.attr,
