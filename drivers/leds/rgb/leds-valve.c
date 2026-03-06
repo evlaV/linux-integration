@@ -99,8 +99,9 @@ struct valve_leds {
 		int index;
 	} leds[VALVE_NUM_LEDS];
 
-	/* cached so we can restore state on `enabled` toggle */
+	/* cached so we can restore state on `enabled` toggle and on resume */
 	int effect_index;
+	bool enabled;
 };
 
 static struct platform_device *pdev;
@@ -140,13 +141,12 @@ static ssize_t enabled_store(struct device *dev, struct device_attribute *attr,
 {
 	struct valve_leds *leds = dev_get_drvdata(dev->parent);
 	int mode, ret;
-	bool enabled;
 
-	ret = kstrtobool(buf, &enabled);
+	ret = kstrtobool(buf, &leds->enabled);
 	if (ret < 0)
 		return ret;
 
-	mode = enabled ? leds->effect_index : VALVE_INDEX_DISABLED;
+	mode = leds->enabled ? leds->effect_index : VALVE_INDEX_DISABLED;
 	ret = regmap_write(leds->regmap, VALVE_PORT_MODE, mode);
 	if (ret)
 		return ret;
@@ -186,7 +186,8 @@ static ssize_t effect_store(struct device *dev, struct device_attribute *attr,
 		return ret;
 
 	/* cache last enabled mode for enabled node to restore */
-	if (mode != VALVE_INDEX_DISABLED)
+	leds->enabled = mode != VALVE_INDEX_DISABLED;
+	if (leds->enabled)
 		leds->effect_index = mode;
 
 	return count;
@@ -365,7 +366,8 @@ static int valve_leds_probe(struct platform_device *pdev)
 	}
 
 	/* If the initial state is disabled use the normal state as default */
-	if (vleds->effect_index == VALVE_INDEX_DISABLED)
+	vleds->enabled = vleds->effect_index != VALVE_INDEX_DISABLED;
+	if (!vleds->enabled)
 		vleds->effect_index = VALVE_INDEX_NORMAL;
 
 	vleds->pdev = pdev;
@@ -397,8 +399,45 @@ static int valve_leds_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static int valve_leds_suspend(struct platform_device *pdev, pm_message_t state)
+{
+	struct valve_leds *leds = platform_get_drvdata(pdev);
+	if (IS_ERR(leds)) {
+		pr_err("%s(): Failed to obtain drvdata.\n", __func__);
+		return -ENODEV;
+	}
+
+	int ret = regmap_write(leds->regmap, VALVE_PORT_MODE, VALVE_INDEX_DISABLED);
+	if (ret) {
+		pr_err("%s(): Failed to disable leds: %d\n", __func__, ret);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int valve_leds_resume(struct platform_device *pdev)
+{
+	struct valve_leds *leds = platform_get_drvdata(pdev);
+	if (IS_ERR(leds)) {
+		pr_err("%s(): Failed to obtain drvdata.\n", __func__);
+		return -ENODEV;
+	}
+
+	int ret = regmap_write(leds->regmap, VALVE_PORT_MODE,
+		leds->enabled ? leds->effect_index : VALVE_INDEX_DISABLED);
+	if (ret) {
+		pr_err("%s(): Failed to restore leds state: %d\n", __func__, ret);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 static struct platform_driver valve_leds_driver = {
 	.probe = valve_leds_probe,
+	.suspend = valve_leds_suspend,
+	.resume = valve_leds_resume,
 	.driver = {
 		.name = DRVNAME,
 	},
