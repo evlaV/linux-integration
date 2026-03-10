@@ -12,7 +12,8 @@
  * - Raw character device
  * - Wheel support
  * - Flight stick support
- * - Arcade stick support
+ * - More arcade stick testing
+ * - Arcade stick extra buttons
  * - Split into driver-per-attachment GIP-as-a-bus approach drivers
  *
  * This driver is based on the Microsoft GIP spec at:
@@ -315,6 +316,7 @@ struct gip_direct_motor {
 static const struct gip_driver* base_drivers[] = {
 	&gip_driver_navigation,
 	&gip_driver_gamepad,
+	&gip_driver_arcade_stick,
 	NULL /* Sentinel */
 };
 
@@ -1344,7 +1346,7 @@ static int gip_handle_command_raw_report(struct gip_attachment *attachment,
 	return 0;
 }
 
-static int gip_setup_input_device(struct gip_attachment *attachment)
+int gip_setup_input_device(struct gip_attachment *attachment)
 {
 	struct input_dev *input;
 	int rc;
