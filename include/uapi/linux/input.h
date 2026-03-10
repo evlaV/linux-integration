@@ -276,6 +276,7 @@ struct input_mask {
 #define BUS_INTEL_ISHTP		0x1F
 #define BUS_AMD_SFH		0x20
 #define BUS_SDW			0x21
+#define BUS_GIP			0x22
 
 /*
  * MT_TOOL types
