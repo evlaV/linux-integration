@@ -12,6 +12,7 @@
 #ifndef _GIP_H
 #define _GIP_H
 
+#include <linux/hid.h>
 #ifdef CONFIG_JOYSTICK_XBOX_GIP_LEDS
 #include <linux/led-class-multicolor.h>
 #endif
@@ -221,6 +222,7 @@ struct gip_attachment {
 	int extra_axes;
 
 	bool dpad_as_buttons;
+	struct hid_device __rcu *hdev;
 };
 
 struct gip_urb {
