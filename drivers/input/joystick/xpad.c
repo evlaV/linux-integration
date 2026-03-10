@@ -59,12 +59,6 @@
  */
 #define XPAD360W_POWEROFF_TIMEOUT 5
 
-#define PKT_XB              0
-#define PKT_XBE1            1
-#define PKT_XBE2_FW_OLD     2
-#define PKT_XBE2_FW_5_EARLY 3
-#define PKT_XBE2_FW_5_11    4
-
 static bool dpad_to_buttons;
 module_param(dpad_to_buttons, bool, S_IRUGO);
 MODULE_PARM_DESC(dpad_to_buttons, "Map D-PAD to buttons rather than axes for unknown pads");
@@ -496,7 +490,6 @@ struct usb_xpad {
 
 	struct xpad_output_packet out_packets[XPAD_NUM_OUT_PACKETS];
 	int last_out_packet;
-	int init_seq;
 
 #if defined(CONFIG_JOYSTICK_XPAD_LEDS)
 	struct xpad_led *led;
@@ -506,7 +499,6 @@ struct usb_xpad {
 
 	int mapping;			/* map d-pad to buttons or to axes */
 	int xtype;			/* type of xbox device */
-	int packet_type;		/* type of the extended packet */
 	int pad_nr;			/* the order x360 pads were attached */
 	const char *name;		/* name of the device */
 	struct work_struct work;	/* init/remove device from callback */
@@ -1487,7 +1479,6 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 	xpad->xtype = xpad_device[i].xtype;
 	xpad->name = xpad_device[i].name;
 
-	xpad->packet_type = PKT_XB;
 	INIT_WORK(&xpad->work, xpad_presence_work);
 
 	if (xpad->xtype == XTYPE_UNKNOWN) {
@@ -1539,38 +1530,6 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 	xpad->irq_in->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	usb_set_intfdata(intf, xpad);
-
-	/* Packet type detection */
-	if (le16_to_cpu(udev->descriptor.idVendor) == 0x045e) { /* Microsoft controllers */
-		if (le16_to_cpu(udev->descriptor.idProduct) == 0x02e3) {
-			/* The original elite controller always uses the oldest
-			 * type of extended packet
-			 */
-			xpad->packet_type = PKT_XBE1;
-		} else if (le16_to_cpu(udev->descriptor.idProduct) == 0x0b00) {
-			/* The elite 2 controller has seen multiple packet
-			 * revisions. These are tied to specific firmware
-			 * versions
-			 */
-			if (le16_to_cpu(udev->descriptor.bcdDevice) < 0x0500) {
-				/* This is the format that the Elite 2 used
-				 * prior to the BLE update
-				 */
-				xpad->packet_type = PKT_XBE2_FW_OLD;
-			} else if (le16_to_cpu(udev->descriptor.bcdDevice) <
-				   0x050b) {
-				/* This is the format that the Elite 2 used
-				 * prior to the update that split the packet
-				 */
-				xpad->packet_type = PKT_XBE2_FW_5_EARLY;
-			} else {
-				/* The split packet format that was introduced
-				 * in firmware v5.11
-				 */
-				xpad->packet_type = PKT_XBE2_FW_5_11;
-			}
-		}
-	}
 
 	if (xpad->xtype == XTYPE_XBOX360W) {
 		/*
