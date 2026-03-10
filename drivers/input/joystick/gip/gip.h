@@ -17,6 +17,7 @@
 #include <linux/led-class-multicolor.h>
 #endif
 #include <linux/rcupdate.h>
+#include <linux/power_supply.h>
 #include <linux/usb/input.h>
 
 #define BASE_GIP_MTU 64
@@ -212,6 +213,8 @@ struct gip_attachment {
 	} guide_led;
 #endif
 
+	struct power_supply *battery;
+	struct power_supply_desc battery_desc;
 	struct gip_extended_status status;
 
 	enum gip_elite_button_format xbe_format;
