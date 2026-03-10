@@ -12,6 +12,9 @@
 #ifndef _GIP_H
 #define _GIP_H
 
+#ifdef CONFIG_JOYSTICK_XBOX_GIP_LEDS
+#include <linux/led-class-multicolor.h>
+#endif
 #include <linux/rcupdate.h>
 #include <linux/usb/input.h>
 
@@ -201,6 +204,12 @@ struct gip_attachment {
 	uint8_t seq_vendor;
 
 	int device_state;
+#ifdef CONFIG_JOYSTICK_XBOX_GIP_LEDS
+	union {
+		struct led_classdev standard;
+		struct led_classdev_mc color;
+	} guide_led;
+#endif
 
 	struct gip_extended_status status;
 
@@ -212,7 +221,6 @@ struct gip_attachment {
 	int extra_axes;
 
 	bool dpad_as_buttons;
-	struct hid_device __rcu *hdev;
 };
 
 struct gip_urb {
