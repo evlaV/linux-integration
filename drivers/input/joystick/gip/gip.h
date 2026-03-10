@@ -14,6 +14,7 @@
 
 #include <linux/hid.h>
 #include <linux/led-class-multicolor.h>
+#include <linux/power_supply.h>
 #include <linux/rcupdate.h>
 #include <linux/usb/input.h>
 
@@ -253,6 +254,9 @@ struct gip_attachment {
 		struct led_classdev_mc color;
 	} guide_led;
 
+	spinlock_t battery_lock;
+	struct power_supply *battery;
+	struct power_supply_desc battery_desc;
 	struct gip_extended_status status;
 
 	enum gip_elite_button_format xbe_format;

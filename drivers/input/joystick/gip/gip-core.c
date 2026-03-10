@@ -255,6 +255,13 @@ static const struct gip_audio_format gip_audio_format_table[MAX_GIP_AUDIO_FORMAT
 };
 
 
+static enum power_supply_property gip_battery_props[] = {
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
+	POWER_SUPPLY_PROP_SCOPE,
+	POWER_SUPPLY_PROP_STATUS,
+};
+
 static const struct gip_quirks base_quirks[] = {
 	{ GIP_VID_PDP, GIP_PID_PDP_ROCK_CANDY, 0, .quirks = GIP_QUIRK_NO_HELLO },
 
@@ -1214,6 +1221,97 @@ static int gip_guide_led_probe(struct gip_attachment *attachment, struct device 
 	return rc;
 }
 
+static int gip_battery_get_property(struct power_supply *psy,
+	enum power_supply_property psp, union power_supply_propval *val)
+{
+	struct gip_attachment *attachment = power_supply_get_drvdata(psy);
+
+	guard(spinlock_irqsave)(&attachment->battery_lock);
+	switch (psp) {
+	case POWER_SUPPLY_PROP_PRESENT:
+		val->intval = attachment->status.base.battery_type != GIP_BATTERY_ABSENT;
+		break;
+	case POWER_SUPPLY_PROP_SCOPE:
+		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		if (attachment->status.base.battery_type == GIP_BATTERY_ABSENT) {
+			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		} else {
+			switch (attachment->status.base.charge) {
+			case GIP_CHARGING:
+				if (attachment->status.base.battery_level == GIP_BATTERY_FULL)
+					val->intval = POWER_SUPPLY_STATUS_FULL;
+				else
+					val->intval = POWER_SUPPLY_STATUS_CHARGING;
+				break;
+			case GIP_NOT_CHARGING:
+				val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+				break;
+			case GIP_CHARGE_ERROR:
+			default:
+				val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
+				break;
+			}
+		}
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
+		if (attachment->status.base.battery_type == GIP_BATTERY_ABSENT) {
+			val->intval = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+		} else {
+			switch (attachment->status.base.battery_level) {
+			case GIP_BATTERY_CRITICAL:
+				val->intval = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+				break;
+			case GIP_BATTERY_LOW:
+				val->intval = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
+				break;
+			case GIP_BATTERY_MEDIUM:
+				val->intval = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
+				break;
+			case GIP_BATTERY_FULL:
+				val->intval = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+				break;
+			default:
+				val->intval = POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+				break;
+			}
+			break;
+		}
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int gip_battery_create(struct gip_attachment *attachment, struct device *dev)
+{
+	struct power_supply_config supply_config = { .drv_data = attachment, };
+	int rc;
+
+	attachment->battery_desc.properties = gip_battery_props;
+	attachment->battery_desc.num_properties = ARRAY_SIZE(gip_battery_props);
+	attachment->battery_desc.get_property = gip_battery_get_property;
+	attachment->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
+	attachment->battery_desc.name = devm_kasprintf(dev, GFP_KERNEL, "gip-%s", dev_name(dev));
+
+	if (!attachment->battery_desc.name)
+		return -ENOMEM;
+
+	attachment->battery = devm_power_supply_register(dev,
+		&attachment->battery_desc, &supply_config);
+	if (IS_ERR(attachment->battery)) {
+		rc = PTR_ERR(attachment->battery);
+		attachment->battery = NULL;
+		devm_kfree(dev, attachment->battery_desc.name);
+		return rc;
+	}
+
+	power_supply_powers(attachment->battery, dev);
+	return 0;
+}
+
 static int gip_send_set_device_state(struct gip_attachment *attachment, uint8_t state)
 {
 	uint8_t buffer[] = { state };
@@ -1327,6 +1425,9 @@ static int gip_setup_input_device(struct gip_attachment *attachment)
 	rc = gip_guide_led_probe(attachment, &input->dev);
 	if (rc)
 		gip_err(attachment, "Failed to register LEDs: %d\n", rc);
+	rc = gip_battery_create(attachment, &input->dev);
+	if (rc)
+		gip_err(attachment, "Failed to register battery: %d\n", rc);
 
 	return 0;
 
@@ -1510,6 +1611,8 @@ static void gip_free_devices(struct gip_attachment *attachment)
 
 	rcu_assign_pointer(attachment->input, NULL);
 	rcu_assign_pointer(attachment->hdev, NULL);
+	/* The following are freed by devres */
+	attachment->battery = NULL;
 	synchronize_rcu();
 
 	if (input)
@@ -1645,10 +1748,14 @@ static int gip_handle_command_status_device(struct gip_attachment *attachment,
 	if (num_bytes < 1)
 		return -EINVAL;
 
-	attachment->status.base.battery_level = bytes[0] & 3;
-	attachment->status.base.battery_type = (bytes[0] >> 2) & 3;
-	attachment->status.base.charge = (bytes[0] >> 4) & 3;
-	attachment->status.base.power_level = (bytes[0] >> 6) & 3;
+	scoped_guard(spinlock_irqsave, &attachment->battery_lock) {
+		attachment->status.base.battery_level = bytes[0] & 3;
+		attachment->status.base.battery_type = (bytes[0] >> 2) & 3;
+		attachment->status.base.charge = (bytes[0] >> 4) & 3;
+		attachment->status.base.power_level = (bytes[0] >> 6) & 3;
+	}
+	if (attachment->battery)
+		power_supply_changed(attachment->battery);
 
 	if (num_bytes >= 4) {
 		attachment->status.device_active = bytes[1] & 1;
@@ -2145,6 +2252,7 @@ static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 		mutex_init(&attachment->lock);
 		guard(mutex)(&attachment->lock);
 		device->attachments[attachment_index] = attachment;
+		spin_lock_init(&attachment->battery_lock);
 		INIT_DELAYED_WORK(&attachment->in_fragment_timeout, gip_fragment_timeout);
 		INIT_DELAYED_WORK(&attachment->metadata_next, gip_retry_metadata);
 #ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
