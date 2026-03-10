@@ -395,6 +395,8 @@ static inline struct device *gip_security_dev(struct gip_security *security)
 	return gip_attachment_dev(container_of(security, struct gip_attachment, security));
 }
 
+int gip_setup_input_device(struct gip_attachment *attachment);
+
 bool gip_supports_vendor_message(struct gip_attachment *attachment, uint8_t command, bool upstream);
 
 int gip_send_system_message(struct gip_attachment *attachment,
@@ -410,6 +412,4 @@ void gip_security_release(struct gip_security *security);
 extern const struct gip_driver gip_driver_navigation;
 extern const struct gip_driver gip_driver_gamepad;
 extern const struct gip_driver gip_driver_arcade_stick;
-extern const struct gip_driver gip_driver_wheel;
-extern const struct gip_driver gip_driver_flight_stick;
 #endif
