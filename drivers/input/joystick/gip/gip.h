@@ -12,6 +12,7 @@
 #ifndef _GIP_H
 #define _GIP_H
 
+#include <linux/led-class-multicolor.h>
 #include <linux/rcupdate.h>
 #include <linux/usb/input.h>
 
@@ -234,6 +235,10 @@ struct gip_attachment {
 	uint8_t seq_vendor;
 
 	uint8_t device_state;
+	union {
+		struct led_classdev standard;
+		struct led_classdev_mc color;
+	} guide_led;
 
 	struct gip_extended_status status;
 
@@ -245,7 +250,6 @@ struct gip_attachment {
 	int extra_axes;
 
 	bool dpad_as_buttons;
-	struct hid_device __rcu *hdev;
 };
 
 struct gip_urb {
