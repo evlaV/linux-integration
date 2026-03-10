@@ -2,19 +2,19 @@
 xpad - Linux USB driver for Xbox compatible controllers
 =======================================================
 
-This driver exposes all first-party and third-party Xbox compatible
-controllers. It has a long history and has enjoyed considerable usage
-as Windows' xinput library caused most PC games to focus on Xbox
-controller compatibility.
+This driver exposes all first-party and third-party Xbox and Xbox 360
+compatible controllers. It has a long history and has enjoyed considerable
+usage as Windows' xinput library caused most PC games to focus on Xbox
+controller compatibility. Xbox One/Series controller support has been
+superseded by the xbox_gip driver, which specializes in the Gaming Input
+Protocl that is introduced on the Xbox One.
 
 Due to backwards compatibility all buttons are reported as digital.
 This only affects Original Xbox controllers. All later controller models
 have only digital face buttons.
 
 Rumble is supported on some models of Xbox 360 controllers but not of
-Original Xbox controllers nor on Xbox One controllers. As of writing
-the Xbox One's rumble protocol has not been reverse-engineered but in
-the future could be supported.
+Original Xbox controllers.
 
 
 Notes
@@ -98,9 +98,6 @@ All generations of Xbox controllers speak USB over the wire.
 - Wireless Xbox 360 controllers require a 'Xbox 360 Wireless Gaming Receiver
   for Windows'
 - Wired Xbox 360 controllers use standard USB connectors.
-- Xbox One controllers can be wireless but speak Wi-Fi Direct and are not
-  yet supported.
-- Xbox One controllers can be wired and use standard Micro-USB connectors.
 
 
 
