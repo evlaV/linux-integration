@@ -291,6 +291,8 @@ config JOYSTICK_JOYDUMP
 	  To compile this driver as a module, choose M here: the
 	  module will be called joydump.
 
+source "drivers/input/joystick/gip/Kconfig"
+
 config JOYSTICK_XPAD
 	tristate "Xbox gamepad support"
 	depends on USB_ARCH_HAS_HCD
