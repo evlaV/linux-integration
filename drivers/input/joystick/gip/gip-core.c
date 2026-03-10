@@ -547,6 +547,54 @@ int gip_send_vendor_message(struct gip_attachment *attachment,
 		bytes, num_bytes);
 }
 
+static int gip_hid_ll_parse(struct hid_device *hdev)
+{
+	struct gip_attachment *attachment = hdev->driver_data;
+
+	return hid_parse_report(hdev,
+		attachment->metadata.device.hid_descriptor,
+		attachment->metadata.device.hid_descriptor_size);
+}
+
+static int gip_hid_ll_start(struct hid_device *hdev)
+{
+	return 0;
+}
+
+static void gip_hid_ll_stop(struct hid_device *hdev)
+{
+}
+
+static int gip_hid_ll_open(struct hid_device *hdev)
+{
+	return 0;
+}
+
+static void gip_hid_ll_close(struct hid_device *hdev)
+{
+}
+
+static int gip_hid_ll_raw_request(struct hid_device *hdev,
+	unsigned char reportnum, uint8_t *buf, size_t count,
+	unsigned char report_type, int reqtype)
+{
+	/*
+	 * TODO: Based on the metadata, output reports appear to be possible,
+	 * but the chatpad doesn't have the LEDs it claims to support, so
+	 * it's not clear how to test we're sending them properly.
+	 */
+	return 0;
+}
+
+static const struct hid_ll_driver gip_hid_ll_driver = {
+	.parse = gip_hid_ll_parse,
+	.start = gip_hid_ll_start,
+	.stop = gip_hid_ll_stop,
+	.open = gip_hid_ll_open,
+	.close = gip_hid_ll_close,
+	.raw_request = gip_hid_ll_raw_request,
+};
+
 static void gip_metadata_free(struct device *dev, struct gip_metadata *metadata)
 {
 	devm_kfree(dev, metadata->device.audio_formats);
@@ -1350,8 +1398,36 @@ static int gip_send_init_sequence(struct gip_attachment *attachment)
 		if (rc)
 			return rc;
 	}
+	rc = 0;
 
-	return 0;
+	if (attachment->metadata.device.hid_descriptor) {
+		struct hid_device *hdev = hid_allocate_device();
+
+		if (IS_ERR(hdev))
+			return PTR_ERR(hdev);
+
+		hdev->ll_driver = &gip_hid_ll_driver;
+		hdev->bus = BUS_USB;
+		hdev->vendor = attachment->vendor_id;
+		hdev->product = attachment->product_id;
+		hdev->dev.parent = GIP_DEV(attachment);
+		hdev->driver_data = attachment;
+		if (attachment->name)
+			strscpy(hdev->name, attachment->name);
+		else
+			strscpy(hdev->name, "Xbox Chatpad");
+		strscpy(hdev->phys, attachment->phys);
+		rc = hid_add_device(hdev);
+		if (rc) {
+			dev_err(GIP_DEV(attachment), "HID device add failed: %d\n", rc);
+			hid_destroy_device(hdev);
+		} else {
+			rcu_assign_pointer(attachment->hdev, hdev);
+			synchronize_rcu();
+		}
+	}
+
+	return rc;
 }
 
 static void gip_fragment_timeout(struct work_struct *work)
@@ -1784,9 +1860,16 @@ static int gip_handle_command_firmware(struct gip_attachment *attachment,
 static int gip_handle_command_hid_report(struct gip_attachment *attachment,
 	const struct gip_header *header, uint8_t *bytes, int num_bytes)
 {
-	dev_warn(GIP_DEV(attachment), "Unimplemented HID report message\n");
+	struct hid_device *hdev;
 
-	return -ENOTSUPP;
+	guard(rcu)();
+	hdev = rcu_dereference(attachment->hdev);
+	if (hdev)
+		return hid_input_report(hdev, HID_INPUT_REPORT, bytes, num_bytes, true);
+
+	dev_warn(GIP_DEV(attachment), "Got HID report with no HID descriptor\n");
+
+	return -EINVAL;
 }
 
 static int gip_handle_command_extended(struct gip_attachment *attachment,
@@ -2501,6 +2584,7 @@ static int gip_shutdown(struct gip_device *device)
 	for (i = 0; i < MAX_ATTACHMENTS; i++) {
 		struct gip_attachment *attachment = device->attachments[i];
 		struct input_dev *input;
+		struct hid_device *hdev;
 
 		if (!attachment)
 			continue;
@@ -2511,14 +2595,19 @@ static int gip_shutdown(struct gip_device *device)
 
 			rcu_read_lock();
 			input = rcu_dereference(attachment->input);
+			hdev = rcu_dereference(attachment->hdev);
 			rcu_read_unlock();
 
 			rcu_assign_pointer(attachment->input, NULL);
+			rcu_assign_pointer(attachment->hdev, NULL);
 			synchronize_rcu();
 		}
 
 		if (input)
 			input_unregister_device(input);
+
+		if (hdev)
+			hid_destroy_device(hdev);
 	}
 
 	return 0;
