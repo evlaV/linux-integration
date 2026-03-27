@@ -347,7 +347,7 @@ static int __ath11k_peer_delete(struct ath11k *ar, u32 vdev_id, const u8 *addr)
 	return 0;
 }
 
-int ath11k_peer_delete(struct ath11k *ar, u32 vdev_id, u8 *addr)
+int ath11k_peer_delete(struct ath11k *ar, u32 vdev_id, const u8 *addr)
 {
 	int ret;
 
@@ -372,7 +372,7 @@ int ath11k_peer_create(struct ath11k *ar, struct ath11k_vif *arvif,
 {
 	struct ath11k_peer *peer;
 	struct ath11k_sta *arsta;
-	int ret, fbret;
+	int ret, fbret, retries = 3;
 
 	lockdep_assert_held(&ar->conf_mutex);
 
@@ -400,6 +400,8 @@ int ath11k_peer_create(struct ath11k *ar, struct ath11k_vif *arvif,
 	spin_unlock_bh(&ar->ab->base_lock);
 	mutex_unlock(&ar->ab->tbl_mtx_lock);
 
+retry:
+
 	ret = ath11k_wmi_send_peer_create_cmd(ar, param);
 	if (ret) {
 		ath11k_warn(ar->ab,
@@ -425,6 +427,18 @@ int ath11k_peer_create(struct ath11k *ar, struct ath11k_vif *arvif,
 
 		ret = -ENOENT;
 		goto cleanup;
+	}
+
+	if (!peer->peer_id) {
+		if (retries--) {
+			spin_unlock_bh(&ar->ab->base_lock);
+			mutex_unlock(&ar->ab->tbl_mtx_lock);
+			ath11k_peer_delete(ar, param->vdev_id, param->peer_addr);
+			goto retry;
+		} else {
+			ath11k_warn(ar->ab, "Null peer workaround failed for peer %pM, adding anyway",
+				    param->peer_addr);
+		}
 	}
 
 	ret = ath11k_peer_rhash_add(ar->ab, peer);
