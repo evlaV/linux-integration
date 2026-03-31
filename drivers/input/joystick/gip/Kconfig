@@ -4,7 +4,7 @@
 #
 config JOYSTICK_XBOX_GIP
 	tristate "Xbox One/Series controller support"
-	depends on USB && USB_ARCH_HAS_HCD && LEDS_CLASS_MULTICOLOR
+	depends on USB && USB_ARCH_HAS_HCD && LEDS_CLASS_MULTICOLOR && CRYPTO_ECDH
 	help
 	  Say Y here if you want to use Xbox One and Series controllers with your
 	  computer. Make sure to say Y to "Joystick support" (CONFIG_INPUT_JOYDEV)
