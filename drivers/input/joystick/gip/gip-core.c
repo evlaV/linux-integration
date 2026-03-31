@@ -8,7 +8,6 @@
  * - Audio device support
  * - Security packet handshake
  * - Event logging
- * - Sending fragmented messages
  * - Raw character device
  * - Wheel support
  * - Flight stick support
@@ -28,6 +27,7 @@
 #define GIP_WIRED_INTF_DATA 0
 #define GIP_WIRED_INTF_AUDIO 1
 
+#define GIP_DUAL_LENGTH 6
 #define MAX_MESSAGE_LENGTH 0x4000
 
 #define MAX_AUDIO_MESSAGES 9
@@ -437,6 +437,13 @@ static uint8_t gip_sequence_next(struct gip_attachment *attachment,
 	return seq;
 }
 
+static unsigned gip_fragment_id(const struct gip_attachment *attachment,
+	const struct gip_out_fragment *fragment)
+{
+	return BIT(attachment->attachment_index * MAX_OUT_FRAGMENTS +
+		(unsigned) (fragment - attachment->out_fragments));
+}
+
 static void gip_handle_quirks_array(struct gip_attachment *attachment,
 	const struct gip_quirks *quirks)
 {
@@ -479,6 +486,48 @@ static void gip_handle_quirks(struct gip_attachment *attachment)
 		gip_handle_quirks_array(attachment, attachment->driver->quirks);
 }
 
+static struct gip_out_fragment *gip_find_fragment(struct gip_attachment *attachment,
+	uint8_t message_type, uint8_t flags, uint8_t seq, bool strict)
+{
+	int i;
+
+	for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
+		if (!attachment->out_fragments[i].active)
+			continue;
+		if (attachment->out_fragments[i].message != message_type)
+			continue;
+		if ((attachment->out_fragments[i].flags ^ flags) & GIP_FLAG_SYSTEM)
+			continue;
+		if (attachment->out_fragments[i].seq != seq) {
+			if (strict)
+				continue;
+
+			/*
+			 * Found one with  the wrong sequence number. For some
+			 * reason the official driver allows this.
+			 */
+			gip_warn(attachment,
+				"Found fragment with different sequence number %02x, wanted %02x\n",
+				attachment->out_fragments[i].seq, seq);
+		}
+
+		return &attachment->out_fragments[i];
+	}
+
+	for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
+		if (!attachment->out_fragments[i].active)
+			continue;
+		if (attachment->out_fragments[i].message != message_type)
+			continue;
+		if ((attachment->out_fragments[i].flags ^ flags) & GIP_FLAG_SYSTEM)
+			continue;
+
+
+		return &attachment->out_fragments[i];
+	}
+	return NULL;
+}
+
 static int gip_send_raw_message(struct gip_attachment *attachment,
 	uint8_t message_type, uint8_t flags, uint8_t seq, const uint8_t *bytes,
 	int num_bytes)
@@ -486,18 +535,23 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 	struct gip_interface *intf;
 	int offset = 3;
 	struct gip_urb *urb = NULL;
+	struct gip_out_fragment *fragment = NULL;
 	int i;
 	int rc = 0;
+	int mtu = gip_data_class_mtu[message_type >> GIP_DATA_CLASS_SHIFT];
+	int reduced_mtu = mtu - GIP_DUAL_LENGTH;
+	/*
+	 * This buffer size shouldn't need to be more than 6 (there should never
+	 * be more than 3 length bytes), but add enough extra to fit fully
+	 * extended bignums for 32 bit (5 bytes) + 16 bit (3 bytes) values to be
+	 * safe and then WARN_ON if we go over. If this ever happens it would be
+	 * due to driver bugs.
+	 */
+	uint8_t header[11];
 
 	if (num_bytes < 0) {
 		gip_warn(attachment, "Invalid message length %d\n", num_bytes);
 		return -EINVAL;
-	}
-
-	if (num_bytes + 6 > gip_data_class_mtu[message_type >> GIP_DATA_CLASS_SHIFT]) {
-		gip_err(attachment,
-			"Attempted to send a message that requires fragmenting, which is not yet supported.\n");
-		return -EOPNOTSUPP;
 	}
 
 	if ((message_type & GIP_DATA_CLASS_MASK) == GIP_DATA_CLASS_AUDIO)
@@ -511,6 +565,89 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 		return -EOPNOTSUPP;
 	}
 
+	header[0] = message_type;
+	header[2] = seq;
+
+	if (num_bytes > reduced_mtu ||
+		(flags & (GIP_FLAG_ACME | GIP_FLAG_FRAGMENT)) == GIP_FLAG_ACME) {
+		for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
+			if (attachment->out_fragments[i].active)
+				continue;
+
+			fragment = &attachment->out_fragments[i];
+			break;
+		}
+
+		if (!fragment) {
+			gip_err(attachment, "Fragmented message queue is full; dropping message\n");
+			return -EALREADY;
+		}
+
+		fragment->active = true;
+		fragment->message = message_type;
+		fragment->flags = flags & GIP_FLAG_SYSTEM;
+		fragment->acked = false;
+		fragment->seq = seq;
+		fragment->total_length = num_bytes;
+		fragment->data = devm_kmalloc(to_gip_device(attachment),
+			fragment->total_length, GFP_ATOMIC);
+		fragment->fragment_offset = 0;
+		memcpy(fragment->data, bytes, num_bytes);
+		bytes = fragment->data;
+
+		if (num_bytes > reduced_mtu) {
+			gip_dbg(attachment, "Starting new reliable message: %02x%02x%02x, total length %u\n",
+				message_type, flags, seq, num_bytes);
+			flags |= GIP_FLAG_INIT_FRAG | GIP_FLAG_FRAGMENT | GIP_FLAG_ACME;
+			fragment->flags |= GIP_FLAG_FRAGMENT;
+			/* The spec says to extend the value to fit in 3 bytes */
+			offset += gip_encode_length(reduced_mtu, &header[offset], sizeof(header));
+			if (offset == 4 && reduced_mtu < 0x80 && num_bytes < 0x80) {
+				header[3] |= 0x80;
+				header[4] = 0;
+				offset = 5;
+			}
+			offset += gip_encode_length(num_bytes, &header[offset],
+				sizeof(header) - offset);
+			WARN_ON(offset != GIP_DUAL_LENGTH);
+			num_bytes = mtu - offset;
+		} else {
+			offset += gip_encode_length(num_bytes, &header[offset],
+				sizeof(header) - offset);
+		}
+	} else if (flags & GIP_FLAG_FRAGMENT) {
+		fragment = gip_find_fragment(attachment, message_type, flags, seq, true);
+		if (!fragment) {
+			gip_err(attachment,
+				"Attempted to send message fragment with no associated message\n");
+			return -EINVAL;
+		}
+
+		num_bytes = min(reduced_mtu, fragment->total_length - fragment->fragment_offset);
+		offset += gip_encode_length(num_bytes, &header[offset],
+			sizeof(header) - offset);
+		if (offset == 4 && num_bytes < 0x80 && fragment->fragment_offset < 0x80) {
+			header[3] |= 0x80;
+			header[4] = 0;
+			offset = 5;
+		}
+		offset += gip_encode_length(fragment->fragment_offset, &header[offset],
+			sizeof(header) - offset);
+		WARN_ON(offset != GIP_DUAL_LENGTH);
+
+		if (num_bytes && fragment->fragment_offset + num_bytes == fragment->total_length) {
+			/* The final fragment in a fragmented message must be ACKed */
+			flags |= GIP_FLAG_ACME;
+			fragment->acked = false;
+		}
+		bytes = &fragment->data[fragment->fragment_offset];
+	} else if (num_bytes >= 0) {
+		offset += gip_encode_length(num_bytes, &header[offset],
+			sizeof(header) - offset);
+	}
+
+	header[1] = flags;
+
 	guard(spinlock_irqsave)(&attachment->device->message_lock);
 	for (i = 0; i < MAX_OUT_MESSAGES && !urb; i++) {
 		if (!intf->out_queue[i].urb)
@@ -522,15 +659,10 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 		gip_err(attachment, "Output queue is full; dropping message\n");
 		return -ENOSPC;
 	}
-	urb->data[0] = message_type;
-	urb->data[1] = flags;
-	urb->data[2] = seq;
-	offset += gip_encode_length(num_bytes, &urb->data[offset],
-		sizeof(urb->data) - offset);
 
+	memcpy(urb->data, header, offset);
 	if (num_bytes > 0)
 		memcpy(&urb->data[offset], bytes, num_bytes);
-
 	num_bytes += offset;
 	urb->urb->transfer_buffer_length = num_bytes;
 
@@ -547,7 +679,95 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 		rc = -EIO;
 	}
 
+	if (fragment) {
+		/*
+		 * Sending further fragments is handled in gip_urb_out if this fragment doesn't need
+		 * ACKing or in gip_handle_command_protocol_control if it does. The flag should also
+		 * be cleared if we're done sending this packet.
+		 */
+		if (fragment->total_length > reduced_mtu && !(flags & GIP_FLAG_ACME))
+			intf->has_pending_out |= gip_fragment_id(attachment, fragment);
+		else
+			intf->has_pending_out &= ~gip_fragment_id(attachment, fragment);
+	}
+
 	return rc;
+}
+
+static void gip_free_fragment(struct device *dev, struct gip_out_fragment *fragment)
+{
+	devm_kfree(dev, fragment->data);
+	memset(fragment, 0, sizeof(*fragment));
+}
+
+static int gip_send_next_fragment(struct gip_attachment *attachment,
+	struct gip_out_fragment *fragment)
+{
+	struct gip_interface *intf;
+	int next_bytes;
+	int flags = GIP_FLAG_FRAGMENT | fragment->flags | attachment->attachment_index;
+	int mtu;
+	int rc;
+
+	mtu = gip_data_class_mtu[fragment->message >> GIP_DATA_CLASS_SHIFT] - GIP_DUAL_LENGTH;
+	if (fragment->fragment_offset == fragment->total_length) {
+		if ((fragment->message & GIP_DATA_CLASS_MASK) == GIP_DATA_CLASS_AUDIO)
+			intf = &attachment->device->audio;
+		else
+			intf = &attachment->device->data;
+
+		next_bytes = 0;
+		intf->has_pending_out &= ~gip_fragment_id(attachment, fragment);
+	} else if (fragment->fragment_offset + mtu >= fragment->total_length) {
+		next_bytes = fragment->total_length - fragment->fragment_offset;
+		flags |= GIP_FLAG_ACME;
+	} else {
+		next_bytes = mtu;
+	}
+
+	rc = gip_send_raw_message(attachment, fragment->message, flags,
+		fragment->seq, &fragment->data[fragment->fragment_offset],
+		next_bytes);
+
+	if (rc < 0)
+		return rc;
+
+	if (fragment->acked)
+		fragment->fragment_offset += next_bytes;
+	if (next_bytes == 0 && !(fragment->flags & GIP_FLAG_ACME))
+		/* Finished sending the message */
+		gip_free_fragment(to_gip_device(attachment), fragment);
+	return next_bytes;
+}
+
+static void gip_send_fragment_work(struct work_struct *work)
+{
+	struct gip_interface *intf = container_of(work, struct gip_interface, send_fragment);
+	struct gip_out_fragment *fragment;
+	unsigned has_pending_out;
+	unsigned long flags;
+	int i, j;
+
+	spin_lock_irqsave(&intf->device->message_lock, flags);
+	has_pending_out = intf->has_pending_out;
+	spin_unlock_irqrestore(&intf->device->message_lock, flags);
+	for (i = 0; i < MAX_ATTACHMENTS; i++) {
+		struct gip_attachment *attachment = intf->device->attachments[i];
+
+		for (j = 0; j < MAX_OUT_FRAGMENTS; j++) {
+			/* Check for pending output fragments */
+			if (!(has_pending_out & BIT(i * MAX_OUT_FRAGMENTS + j)))
+				continue;
+
+			guard(mutex)(&attachment->lock);
+			fragment = &attachment->out_fragments[j];
+			if (!fragment->active)
+				continue;
+			if (!(fragment->flags & GIP_FLAG_FRAGMENT))
+				continue;
+			gip_send_next_fragment(attachment, fragment);
+		}
+	}
 }
 
 int gip_send_system_message(struct gip_attachment *attachment,
@@ -1623,9 +1843,17 @@ static void gip_set_metadata_defaults(struct gip_attachment *attachment)
 
 static void gip_reset_attachment(struct gip_attachment *attachment)
 {
+	int i;
+
 	devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
 	attachment->in_fragment_data = NULL;
 	attachment->in_fragment_message = -1;
+
+	for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
+		if (attachment->out_fragments[i].active)
+			gip_free_fragment(to_gip_device(attachment),
+				&attachment->out_fragments[i]);
+	}
 
 	gip_reset_metadata(attachment);
 }
@@ -1633,9 +1861,73 @@ static void gip_reset_attachment(struct gip_attachment *attachment)
 static int gip_handle_command_protocol_control(struct gip_attachment *attachment,
 	const struct gip_header *header, const uint8_t *bytes, int num_bytes)
 {
-	/* TODO */
-	gip_warn(attachment, "Unimplemented Protocol Control message\n");
-	return -EOPNOTSUPP;
+	const struct gip_protocol_control_ack *ack;
+	struct gip_out_fragment *fragment = NULL;
+	uint32_t fragment_offset;
+	uint16_t remaining_buffer;
+	bool ok = true;
+	int mtu;
+	int rc;
+
+	if (num_bytes < 1)
+		return -EINVAL;
+
+	if (bytes[0] != GIP_CONTROL_CODE_ACK) {
+		gip_warn(attachment, "Unimplemented Protocol Control code %i message\n", bytes[0]);
+		return -ENOTSUPP;
+	}
+
+	if (num_bytes < sizeof(*ack))
+		return -EINVAL;
+
+	ack = (const struct gip_protocol_control_ack *)bytes;
+
+	fragment = gip_find_fragment(attachment, ack->message_type, ack->flags,
+		header->sequence_id, false);
+	if (!fragment) {
+		gip_warn(attachment, "Received ACK for unknown message\n");
+		rc = -EINVAL;
+		goto resend;
+	}
+
+
+	fragment_offset = le32_to_cpu(ack->fragment_offset);
+	remaining_buffer = le16_to_cpu(ack->remaining_buffer);
+
+	if (fragment_offset > fragment->total_length)
+		ok = false;
+	mtu = gip_data_class_mtu[fragment->message >> GIP_DATA_CLASS_SHIFT] - GIP_DUAL_LENGTH;
+	if (!ok) {
+		gip_warn(attachment, "Received invalid buffer offset in ACK, "
+			"got offset=%u + remaining=%u, expected offset=%u + remaining=%u\n",
+			fragment_offset, remaining_buffer,
+			fragment->fragment_offset, fragment->total_length - fragment->fragment_offset);
+		rc = -EINVAL;
+		goto resend;
+	} else if ((fragment->flags & GIP_FLAG_FRAGMENT) &&
+		(fragment->fragment_offset > fragment_offset ||
+		fragment->fragment_offset + mtu < fragment_offset))
+	{
+		gip_warn(attachment, "Received unexpected buffer offset in ACK, "
+			"got offset=%u, expected offset=%u\n",
+			fragment_offset, fragment->fragment_offset + mtu);
+	}
+
+	fragment->acked = true;
+	if (fragment->flags & GIP_FLAG_FRAGMENT) {
+		fragment->fragment_offset = fragment_offset;
+		rc = gip_send_next_fragment(attachment, fragment);
+		if (rc < 0)
+			return rc;
+	} else {
+		gip_free_fragment(to_gip_device(attachment), fragment);
+	}
+
+	return 0;
+
+resend:
+	// TODO
+	return rc;
 }
 
 static bool gip_handle_command_hello_device(struct gip_attachment *attachment,
@@ -2175,6 +2467,7 @@ static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 	uint8_t attachment_index)
 {
 	struct gip_attachment *attachment = device->attachments[attachment_index];
+	int i;
 
 	if (!attachment) {
 		attachment = devm_kzalloc(to_gip_device(device), sizeof(*attachment), GFP_KERNEL);
@@ -2189,6 +2482,9 @@ static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 			attachment->vendor_id = device->udev->descriptor.idVendor;
 			attachment->product_id = device->udev->descriptor.idProduct;
 		}
+
+		for (i = 0; i < MAX_OUT_FRAGMENTS; i++)
+			attachment->out_fragments[i].message = -1;
 
 		device->attachments[attachment_index] = attachment;
 
@@ -2476,6 +2772,7 @@ static void gip_urb_out(struct urb *urb)
 	switch (status) {
 	case 0:
 		/* success */
+		schedule_work(&intf->send_fragment);
 		break;
 
 	case -ECONNRESET:
@@ -2672,9 +2969,11 @@ static int gip_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	gip->data.device = gip;
 	gip->data.intf = intf;
 	gip->data.mtu = BASE_GIP_MTU;
+	INIT_WORK(&gip->data.send_fragment, gip_send_fragment_work);
 	gip->audio.device = gip;
 	gip->audio.mtu = MAX_GIP_MTU;
 	gip->audio.isoc_messages = MAX_AUDIO_MESSAGES;
+	INIT_WORK(&gip->audio.send_fragment, gip_send_fragment_work);
 
 	INIT_WORK(&gip->receive_message, gip_receive_work);
 	spin_lock_init(&gip->message_lock);

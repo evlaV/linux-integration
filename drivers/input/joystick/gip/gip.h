@@ -25,6 +25,7 @@
 
 #define MAX_IN_MESSAGES 8
 #define MAX_OUT_MESSAGES 8
+#define MAX_OUT_FRAGMENTS 2
 
 #define GIP_VID_MICROSOFT	0x045e
 #define GIP_VID_PDP		0x0e6f
@@ -194,6 +195,17 @@ struct gip_extended_status {
 	struct gip_status_event events[5];
 };
 
+struct gip_out_fragment {
+	bool active;
+	bool acked;
+	uint8_t message;
+	uint8_t flags;
+	uint8_t seq;
+	uint16_t total_length;
+	uint32_t fragment_offset;
+	uint8_t *data;
+};
+
 struct gip_attachment;
 typedef int (*gip_command_handler)(struct gip_attachment *a, const struct gip_header *header,
 		const uint8_t *bytes, int num_bytes);
@@ -221,6 +233,8 @@ struct gip_attachment {
 	uint32_t in_fragment_offset;
 	struct delayed_work in_fragment_timeout;
 	int in_fragment_retries;
+
+	struct gip_out_fragment out_fragments[MAX_OUT_FRAGMENTS];
 
 	uint16_t firmware_major_version;
 	uint16_t firmware_minor_version;
@@ -274,6 +288,9 @@ struct gip_interface {
 
 	struct usb_anchor out_anchor;
 	struct gip_urb out_queue[MAX_OUT_MESSAGES];
+
+	struct work_struct send_fragment;
+	unsigned has_pending_out;
 };
 
 struct gip_device {
