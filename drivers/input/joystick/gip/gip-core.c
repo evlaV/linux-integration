@@ -6,7 +6,6 @@
  *
  * TODO:
  * - Audio device support
- * - Security packet handshake
  * - Event logging
  * - Raw character device
  * - Wheel support
@@ -1749,6 +1748,31 @@ static int gip_create_hdev(struct gip_attachment *attachment)
 	return rc;
 }
 
+static int gip_init_security(struct gip_attachment *attachment)
+{
+	int rc;
+
+	if (attachment->security.status != GIP_SECURITY_PENDING)
+		return 0;
+
+	cancel_delayed_work(&attachment->early_security);
+
+	if (attachment->quirks & GIP_QUIRK_SKIP_SECURITY)
+		/*
+		 * Some BDA/PowerA Xbox One controllers have a security
+		 * handshake implementation that is very sensitive to
+		 * the precise message ordering. It's very hard to get
+		 * this just right, so for now we just skip it. Most
+		 * wired controllers don't need the security flow to
+		 * work anyway.
+		 */
+		rc = gip_security_skip_handshake(&attachment->security);
+	else
+		rc = gip_security_start_handshake(&attachment->security);
+
+	return rc;
+}
+
 static int gip_send_init_sequence(struct gip_attachment *attachment)
 {
 	int rc = 0;
@@ -1785,22 +1809,13 @@ static int gip_send_init_sequence(struct gip_attachment *attachment)
 		attachment->device_state = GIP_STATE_STOP;
 	}
 
+	schedule_delayed_work(&attachment->early_security, 6 * HZ / 100);
+
 	rc = gip_send_guide_button_led(attachment,
 		GIP_LED_GUIDE_ON,
 		GIP_LED_GUIDE_INIT_BRIGHTNESS);
 	if (rc)
 		return rc;
-
-	if (gip_supports_system_message(attachment, GIP_CMD_SECURITY, false)
-		&& !(attachment->features & GIP_FEATURE_SECURITY_OPT_OUT)) {
-		/* TODO: Implement Security command property */
-		uint8_t buffer[] = { 0x1, 0x0 };
-
-		rc = gip_send_system_message(attachment, GIP_CMD_SECURITY, 0,
-			buffer, sizeof(buffer));
-		if (rc)
-			return rc;
-	}
 
 	usb_make_path(attachment->device->udev, attachment->phys,
 		sizeof(attachment->phys));
@@ -1819,6 +1834,15 @@ static int gip_send_init_sequence(struct gip_attachment *attachment)
 		return rc;
 
 	return rc;
+}
+
+static void gip_early_security(struct work_struct *work)
+{
+	struct gip_attachment *attachment = container_of(to_delayed_work(work),
+		struct gip_attachment, early_security);
+
+	guard(mutex)(&attachment->lock);
+	gip_init_security(attachment);
 }
 
 static void gip_fragment_timeout(struct work_struct *work)
@@ -1856,6 +1880,8 @@ static void gip_free_devices(struct gip_attachment *attachment)
 {
 	struct input_dev *input;
 	struct hid_device *hdev;
+
+	gip_security_release(&attachment->security);
 
 	if (attachment->driver && attachment->driver->remove)
 		attachment->driver->remove(attachment);
@@ -1930,6 +1956,7 @@ static void gip_reset_attachment(struct gip_attachment *attachment)
 
 	cancel_delayed_work(&attachment->metadata_next);
 	cancel_delayed_work(&attachment->in_fragment_timeout);
+	cancel_delayed_work(&attachment->early_security);
 	cancel_work(&attachment->rumble_work);
 
 	if (attachment->in_fragment_data)
@@ -1946,7 +1973,6 @@ static void gip_reset_attachment(struct gip_attachment *attachment)
 	}
 
 	gip_free_devices(attachment);
-
 }
 
 static int gip_handle_command_protocol_control(struct gip_attachment *attachment,
@@ -2129,6 +2155,10 @@ static int gip_handle_command_status_device(struct gip_attachment *attachment,
 		}
 	}
 
+	rc = gip_init_security(attachment);
+	if (rc)
+		return rc;
+
 	rc = gip_init_input_device(attachment);
 	if (rc)
 		return rc;
@@ -2246,20 +2276,16 @@ static int gip_handle_command_metadata_respose(struct gip_attachment *attachment
 			GIP_CMD_GUIDE_COLOR, false))
 		attachment->features &= ~GIP_FEATURE_GUIDE_COLOR;
 
+	if (!gip_supports_system_message(attachment, GIP_CMD_SECURITY, false) ||
+		(attachment->features & GIP_FEATURE_SECURITY_OPT_OUT))
+		attachment->security.status = GIP_SECURITY_SKIPPED;
+
 	gip_dbg(attachment, "Attachment %i has features: %02x\n",
 		attachment->attachment_index, attachment->features);
 	gip_dbg(attachment, "Attachment %i has quirks: %02x\n",
 		attachment->attachment_index, attachment->quirks);
 
 	return gip_send_init_sequence(attachment);
-}
-
-static int gip_handle_command_security(struct gip_attachment *attachment,
-	const struct gip_header *header, const uint8_t *bytes, int num_bytes)
-{
-	/* TODO: Needed for controllers that connect via dongles */
-	gip_warn_ratelimited(attachment, "Unimplemented Security message\n");
-	return -EOPNOTSUPP;
 }
 
 static int gip_handle_command_guide_button_status(struct gip_attachment *attachment,
@@ -2538,8 +2564,7 @@ static int gip_handle_system_message(struct gip_attachment *attachment,
 		return gip_handle_command_metadata_respose(attachment, header,
 			bytes, num_bytes);
 	case GIP_CMD_SECURITY:
-		return gip_handle_command_security(attachment, header, bytes,
-			num_bytes);
+		return gip_security_handle_message(&attachment->security, bytes, num_bytes);
 	case GIP_CMD_GUIDE_BUTTON:
 		return gip_handle_command_guide_button_status(attachment,
 			header, bytes, num_bytes);
@@ -2599,6 +2624,7 @@ static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 		spin_lock_init(&attachment->battery_lock);
 		INIT_DELAYED_WORK(&attachment->in_fragment_timeout, gip_fragment_timeout);
 		INIT_DELAYED_WORK(&attachment->metadata_next, gip_retry_metadata);
+		INIT_DELAYED_WORK(&attachment->early_security, gip_early_security);
 #ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
 		INIT_WORK(&attachment->rumble_work, gip_rumble_work);
 #endif
@@ -3189,6 +3215,7 @@ static void gip_shutdown(struct gip_device *gip)
 
 		cancel_delayed_work_sync(&attachment->metadata_next);
 		cancel_delayed_work_sync(&attachment->in_fragment_timeout);
+		cancel_delayed_work_sync(&attachment->early_security);
 
 		for (j = 0; j < MAX_OUT_FRAGMENTS; j++)
 			cancel_delayed_work_sync(&attachment->out_fragments[j].timeout);
