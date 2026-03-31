@@ -81,6 +81,14 @@ const struct gip_driver gip_driver_gamepad = {
 		0xa3, 0x12, 0x7a, 0xf1, 0x97, 0xb5),
 
 	.quirks = (const struct gip_quirks[]) {
+		/* PowerA Xbox One Classic Controller */
+		{ GIP_VID_BDA, GIP_PID_BDA_XB1_CLASSIC, 0,
+			.quirks = GIP_QUIRK_SKIP_SECURITY },
+
+		/* PowerA Xbox One Fusion Pro */
+		{ GIP_VID_BDA, GIP_PID_BDA_XB1_FUSION_PRO, 0,
+			.quirks = GIP_QUIRK_SKIP_SECURITY },
+
 		/* Xbox One Controller (model 1573) */
 		{ GIP_VID_MICROSOFT, GIP_PID_XBOX_ONE_1573, 0,
 			.override_name = "Xbox One Controller" },
