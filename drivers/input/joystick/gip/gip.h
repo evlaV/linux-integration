@@ -12,6 +12,7 @@
 #ifndef _GIP_H
 #define _GIP_H
 
+#include <crypto/sha2.h>
 #include <linux/hid.h>
 #include <linux/led-class-multicolor.h>
 #include <linux/power_supply.h>
@@ -29,6 +30,7 @@
 
 #define GIP_VID_MICROSOFT	0x045e
 #define GIP_VID_PDP		0x0e6f
+#define GIP_VID_BDA		0x24c6
 
 #define GIP_PID_XBOX_ONE_1573			0x02d1
 #define GIP_PID_XBOX_ONE_1697			0x02dd
@@ -40,9 +42,13 @@
 
 #define GIP_PID_PDP_ROCK_CANDY	0x0246
 
+#define GIP_PID_BDA_XB1_CLASSIC		0x581a
+#define GIP_PID_BDA_XB1_FUSION_PRO	0x591a
+
 #define GIP_QUIRK_NO_HELLO		BIT(0)
 #define GIP_QUIRK_NO_IMPULSE_VIBRATION	BIT(1)
 #define GIP_QUIRK_SWAP_LB_RB		BIT(2)
+#define GIP_QUIRK_SKIP_SECURITY		BIT(3)
 /*
  * Driver-specific quirks should start from 31 and go downwards to avoid
  * conflicts with newly-added core quirks
@@ -90,13 +96,21 @@
 #define GIP_LL_STATIC_CONFIGURATION	0x21
 #define GIP_LL_BUTTON_INFO_REPORT	0x22
 
+#define GIP_SECURITY_RANDOM_LEN 32
+#define GIP_SECURITY_PUBKEY_LEN 270
+#define GIP_SECURITY_SECRET_LEN 48
+
+#define GIP_SECURITY2_PUBKEY_LEN 64
+#define GIP_SECURITY2_SECRET_LEN 32
+
 #define MAX_GIP_CMD 0x80
 
 #define to_gip_device(p) \
 	_Generic((p), \
 		struct gip_attachment * : gip_attachment_dev, \
 		struct gip_interface * : gip_interface_dev, \
-		struct gip_device * : gip_device_dev)(p)
+		struct gip_device * : gip_device_dev, \
+		struct gip_security * : gip_security_dev)(p)
 
 #define gip_dbg(dev, ...)	dev_dbg(to_gip_device(dev), __VA_ARGS__)
 #define gip_info(dev, ...)	dev_info(to_gip_device(dev), __VA_ARGS__)
@@ -118,6 +132,13 @@ enum gip_metadata_status {
 	GIP_METADATA_GOT = 1,
 	GIP_METADATA_FAKED = 2,
 	GIP_METADATA_PENDING = 3,
+};
+
+enum gip_security_status {
+	GIP_SECURITY_PENDING = 0,
+	GIP_SECURITY_SKIPPED,
+	GIP_SECURITY_SENT,
+	GIP_SECURITY_DONE,
 };
 
 enum gip_elite_button_format {
@@ -215,6 +236,26 @@ struct gip_out_fragment {
 	struct delayed_work timeout;
 };
 
+struct gip_security {
+	struct sha256_ctx transcript;
+
+	struct work_struct work_exchange_rsa;
+	struct work_struct work_exchange_ecdh;
+	struct work_struct work_complete;
+
+	enum gip_security_status status;
+	uint8_t last_sent_command;
+
+	uint8_t random_host[GIP_SECURITY_RANDOM_LEN];
+	uint8_t random_client[GIP_SECURITY_RANDOM_LEN];
+
+	uint8_t pubkey_client[GIP_SECURITY_PUBKEY_LEN];
+	uint8_t pubkey_client2[GIP_SECURITY2_PUBKEY_LEN];
+
+	uint8_t pms[GIP_SECURITY_SECRET_LEN];
+	uint8_t master_secret[GIP_SECURITY_SECRET_LEN];
+};
+
 struct gip_attachment;
 typedef int (*gip_command_handler)(struct gip_attachment *a, const struct gip_header *header,
 		const uint8_t *bytes, int num_bytes);
@@ -252,6 +293,8 @@ struct gip_attachment {
 	struct delayed_work metadata_next;
 	int metadata_retries;
 	struct gip_metadata metadata;
+	struct delayed_work early_security;
+	struct gip_security security;
 
 #ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
 	uint8_t left_vibration_level;
@@ -373,12 +416,22 @@ static inline struct device *gip_device_dev(struct gip_device *device)
 	return &device->data.intf->dev;
 }
 
+static inline struct device *gip_security_dev(struct gip_security *security)
+{
+	return gip_attachment_dev(container_of(security, struct gip_attachment, security));
+}
+
 bool gip_supports_vendor_message(struct gip_attachment *attachment, uint8_t command, bool upstream);
 
 int gip_send_system_message(struct gip_attachment *attachment,
 	uint8_t message_type, uint8_t flags, const void *bytes, int num_bytes);
 int gip_send_vendor_message(struct gip_attachment *attachment,
 	uint8_t message_type, uint8_t flags, const void *bytes, int num_bytes);
+
+int gip_security_handle_message(struct gip_security *security, const void *bytes, int num_bytes);
+int gip_security_start_handshake(struct gip_security *security);
+int gip_security_skip_handshake(struct gip_security *security);
+void gip_security_release(struct gip_security *security);
 
 extern const struct gip_driver gip_driver_navigation;
 extern const struct gip_driver gip_driver_gamepad;
