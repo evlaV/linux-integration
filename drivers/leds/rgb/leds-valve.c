@@ -7,6 +7,7 @@
  *
  */
 
+#include "linux/stringify.h"
 #include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/io.h>
@@ -99,8 +100,12 @@ struct valve_leds {
 		int index;
 	} leds[VALVE_NUM_LEDS];
 
-	/* cached so we can restore state on `enabled` toggle */
 	int effect_index;
+	int delay;
+	int breath_offset;
+	int breath_level;
+	int patrol_num;
+	int color_shift;
 };
 
 static struct platform_device *pdev;
@@ -301,6 +306,94 @@ static int valve_leds_set_brightness(struct led_classdev *led_cdev, enum led_bri
 }
 
 
+#define VALVE_REG_SYNC_FROM_HW(leds, reg, store) do { \
+	int val; \
+	int ret = regmap_read(leds->regmap, reg, &val); \
+	if (ret) { \
+		dev_err(&leds->pdev->dev, "Failed to sync %s from hw: %d\n", __stringify(reg), ret); \
+		return ret; \
+	} \
+	store = val; \
+} while (0)
+
+static int valve_leds_sync_from_hw(struct valve_leds *leds)
+{
+	u8 rgb[VALVE_NUM_LEDS * VALVE_PORT_STRIDE];
+	u8 *port;
+	int ret;
+	int led, comp;
+
+	ret = regmap_bulk_read(leds->regmap, 0, rgb, ARRAY_SIZE(rgb));
+	if (ret) {
+		dev_err(&leds->pdev->dev, "Failed to sync from hw: %d\n", ret);
+		return ret;
+	}
+
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_MODE, leds->effect_index);
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_DELAY, leds->delay);
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_BREATH_OFFSET, leds->breath_offset);
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_BREATH_LEVEL, leds->breath_level);
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_PATROL_NUM, leds->patrol_num);
+	VALVE_REG_SYNC_FROM_HW(leds, VALVE_PORT_COLOR_SHIFT, leds->color_shift);
+
+	port = rgb;
+	for (led = 0; led < VALVE_NUM_LEDS; led++)
+		for (comp = 0; comp < VALVE_NUM_COMPONENTS; comp++)
+			leds->leds[led].rgb[comp].intensity = *port++;
+
+	return 0;
+}
+
+#define VALVE_REG_SYNC_TO_HW(leds, reg, val) do { \
+	int ret = regmap_write(leds->regmap, reg, val); \
+	if (ret) { \
+		dev_err(&leds->pdev->dev, "Failed to sync %s to hw: %d\n", __stringify(reg), ret); \
+		return ret; \
+	} \
+} while (0)
+
+static int valve_leds_sync_to_hw(struct valve_leds *leds)
+{
+	u8 rgb[VALVE_NUM_LEDS * VALVE_PORT_STRIDE];
+	u8 *port;
+	int ret;
+	int led, comp;
+
+	port = &rgb[VALVE_LED_PORT(0)];
+	for (led = 0; led < VALVE_NUM_LEDS; led++)
+		for (comp = 0; comp < VALVE_NUM_COMPONENTS; comp++)
+			*port++ = leds->leds[led].rgb[comp].intensity;
+
+	ret = regmap_bulk_write(leds->regmap, 0, rgb, ARRAY_SIZE(rgb));
+	if (ret) {
+		dev_err(&leds->pdev->dev, "Failed to sync to hw: %d\n", ret);
+		return ret;
+	}
+
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_DELAY, leds->delay);
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_BREATH_OFFSET, leds->breath_offset);
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_BREATH_LEVEL, leds->breath_level);
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_PATROL_NUM, leds->patrol_num);
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_COLOR_SHIFT, leds->color_shift);
+	VALVE_REG_SYNC_TO_HW(leds, VALVE_PORT_MODE, leds->effect_index);
+
+	return 0;
+}
+
+static int valve_leds_suspend(struct platform_device *pdev, pm_message_t state)
+{
+	struct valve_leds *leds = platform_get_drvdata(pdev);
+
+	return valve_leds_sync_from_hw(leds);
+}
+
+static int valve_leds_resume(struct platform_device *pdev)
+{
+	struct valve_leds *leds = platform_get_drvdata(pdev);
+
+	return valve_leds_sync_to_hw(leds);
+}
+
 static const struct dmi_system_id valve_leds_dmi_table[] = {
 	{
 		.matches = {
@@ -356,11 +449,9 @@ static int valve_leds_probe(struct platform_device *pdev)
 	if (IS_ERR(vleds->regmap))
 		return PTR_ERR(vleds->regmap);
 
-	/* Read current state at load time
-	   Cached for `enabled` node but also serves as a self-test */
-	ret = regmap_read(vleds->regmap, VALVE_PORT_MODE, &vleds->effect_index);
+	ret = valve_leds_sync_from_hw(vleds);
 	if (ret) {
-		pr_err("%s(): Failed to read led state: %ld\n", __func__, PTR_ERR(pdev));
+		dev_err(&pdev->dev, "%s(): Failed to read led state: %d\n", __func__, ret);
 		return ret;
 	}
 
@@ -399,6 +490,8 @@ static int valve_leds_probe(struct platform_device *pdev)
 
 static struct platform_driver valve_leds_driver = {
 	.probe = valve_leds_probe,
+	.suspend = valve_leds_suspend,
+	.resume = valve_leds_resume,
 	.driver = {
 		.name = DRVNAME,
 	},
