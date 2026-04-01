@@ -330,6 +330,7 @@ static const struct gip_driver *base_drivers[] = {
 	&gip_driver_navigation,
 	&gip_driver_gamepad,
 	&gip_driver_arcade_stick,
+	&gip_driver_pdp_jaguar,
 	NULL /* Sentinel */
 };
 

@@ -40,6 +40,7 @@
 #define GIP_PID_XBOX_WIRELESS			0x0b12
 
 #define GIP_PID_PDP_ROCK_CANDY	0x0246
+#define GIP_PID_PDP_RIFFMASTER	0x0248
 
 #define GIP_PID_BDA_XB1_CLASSIC		0x581a
 #define GIP_PID_BDA_XB1_FUSION_PRO	0x591a
@@ -412,4 +413,5 @@ void gip_security_release(struct gip_security *security);
 extern const struct gip_driver gip_driver_navigation;
 extern const struct gip_driver gip_driver_gamepad;
 extern const struct gip_driver gip_driver_arcade_stick;
+extern const struct gip_driver gip_driver_pdp_jaguar;
 #endif
