@@ -4,3 +4,4 @@ obj-$(CONFIG_JOYSTICK_XBOX_GIP)	+= xbox-gip.o
 xbox-gip-y := gip-core.o gip-drivers.o gip-security.o
 # Additional device support
 xbox-gip-y += gip-arcade-stick.o
+xbox-gip-y += gip-pdp-jaguar.o
