@@ -380,63 +380,120 @@ static const enum power_supply_property energy_battery_full_cap_broken_props[] =
 };
 
 /* Battery Management */
+
+#if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
+static int acpi_battery_validate_unknown(struct acpi_battery *battery,
+					  const char *name, int value)
+{
+	if (value != (int)ACPI_BATTERY_VALUE_UNKNOWN)
+		return 0;
+
+	acpi_handle_debug(battery->device->handle,
+			  "property '%s' has unknown value (0x%x); "
+			  "sysfs reads will return -ENODEV\n",
+			  name, (unsigned int)value);
+
+	return -EINVAL;
+}
+
+static int acpi_battery_validate_capacity(struct acpi_battery *battery,
+					   const char *name, int value)
+{
+	if (ACPI_BATTERY_CAPACITY_VALID(value))
+		return 0;
+
+	acpi_handle_debug(battery->device->handle,
+			  "property '%s' has invalid capacity value (%d); "
+			  "sysfs reads will return -ENODEV\n",
+			  name, value);
+
+	return -EINVAL;
+}
+#endif /* defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG) */
+
 struct acpi_offsets {
 	size_t offset;		/* offset inside struct acpi_sbs_battery */
 	u8 mode;		/* int or string? */
+#if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
+	const char *name;	/* field name for diagnostics */
+	/* called after storing each integer field; NULL if unused */
+	int (*validate)(struct acpi_battery *battery, const char *name,
+			 int value);
+#endif
 };
 
+/*
+ * Initialiser helpers for acpi_offsets entries.  In DEBUG builds the name and
+ * validate pointer are included so extract_package() can emit early warnings
+ * for values that would cause acpi_battery_get_property() to return -ENODEV.
+ * In non-DEBUG builds they expand to plain two-field initialisers with no
+ * runtime overhead.
+ */
+#if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
+#define ACPI_BATT_OFFSET_INT(field, fn) \
+	{ offsetof(struct acpi_battery, field), 0, #field, fn }
+#define ACPI_BATT_OFFSET_STR(field) \
+	{ offsetof(struct acpi_battery, field), 1, #field, NULL }
+#else
+#define ACPI_BATT_OFFSET_INT(field, fn) \
+	{ offsetof(struct acpi_battery, field), 0 }
+#define ACPI_BATT_OFFSET_STR(field) \
+	{ offsetof(struct acpi_battery, field), 1 }
+#endif /* defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG) */
+
 static const struct acpi_offsets state_offsets[] = {
-	{offsetof(struct acpi_battery, state), 0},
-	{offsetof(struct acpi_battery, rate_now), 0},
-	{offsetof(struct acpi_battery, capacity_now), 0},
-	{offsetof(struct acpi_battery, voltage_now), 0},
+	ACPI_BATT_OFFSET_INT(state, NULL),
+	ACPI_BATT_OFFSET_INT(rate_now, acpi_battery_validate_unknown),
+	ACPI_BATT_OFFSET_INT(capacity_now, acpi_battery_validate_unknown),
+	ACPI_BATT_OFFSET_INT(voltage_now, acpi_battery_validate_unknown),
 };
 
 static const struct acpi_offsets info_offsets[] = {
-	{offsetof(struct acpi_battery, power_unit), 0},
-	{offsetof(struct acpi_battery, design_capacity), 0},
-	{offsetof(struct acpi_battery, full_charge_capacity), 0},
-	{offsetof(struct acpi_battery, technology), 0},
-	{offsetof(struct acpi_battery, design_voltage), 0},
-	{offsetof(struct acpi_battery, design_capacity_warning), 0},
-	{offsetof(struct acpi_battery, design_capacity_low), 0},
-	{offsetof(struct acpi_battery, capacity_granularity_1), 0},
-	{offsetof(struct acpi_battery, capacity_granularity_2), 0},
-	{offsetof(struct acpi_battery, model_number), 1},
-	{offsetof(struct acpi_battery, serial_number), 1},
-	{offsetof(struct acpi_battery, type), 1},
-	{offsetof(struct acpi_battery, oem_info), 1},
+	ACPI_BATT_OFFSET_INT(power_unit, NULL),
+	ACPI_BATT_OFFSET_INT(design_capacity, acpi_battery_validate_capacity),
+	ACPI_BATT_OFFSET_INT(full_charge_capacity, acpi_battery_validate_capacity),
+	ACPI_BATT_OFFSET_INT(technology, NULL),
+	ACPI_BATT_OFFSET_INT(design_voltage, acpi_battery_validate_unknown),
+	ACPI_BATT_OFFSET_INT(design_capacity_warning, NULL),
+	ACPI_BATT_OFFSET_INT(design_capacity_low, NULL),
+	ACPI_BATT_OFFSET_INT(capacity_granularity_1, NULL),
+	ACPI_BATT_OFFSET_INT(capacity_granularity_2, NULL),
+	ACPI_BATT_OFFSET_STR(model_number),
+	ACPI_BATT_OFFSET_STR(serial_number),
+	ACPI_BATT_OFFSET_STR(type),
+	ACPI_BATT_OFFSET_STR(oem_info),
 };
 
 static const struct acpi_offsets extended_info_offsets[] = {
-	{offsetof(struct acpi_battery, revision), 0},
-	{offsetof(struct acpi_battery, power_unit), 0},
-	{offsetof(struct acpi_battery, design_capacity), 0},
-	{offsetof(struct acpi_battery, full_charge_capacity), 0},
-	{offsetof(struct acpi_battery, technology), 0},
-	{offsetof(struct acpi_battery, design_voltage), 0},
-	{offsetof(struct acpi_battery, design_capacity_warning), 0},
-	{offsetof(struct acpi_battery, design_capacity_low), 0},
-	{offsetof(struct acpi_battery, cycle_count), 0},
-	{offsetof(struct acpi_battery, measurement_accuracy), 0},
-	{offsetof(struct acpi_battery, max_sampling_time), 0},
-	{offsetof(struct acpi_battery, min_sampling_time), 0},
-	{offsetof(struct acpi_battery, max_averaging_interval), 0},
-	{offsetof(struct acpi_battery, min_averaging_interval), 0},
-	{offsetof(struct acpi_battery, capacity_granularity_1), 0},
-	{offsetof(struct acpi_battery, capacity_granularity_2), 0},
-	{offsetof(struct acpi_battery, model_number), 1},
-	{offsetof(struct acpi_battery, serial_number), 1},
-	{offsetof(struct acpi_battery, type), 1},
-	{offsetof(struct acpi_battery, oem_info), 1},
+	ACPI_BATT_OFFSET_INT(revision, NULL),
+	ACPI_BATT_OFFSET_INT(power_unit, NULL),
+	ACPI_BATT_OFFSET_INT(design_capacity, acpi_battery_validate_capacity),
+	ACPI_BATT_OFFSET_INT(full_charge_capacity, acpi_battery_validate_capacity),
+	ACPI_BATT_OFFSET_INT(technology, NULL),
+	ACPI_BATT_OFFSET_INT(design_voltage, acpi_battery_validate_unknown),
+	ACPI_BATT_OFFSET_INT(design_capacity_warning, NULL),
+	ACPI_BATT_OFFSET_INT(design_capacity_low, NULL),
+	ACPI_BATT_OFFSET_INT(cycle_count, NULL),
+	ACPI_BATT_OFFSET_INT(measurement_accuracy, NULL),
+	ACPI_BATT_OFFSET_INT(max_sampling_time, NULL),
+	ACPI_BATT_OFFSET_INT(min_sampling_time, NULL),
+	ACPI_BATT_OFFSET_INT(max_averaging_interval, NULL),
+	ACPI_BATT_OFFSET_INT(min_averaging_interval, NULL),
+	ACPI_BATT_OFFSET_INT(capacity_granularity_1, NULL),
+	ACPI_BATT_OFFSET_INT(capacity_granularity_2, NULL),
+	ACPI_BATT_OFFSET_STR(model_number),
+	ACPI_BATT_OFFSET_STR(serial_number),
+	ACPI_BATT_OFFSET_STR(type),
+	ACPI_BATT_OFFSET_STR(oem_info),
 };
 
 static int extract_package(struct acpi_battery *battery,
-			   union acpi_object *package,
+			   const struct acpi_buffer *buffer,
 			   const struct acpi_offsets *offsets, int num)
 {
 	int i;
 	union acpi_object *element;
+      union acpi_object *package = buffer->pointer;
 
 	if (package->type != ACPI_TYPE_PACKAGE)
 		return -EFAULT;
@@ -469,6 +526,16 @@ static int extract_package(struct acpi_battery *battery,
 			int *x = (int *)((u8 *)battery + offsets[i].offset);
 			*x = (element->type == ACPI_TYPE_INTEGER) ?
 				element->integer.value : -1;
+#if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
+			if (offsets[i].validate &&
+			    offsets[i].validate(battery, offsets[i].name, *x)) {
+				dev_dbg(&battery->device->dev, ": %s: object validation failure. offset=%lu",
+					offsets[i].name, offsets[i].offset);
+				print_hex_dump_debug(acpi_device_name(battery->device),
+						     DUMP_PREFIX_OFFSET, 16, 4, buffer->pointer,
+						     buffer->length, true);
+			}
+#endif
 		}
 	}
 	return 0;
@@ -492,15 +559,15 @@ static int extract_battery_info(const int use_bix,
 	int result = -EFAULT;
 
 	if (use_bix && battery_bix_broken_package)
-		result = extract_package(battery, buffer->pointer,
+		result = extract_package(battery, buffer,
 				extended_info_offsets + 1,
 				ARRAY_SIZE(extended_info_offsets) - 1);
 	else if (use_bix)
-		result = extract_package(battery, buffer->pointer,
+		result = extract_package(battery, buffer,
 				extended_info_offsets,
 				ARRAY_SIZE(extended_info_offsets));
 	else
-		result = extract_package(battery, buffer->pointer,
+		result = extract_package(battery, buffer,
 				info_offsets, ARRAY_SIZE(info_offsets));
 	if (test_bit(ACPI_BATTERY_QUIRK_PERCENTAGE_CAPACITY, &battery->flags))
 		battery->full_charge_capacity = battery->design_capacity;
@@ -595,7 +662,7 @@ static int acpi_battery_get_state(struct acpi_battery *battery)
 		return -ENODEV;
 	}
 
-	result = extract_package(battery, buffer.pointer,
+	result = extract_package(battery, &buffer,
 				 state_offsets, ARRAY_SIZE(state_offsets));
 	battery->update_time = jiffies;
 	kfree(buffer.pointer);
