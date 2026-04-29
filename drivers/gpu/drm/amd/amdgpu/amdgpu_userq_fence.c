@@ -373,7 +373,7 @@ static int amdgpu_userq_fence_read_wptr(struct amdgpu_usermode_queue *queue,
 	u64 addr, *ptr;
 	int r;
 
-	r = amdgpu_bo_reserve(queue->vm->root.bo, false);
+	r = amdgpu_bo_reserve(queue->vm->root.bo, false, NULL);
 	if (r)
 		return r;
 
@@ -389,7 +389,7 @@ static int amdgpu_userq_fence_read_wptr(struct amdgpu_usermode_queue *queue,
 
 	bo = amdgpu_bo_ref(mapping->bo_va->base.bo);
 	amdgpu_bo_unreserve(queue->vm->root.bo);
-	r = amdgpu_bo_reserve(bo, true);
+	r = amdgpu_bo_reserve(bo, true, NULL);
 	if (r) {
 		DRM_ERROR("Failed to reserve userqueue wptr bo");
 		return r;

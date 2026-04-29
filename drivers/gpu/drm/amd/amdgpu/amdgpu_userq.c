@@ -74,7 +74,7 @@ int amdgpu_userq_input_va_validate(struct amdgpu_usermode_queue *queue,
 	user_addr = (addr & AMDGPU_GMC_HOLE_MASK) >> AMDGPU_GPU_PAGE_SHIFT;
 	size = expected_size >> AMDGPU_GPU_PAGE_SHIFT;
 
-	r = amdgpu_bo_reserve(vm->root.bo, false);
+	r = amdgpu_bo_reserve(vm->root.bo, false, NULL);
 	if (r)
 		return r;
 
@@ -264,7 +264,7 @@ int amdgpu_userq_create_object(struct amdgpu_userq_mgr *uq_mgr,
 		return r;
 	}
 
-	r = amdgpu_bo_reserve(userq_obj->obj, true);
+	r = amdgpu_bo_reserve(userq_obj->obj, true, NULL);
 	if (r) {
 		drm_file_err(uq_mgr->file, "Failed to reserve BO to map (%d)", r);
 		goto free_obj;
@@ -308,6 +308,7 @@ amdgpu_userq_get_doorbell_index(struct amdgpu_userq_mgr *uq_mgr,
 				struct drm_file *filp)
 {
 	uint64_t index;
+	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *gobj;
 	struct amdgpu_userq_obj *db_obj = db_info->db_obj;
 	int r, db_size;
@@ -321,7 +322,9 @@ amdgpu_userq_get_doorbell_index(struct amdgpu_userq_mgr *uq_mgr,
 	db_obj->obj = amdgpu_bo_ref(gem_to_amdgpu_bo(gobj));
 	drm_gem_object_put(gobj);
 
-	r = amdgpu_bo_reserve(db_obj->obj, true);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	r = amdgpu_bo_reserve(db_obj->obj, true, &pin_ctx);
 	if (r) {
 		drm_file_err(uq_mgr->file, "[Usermode queues] Failed to pin doorbell object\n");
 		goto unref_bo;
@@ -330,6 +333,11 @@ amdgpu_userq_get_doorbell_index(struct amdgpu_userq_mgr *uq_mgr,
 	/* Pin the BO before generating the index, unpin in queue destroy */
 	r = amdgpu_bo_pin(db_obj->obj, AMDGPU_GEM_DOMAIN_DOORBELL);
 	if (r) {
+		if (r == -EDEADLOCK) {
+			amdgpu_bo_unreserve(db_obj->obj);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		drm_file_err(uq_mgr->file, "[Usermode queues] Failed to pin doorbell object\n");
 		goto unresv_bo;
 	}
@@ -370,6 +378,7 @@ amdgpu_userq_get_doorbell_index(struct amdgpu_userq_mgr *uq_mgr,
 	drm_dbg_driver(adev_to_drm(uq_mgr->adev),
 		       "[Usermode queues] doorbell index=%lld\n", index);
 	amdgpu_bo_unreserve(db_obj->obj);
+	ww_acquire_fini(&pin_ctx);
 	return index;
 
 unpin_bo:
@@ -377,6 +386,7 @@ unpin_bo:
 unresv_bo:
 	amdgpu_bo_unreserve(db_obj->obj);
 unref_bo:
+	ww_acquire_fini(&pin_ctx);
 	amdgpu_bo_unref(&db_obj->obj);
 	return r;
 }
@@ -400,7 +410,7 @@ amdgpu_userq_destroy(struct drm_file *filp, int queue_id)
 		return -EINVAL;
 	}
 	amdgpu_userq_wait_for_last_fence(uq_mgr, queue);
-	r = amdgpu_bo_reserve(queue->db_obj.obj, true);
+	r = amdgpu_bo_reserve(queue->db_obj.obj, true, NULL);
 	if (!r) {
 		amdgpu_bo_unpin(queue->db_obj.obj);
 		amdgpu_bo_unreserve(queue->db_obj.obj);
@@ -451,7 +461,7 @@ static int amdgpu_mqd_info_read(struct seq_file *m, void *unused)
 		return -EINVAL;
 
 	bo = amdgpu_bo_ref(queue->mqd.obj);
-	r = amdgpu_bo_reserve(bo, true);
+	r = amdgpu_bo_reserve(bo, true, NULL);
 	if (r) {
 		amdgpu_bo_unref(&bo);
 		return -EINVAL;

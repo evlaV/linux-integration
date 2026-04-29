@@ -242,7 +242,7 @@ static int amdgpu_gem_object_open(struct drm_gem_object *obj,
 	    !amdgpu_vm_is_bo_always_valid(vm, abo))
 		return -EPERM;
 
-	r = amdgpu_bo_reserve(abo, false);
+	r = amdgpu_bo_reserve(abo, false, NULL);
 	if (r)
 		return r;
 
@@ -434,7 +434,7 @@ int amdgpu_gem_create_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (flags & AMDGPU_GEM_CREATE_VM_ALWAYS_VALID) {
-		r = amdgpu_bo_reserve(vm->root.bo, false);
+		r = amdgpu_bo_reserve(vm->root.bo, false, NULL);
 		if (r)
 			return r;
 
@@ -535,7 +535,7 @@ int amdgpu_gem_userptr_ioctl(struct drm_device *dev, void *data,
 		if (r)
 			goto release_object;
 
-		r = amdgpu_bo_reserve(bo, true);
+		r = amdgpu_bo_reserve(bo, true, NULL);
 		if (r)
 			goto user_pages_done;
 
@@ -671,7 +671,7 @@ int amdgpu_gem_metadata_ioctl(struct drm_device *dev, void *data,
 		return -ENOENT;
 	robj = gem_to_amdgpu_bo(gobj);
 
-	r = amdgpu_bo_reserve(robj, false);
+	r = amdgpu_bo_reserve(robj, false, NULL);
 	if (unlikely(r != 0))
 		goto out;
 

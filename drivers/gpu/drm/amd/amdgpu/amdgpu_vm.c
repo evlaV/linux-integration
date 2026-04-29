@@ -2689,7 +2689,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		goto error_free_delayed;
 
 	root_bo = amdgpu_bo_ref(&root->bo);
-	r = amdgpu_bo_reserve(root_bo, true);
+	r = amdgpu_bo_reserve(root_bo, true, NULL);
 	if (r) {
 		amdgpu_bo_unref(&root_bo);
 		goto error_free_delayed;
@@ -2764,7 +2764,7 @@ int amdgpu_vm_make_compute(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 {
 	int r;
 
-	r = amdgpu_bo_reserve(vm->root.bo, true);
+	r = amdgpu_bo_reserve(vm->root.bo, true, NULL);
 	if (r)
 		return r;
 
@@ -2833,7 +2833,7 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 	amdgpu_amdkfd_gpuvm_destroy_cb(adev, vm);
 
 	root = amdgpu_bo_ref(vm->root.bo);
-	amdgpu_bo_reserve(root, true);
+	amdgpu_bo_reserve(root, true, NULL);
 	/* Remove PASID mapping before destroying VM */
 	if (vm->pasid != 0) {
 		xa_erase_irq(&adev->vm_manager.pasids, vm->pasid);
@@ -3042,7 +3042,7 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 
 	addr /= AMDGPU_GPU_PAGE_SIZE;
 
-	r = amdgpu_bo_reserve(root, true);
+	r = amdgpu_bo_reserve(root, true, NULL);
 	if (r)
 		goto error_unref;
 

@@ -57,6 +57,7 @@ int amdgpu_gmc_pdb0_alloc(struct amdgpu_device *adev)
 {
 	int r;
 	struct amdgpu_bo_param bp;
+	struct ww_acquire_ctx pin_ctx;
 	u64 vram_size = adev->gmc.xgmi.node_segment_size * adev->gmc.xgmi.num_physical_nodes;
 	uint32_t pde0_page_shift = adev->gmc.vmid0_page_table_block_size + 21;
 	uint32_t npdes = (vram_size + (1ULL << pde0_page_shift) - 1) >> pde0_page_shift;
@@ -75,18 +76,27 @@ int amdgpu_gmc_pdb0_alloc(struct amdgpu_device *adev)
 	if (r)
 		return r;
 
-	r = amdgpu_bo_reserve(adev->gmc.pdb0_bo, false);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	r = amdgpu_bo_reserve(adev->gmc.pdb0_bo, false, &pin_ctx);
 	if (unlikely(r != 0))
 		goto bo_reserve_failure;
 
 	r = amdgpu_bo_pin(adev->gmc.pdb0_bo, AMDGPU_GEM_DOMAIN_VRAM);
-	if (r)
+	if (r) {
+		if (r == -EDEADLOCK) {
+			amdgpu_bo_unreserve(adev->gmc.pdb0_bo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		goto bo_pin_failure;
+	}
 	r = amdgpu_bo_kmap(adev->gmc.pdb0_bo, &adev->gmc.ptr_pdb0);
 	if (r)
 		goto bo_kmap_failure;
 
 	amdgpu_bo_unreserve(adev->gmc.pdb0_bo);
+	ww_acquire_fini(&pin_ctx);
 	return 0;
 
 bo_kmap_failure:
@@ -94,6 +104,7 @@ bo_kmap_failure:
 bo_pin_failure:
 	amdgpu_bo_unreserve(adev->gmc.pdb0_bo);
 bo_reserve_failure:
+	ww_acquire_fini(&pin_ctx);
 	amdgpu_bo_unref(&adev->gmc.pdb0_bo);
 	return r;
 }

@@ -598,7 +598,7 @@ int pqm_update_queue_properties(struct process_queue_manager *pqm,
 		if (!pdd)
 			return -ENODEV;
 		vm = drm_priv_to_vm(pdd->drm_priv);
-		err = amdgpu_bo_reserve(vm->root.bo, false);
+		err = amdgpu_bo_reserve(vm->root.bo, false, NULL);
 		if (err)
 			return err;
 

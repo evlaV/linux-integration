@@ -283,7 +283,7 @@ static int amdgpu_dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 		return 0;
 
 	/* move to gtt */
-	ret = amdgpu_bo_reserve(bo, false);
+	ret = amdgpu_bo_reserve(bo, false, NULL);
 	if (unlikely(ret != 0))
 		return ret;
 

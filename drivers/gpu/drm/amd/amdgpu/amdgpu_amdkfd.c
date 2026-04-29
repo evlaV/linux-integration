@@ -320,6 +320,7 @@ int amdgpu_amdkfd_alloc_gtt_mem(struct amdgpu_device *adev, size_t size,
 				void **mem_obj, uint64_t *gpu_addr,
 				void **cpu_ptr, bool cp_mqd_gfx9)
 {
+	struct ww_acquire_ctx pin_ctx;
 	struct amdgpu_bo *bo = NULL;
 	struct amdgpu_bo_param bp;
 	int r;
@@ -345,7 +346,9 @@ int amdgpu_amdkfd_alloc_gtt_mem(struct amdgpu_device *adev, size_t size,
 	}
 
 	/* map the buffer */
-	r = amdgpu_bo_reserve(bo, true);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	r = amdgpu_bo_reserve(bo, true, &pin_ctx);
 	if (r) {
 		dev_err(adev->dev, "(%d) failed to reserve bo for amdkfd\n", r);
 		goto allocate_mem_reserve_bo_failed;
@@ -353,6 +356,11 @@ int amdgpu_amdkfd_alloc_gtt_mem(struct amdgpu_device *adev, size_t size,
 
 	r = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
 	if (r) {
+		if (r == -EDEADLOCK) {
+			amdgpu_bo_unreserve(bo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		dev_err(adev->dev, "(%d) failed to pin bo for amdkfd\n", r);
 		goto allocate_mem_pin_bo_failed;
 	}
@@ -375,6 +383,7 @@ int amdgpu_amdkfd_alloc_gtt_mem(struct amdgpu_device *adev, size_t size,
 	*cpu_ptr = cpu_ptr_tmp;
 
 	amdgpu_bo_unreserve(bo);
+	ww_acquire_fini(&pin_ctx);
 
 	return 0;
 
@@ -383,6 +392,7 @@ allocate_mem_kmap_bo_failed:
 allocate_mem_pin_bo_failed:
 	amdgpu_bo_unreserve(bo);
 allocate_mem_reserve_bo_failed:
+	ww_acquire_fini(&pin_ctx);
 	amdgpu_bo_unref(&bo);
 
 	return r;
@@ -395,7 +405,7 @@ void amdgpu_amdkfd_free_gtt_mem(struct amdgpu_device *adev, void **mem_obj)
 	if (!bo || !*bo)
 		return;
 
-	(void)amdgpu_bo_reserve(*bo, true);
+	(void)amdgpu_bo_reserve(*bo, true, NULL);
 	amdgpu_bo_kunmap(*bo);
 	amdgpu_bo_unpin(*bo);
 	amdgpu_bo_unreserve(*bo);

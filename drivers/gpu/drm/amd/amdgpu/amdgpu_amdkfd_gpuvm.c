@@ -335,7 +335,7 @@ create_dmamap_sg_bo(struct amdgpu_device *adev,
 	int ret;
 	uint64_t flags = 0;
 
-	ret = amdgpu_bo_reserve(mem->bo, false);
+	ret = amdgpu_bo_reserve(mem->bo, false, NULL);
 	if (ret)
 		return ret;
 
@@ -444,7 +444,7 @@ int amdgpu_amdkfd_bo_validate_and_fence(struct amdgpu_bo *bo,
 					uint32_t domain,
 					struct dma_fence *fence)
 {
-	int ret = amdgpu_bo_reserve(bo, false);
+	int ret = amdgpu_bo_reserve(bo, false, NULL);
 
 	if (ret)
 		return ret;
@@ -959,7 +959,7 @@ static int kfd_mem_attach(struct amdgpu_device *adev, struct kgd_mem *mem,
 		}
 
 		/* Add BO to VM internal data structures */
-		ret = amdgpu_bo_reserve(bo[i], false);
+		ret = amdgpu_bo_reserve(bo[i], false, NULL);
 		if (ret) {
 			pr_debug("Unable to reserve BO during memory attach");
 			goto unwind;
@@ -992,7 +992,7 @@ unwind:
 		if (!attachment[i])
 			continue;
 		if (attachment[i]->bo_va) {
-			(void)amdgpu_bo_reserve(bo[i], true);
+			(void)amdgpu_bo_reserve(bo[i], true, NULL);
 			if (--attachment[i]->bo_va->ref_count == 0)
 				amdgpu_vm_bo_del(adev, attachment[i]->bo_va);
 			amdgpu_bo_unreserve(bo[i]);
@@ -1098,7 +1098,7 @@ static int init_user_pages(struct kgd_mem *mem, uint64_t user_addr,
 		goto unregister_out;
 	}
 
-	ret = amdgpu_bo_reserve(bo, true);
+	ret = amdgpu_bo_reserve(bo, true, NULL);
 	if (ret) {
 		pr_err("%s: Failed to reserve BO\n", __func__);
 		goto release_out;
@@ -1427,7 +1427,7 @@ static int init_kfd_vm(struct amdgpu_vm *vm, void **process_info,
 	}
 
 	/* Validate page directory and attach eviction fence */
-	ret = amdgpu_bo_reserve(vm->root.bo, true);
+	ret = amdgpu_bo_reserve(vm->root.bo, true, NULL);
 	if (ret)
 		goto reserve_pd_fail;
 	ret = vm_validate_pt_pd_bos(vm, NULL);
@@ -1490,11 +1490,16 @@ create_evict_fence_fail:
  */
 static int amdgpu_amdkfd_gpuvm_pin_bo(struct amdgpu_bo *bo, u32 domain)
 {
+	struct ww_acquire_ctx pin_ctx;
 	int ret = 0;
 
-	ret = amdgpu_bo_reserve(bo, false);
-	if (unlikely(ret))
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	ret = amdgpu_bo_reserve(bo, false, &pin_ctx);
+	if (unlikely(ret)) {
+		ww_acquire_fini(&pin_ctx);
 		return ret;
+	}
 
 	if (bo->flags & AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS) {
 		/*
@@ -1502,11 +1507,20 @@ static int amdgpu_amdkfd_gpuvm_pin_bo(struct amdgpu_bo *bo, u32 domain)
 		 * we can get contiguous VRAM space after evicting other BOs.
 		 */
 		if (!(bo->tbo.resource->placement & TTM_PL_FLAG_CONTIGUOUS)) {
-			struct ttm_operation_ctx ctx = { true, false };
+			struct ttm_operation_ctx ctx = {
+				.interruptible = true,
+				.no_wait_gpu = false,
+				.propagate_deadlock = true,
+			};
 
 			amdgpu_bo_placement_from_domain(bo, AMDGPU_GEM_DOMAIN_GTT);
 			ret = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 			if (unlikely(ret)) {
+				if (ret == -EDEADLOCK) {
+					amdgpu_bo_unreserve(bo);
+					ww_acquire_fini(&pin_ctx);
+					goto pin_retry;
+				}
 				pr_debug("validate bo 0x%p to GTT failed %d\n", &bo->tbo, ret);
 				goto out;
 			}
@@ -1514,12 +1528,19 @@ static int amdgpu_amdkfd_gpuvm_pin_bo(struct amdgpu_bo *bo, u32 domain)
 	}
 
 	ret = amdgpu_bo_pin(bo, domain);
-	if (ret)
+	if (ret) {
+		if (ret == -EDEADLOCK) {
+			amdgpu_bo_unreserve(bo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		pr_err("Error in Pinning BO to domain: %d\n", domain);
+	}
 
 	amdgpu_bo_sync_wait(bo, AMDGPU_FENCE_OWNER_KFD, false);
 out:
 	amdgpu_bo_unreserve(bo);
+	ww_acquire_fini(&pin_ctx);
 	return ret;
 }
 
@@ -1535,7 +1556,7 @@ static void amdgpu_amdkfd_gpuvm_unpin_bo(struct amdgpu_bo *bo)
 {
 	int ret = 0;
 
-	ret = amdgpu_bo_reserve(bo, false);
+	ret = amdgpu_bo_reserve(bo, false, NULL);
 	if (unlikely(ret))
 		return;
 
@@ -2112,7 +2133,7 @@ int amdgpu_amdkfd_gpuvm_dmaunmap_mem(struct kgd_mem *mem, void *drm_priv)
 
 	mutex_lock(&mem->lock);
 
-	ret = amdgpu_bo_reserve(mem->bo, true);
+	ret = amdgpu_bo_reserve(mem->bo, true, NULL);
 	if (ret)
 		goto out;
 
@@ -2214,9 +2235,12 @@ int amdgpu_amdkfd_gpuvm_sync_memory(
  */
 int amdgpu_amdkfd_map_gtt_bo_to_gart(struct amdgpu_bo *bo, struct amdgpu_bo **bo_gart)
 {
+	struct ww_acquire_ctx pin_ctx;
 	int ret;
 
-	ret = amdgpu_bo_reserve(bo, true);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	ret = amdgpu_bo_reserve(bo, true, &pin_ctx);
 	if (ret) {
 		pr_err("Failed to reserve bo. ret %d\n", ret);
 		goto err_reserve_bo_failed;
@@ -2224,6 +2248,11 @@ int amdgpu_amdkfd_map_gtt_bo_to_gart(struct amdgpu_bo *bo, struct amdgpu_bo **bo
 
 	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
+		if (ret == -EDEADLOCK) {
+			amdgpu_bo_unreserve(bo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		pr_err("Failed to pin bo. ret %d\n", ret);
 		goto err_pin_bo_failed;
 	}
@@ -2238,6 +2267,7 @@ int amdgpu_amdkfd_map_gtt_bo_to_gart(struct amdgpu_bo *bo, struct amdgpu_bo **bo
 		bo, bo->vm_bo->vm->process_info->eviction_fence);
 
 	amdgpu_bo_unreserve(bo);
+	ww_acquire_fini(&pin_ctx);
 
 	*bo_gart = amdgpu_bo_ref(bo);
 
@@ -2248,6 +2278,7 @@ err_map_bo_gart_failed:
 err_pin_bo_failed:
 	amdgpu_bo_unreserve(bo);
 err_reserve_bo_failed:
+	ww_acquire_fini(&pin_ctx);
 
 	return ret;
 }
@@ -2268,6 +2299,7 @@ err_reserve_bo_failed:
 int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
 					     void **kptr, uint64_t *size)
 {
+	struct ww_acquire_ctx pin_ctx;
 	int ret;
 	struct amdgpu_bo *bo = mem->bo;
 
@@ -2278,7 +2310,9 @@ int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
 
 	mutex_lock(&mem->process_info->lock);
 
-	ret = amdgpu_bo_reserve(bo, true);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	ret = amdgpu_bo_reserve(bo, true, &pin_ctx);
 	if (ret) {
 		pr_err("Failed to reserve bo. ret %d\n", ret);
 		goto bo_reserve_failed;
@@ -2286,6 +2320,11 @@ int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
 
 	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
+		if (ret == -EDEADLOCK) {
+			amdgpu_bo_unreserve(bo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		pr_err("Failed to pin bo. ret %d\n", ret);
 		goto pin_failed;
 	}
@@ -2303,6 +2342,7 @@ int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
 		*size = amdgpu_bo_size(bo);
 
 	amdgpu_bo_unreserve(bo);
+	ww_acquire_fini(&pin_ctx);
 
 	mutex_unlock(&mem->process_info->lock);
 	return 0;
@@ -2312,6 +2352,7 @@ kmap_failed:
 pin_failed:
 	amdgpu_bo_unreserve(bo);
 bo_reserve_failed:
+	ww_acquire_fini(&pin_ctx);
 	mutex_unlock(&mem->process_info->lock);
 
 	return ret;
@@ -2329,7 +2370,7 @@ void amdgpu_amdkfd_gpuvm_unmap_gtt_bo_from_kernel(struct kgd_mem *mem)
 {
 	struct amdgpu_bo *bo = mem->bo;
 
-	(void)amdgpu_bo_reserve(bo, true);
+	(void)amdgpu_bo_reserve(bo, true, NULL);
 	amdgpu_bo_kunmap(bo);
 	amdgpu_bo_unpin(bo);
 	amdgpu_bo_unreserve(bo);
@@ -2563,7 +2604,7 @@ static int update_invalid_user_pages(struct amdkfd_process_info *process_info,
 		 * and free the SG table
 		 */
 		if (bo->tbo.resource->mem_type != TTM_PL_SYSTEM) {
-			if (amdgpu_bo_reserve(bo, true))
+			if (amdgpu_bo_reserve(bo, true, NULL))
 				return -EAGAIN;
 			amdgpu_bo_placement_from_domain(bo, AMDGPU_GEM_DOMAIN_CPU);
 			ret = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
@@ -3127,7 +3168,7 @@ int amdgpu_amdkfd_add_gws_to_process(void *info, void *gws, struct kgd_mem **mem
 
 	/* Validate gws bo the first time it is added to process */
 	mutex_lock(&(*mem)->process_info->lock);
-	ret = amdgpu_bo_reserve(gws_bo, false);
+	ret = amdgpu_bo_reserve(gws_bo, false, NULL);
 	if (unlikely(ret)) {
 		pr_err("Reserve gws bo failed %d\n", ret);
 		goto bo_reservation_failure;
@@ -3179,7 +3220,7 @@ int amdgpu_amdkfd_remove_gws_from_process(void *info, void *mem)
 	 */
 	remove_kgd_mem_from_kfd_bo_list(kgd_mem, process_info);
 
-	ret = amdgpu_bo_reserve(gws_bo, false);
+	ret = amdgpu_bo_reserve(gws_bo, false, NULL);
 	if (unlikely(ret)) {
 		pr_err("Reserve gws bo failed %d\n", ret);
 		//TODO add BO back to validate_list?
