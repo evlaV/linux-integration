@@ -173,6 +173,9 @@ struct ttm_bo_kmap_obj {
  * @allow_res_evict: Allow eviction of reserved BOs. Can be used when multiple
  * BOs share the same reservation object.
  * faults. Should only be used by TTM internally.
+ * @propagate_deadlock: Propagate -EDEADLOCK from ticket-locking during evictions
+ * to the caller. When set, callers are expected to back off and repeat the
+ * allocation attempt.
  * @resv: Reservation object to allow reserved evictions with.
  * @bytes_moved: Statistics on how many bytes have been moved.
  *
@@ -184,6 +187,7 @@ struct ttm_operation_ctx {
 	bool no_wait_gpu;
 	bool gfp_retry_mayfail;
 	bool allow_res_evict;
+	bool propagate_deadlock;
 	struct dma_resv *resv;
 	uint64_t bytes_moved;
 };
