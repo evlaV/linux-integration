@@ -300,6 +300,7 @@ static int amdgpu_vkms_prepare_fb(struct drm_plane *plane,
 				  struct drm_plane_state *new_state)
 {
 	struct amdgpu_framebuffer *afb;
+	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_device *adev;
 	struct amdgpu_bo *rbo;
@@ -321,16 +322,13 @@ static int amdgpu_vkms_prepare_fb(struct drm_plane *plane,
 	rbo = gem_to_amdgpu_bo(obj);
 	adev = amdgpu_ttm_adev(rbo->tbo.bdev);
 
-	r = amdgpu_bo_reserve(rbo, true);
+pin_retry:
+	ww_acquire_init(&pin_ctx, &reservation_ww_class);
+	r = amdgpu_bo_reserve(rbo, true, &pin_ctx);
 	if (r) {
+		ww_acquire_fini(&pin_ctx);
 		dev_err(adev->dev, "fail to reserve bo (%d)\n", r);
 		return r;
-	}
-
-	r = dma_resv_reserve_fences(rbo->tbo.base.resv, 1);
-	if (r) {
-		dev_err(adev->dev, "allocating fence slot failed (%d)\n", r);
-		goto error_unlock;
 	}
 
 	if (plane->type != DRM_PLANE_TYPE_CURSOR)
@@ -341,8 +339,19 @@ static int amdgpu_vkms_prepare_fb(struct drm_plane *plane,
 	rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
 	r = amdgpu_bo_pin(rbo, domain);
 	if (unlikely(r != 0)) {
+		if (r == -EDEADLOCK) {
+			amdgpu_bo_unreserve(rbo);
+			ww_acquire_fini(&pin_ctx);
+			goto pin_retry;
+		}
 		if (r != -ERESTARTSYS)
 			DRM_ERROR("Failed to pin framebuffer with error %d\n", r);
+		goto error_unlock;
+	}
+
+	r = dma_resv_reserve_fences(rbo->tbo.base.resv, 1);
+	if (r) {
+		dev_err(adev->dev, "allocating fence slot failed (%d)\n", r);
 		goto error_unlock;
 	}
 
@@ -353,6 +362,7 @@ static int amdgpu_vkms_prepare_fb(struct drm_plane *plane,
 	}
 
 	amdgpu_bo_unreserve(rbo);
+	ww_acquire_fini(&pin_ctx);
 
 	afb->address = amdgpu_bo_gpu_offset(rbo);
 
@@ -365,6 +375,7 @@ error_unpin:
 
 error_unlock:
 	amdgpu_bo_unreserve(rbo);
+	ww_acquire_fini(&pin_ctx);
 	return r;
 }
 
@@ -385,7 +396,7 @@ static void amdgpu_vkms_cleanup_fb(struct drm_plane *plane,
 	}
 
 	rbo = gem_to_amdgpu_bo(obj);
-	r = amdgpu_bo_reserve(rbo, false);
+	r = amdgpu_bo_reserve(rbo, false, NULL);
 	if (unlikely(r)) {
 		DRM_ERROR("failed to reserve rbo before unpin\n");
 		return;

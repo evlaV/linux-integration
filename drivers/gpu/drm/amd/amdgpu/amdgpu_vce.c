@@ -293,7 +293,7 @@ int amdgpu_vce_resume(struct amdgpu_device *adev)
 	if (adev->vce.vcpu_bo == NULL)
 		return -EINVAL;
 
-	r = amdgpu_bo_reserve(adev->vce.vcpu_bo, false);
+	r = amdgpu_bo_reserve(adev->vce.vcpu_bo, false, NULL);
 	if (r) {
 		dev_err(adev->dev, "(%d) failed to reserve VCE bo\n", r);
 		return r;
