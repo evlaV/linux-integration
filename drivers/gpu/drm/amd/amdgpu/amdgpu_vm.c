@@ -701,6 +701,8 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		if (amdgpu_vm_bo_needs_eviction(adev, bo_base))
 			goto out;
 
+		amdgpu_vm_bo_invalidated(bo_base);
+
 		spin_lock(&vm->status_lock);
 	}
 	spin_unlock(&vm->status_lock);
