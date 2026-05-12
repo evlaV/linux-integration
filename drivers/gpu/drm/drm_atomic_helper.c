@@ -1725,7 +1725,18 @@ drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_atomic_helper_wait_for_vblanks);
 
-static int force_full_modeset(struct drm_crtc *crtc)
+/**
+ * drm_atomic_helper_force_full_modeset - force a full modeset on a CRTC
+ * @crtc: CRTC to re-modeset
+ *
+ * Re-run the full commit_tail path on @crtc with mode_changed and
+ * connectors_changed set. Used as a recovery mechanism by callers that
+ * need to re-issue the full modeset programming sequence (e.g. after a
+ * page flip timeout or a hardware reset).
+ *
+ * Returns 0 on success or a negative error code on failure.
+ */
+int drm_atomic_helper_force_full_modeset(struct drm_crtc *crtc)
 {
 	struct drm_modeset_acquire_ctx ctx;
 	struct drm_crtc_state *crtc_state;
@@ -1761,6 +1772,7 @@ out:
 	DRM_MODESET_LOCK_ALL_END(crtc->dev, ctx, err);
 	return ret;
 }
+EXPORT_SYMBOL(drm_atomic_helper_force_full_modeset);
 
 /**
  * drm_atomic_helper_wait_for_flip_done - wait for all page flips to be done
@@ -1796,7 +1808,7 @@ void drm_atomic_helper_wait_for_flip_done(struct drm_device *dev,
 			drm_err(dev, "[CRTC:%d:%s] flip_done timed out\n",
 				crtc->base.id, crtc->name);
 
-			ret = force_full_modeset(crtc);
+			ret = drm_atomic_helper_force_full_modeset(crtc);
 			if (ret)
 				drm_err(dev,
 					"[CRTC:%d:%s] force full modeset failed! ret=%d\n",

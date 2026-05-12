@@ -82,6 +82,8 @@ void drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
 void drm_atomic_helper_wait_for_flip_done(struct drm_device *dev,
 					  struct drm_atomic_state *old_state);
 
+int drm_atomic_helper_force_full_modeset(struct drm_crtc *crtc);
+
 void
 drm_atomic_helper_update_legacy_modeset_state(struct drm_device *dev,
 					      struct drm_atomic_state *old_state);
