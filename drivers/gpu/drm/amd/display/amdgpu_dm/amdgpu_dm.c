@@ -184,6 +184,7 @@ MODULE_FIRMWARE(FIRMWARE_DCN_401_DMUB);
 /* basic init/fini API */
 static int amdgpu_dm_init(struct amdgpu_device *adev);
 static void amdgpu_dm_fini(struct amdgpu_device *adev);
+static void dm_post_reset_recovery_work(struct work_struct *work);
 static bool is_freesync_video_mode(const struct drm_display_mode *mode, struct amdgpu_dm_connector *aconnector);
 static void reset_freesync_config_for_crtc(struct dm_crtc_state *new_crtc_state);
 static struct amdgpu_i2c_adapter *
@@ -465,6 +466,14 @@ static void dm_pflip_high_irq(void *interrupt_params)
 	if (amdgpu_crtc == NULL) {
 		drm_dbg_state(dev, "CRTC is null, returning.\n");
 		return;
+	}
+
+	/* Trigger post-reset recovery on first pflip; must be checked before
+	 * the pflip_status early-return below.
+	 */
+	if (READ_ONCE(adev->dm.reset_recovery_pending)) {
+		WRITE_ONCE(adev->dm.reset_recovery_pending, false);
+		queue_work(system_unbound_wq, &adev->dm.post_reset_recovery_work);
 	}
 
 	spin_lock_irqsave(&adev_to_drm(adev)->event_lock, flags);
@@ -1841,6 +1850,9 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
 	adev->dm.ddev = adev_to_drm(adev);
 	adev->dm.adev = adev;
 
+	INIT_WORK(&adev->dm.post_reset_recovery_work,
+		  dm_post_reset_recovery_work);
+
 	/* Zero all the fields */
 	memset(&init_data, 0, sizeof(init_data));
 	memset(&init_params, 0, sizeof(init_params));
@@ -2188,6 +2200,8 @@ static void amdgpu_dm_fini(struct amdgpu_device *adev)
 	int i;
 	struct drm_crtc *crtc;
 	struct amdgpu_crtc *acrtc;
+
+	cancel_work_sync(&adev->dm.post_reset_recovery_work);
 
 	if (adev->dm.vblank_control_workqueue) {
 		destroy_workqueue(adev->dm.vblank_control_workqueue);
@@ -3414,6 +3428,44 @@ static void do_stupid_retrigger(struct drm_device *ddev)
 	}
 }
 
+/*
+ * Drain stranded VRR-deferred flips and force a full modeset on active
+ * CRTCs to restore DMUB-side stream state after a MODE2 reset.
+ */
+static void dm_post_reset_recovery_work(struct work_struct *work)
+{
+	struct amdgpu_display_manager *dm =
+		container_of(work, struct amdgpu_display_manager,
+			     post_reset_recovery_work);
+	struct drm_device *ddev = dm->ddev;
+	struct drm_pending_vblank_event *e, *t;
+	struct drm_crtc *crtc;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&ddev->event_lock, flags);
+	list_for_each_entry_safe(e, t, &ddev->vblank_event_list, base.link) {
+		crtc = drm_crtc_from_index(ddev, e->pipe);
+		if (!crtc)
+			continue;
+
+		list_del(&e->base.link);
+		drm_crtc_accurate_vblank_count(crtc);
+		drm_crtc_send_vblank_event(crtc, e);
+		drm_crtc_vblank_put(crtc);
+	}
+	spin_unlock_irqrestore(&ddev->event_lock, flags);
+
+	drm_for_each_crtc(crtc, ddev) {
+		if (!crtc->state || !crtc->state->active)
+			continue;
+		ret = drm_atomic_helper_force_full_modeset(crtc);
+		if (ret)
+			drm_err(ddev, "[CRTC:%d:%s] force full modeset failed! ret=%d\n",
+				crtc->base.id, crtc->name, ret);
+	}
+}
+
 static int dm_resume(struct amdgpu_ip_block *ip_block)
 {
 	struct amdgpu_device *adev = ip_block->adev;
@@ -3488,6 +3540,18 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
 		dm_gpureset_commit_state(dm->cached_dc_state, dm);
 
 		dm_gpureset_toggle_interrupts(adev, dm->cached_dc_state, true);
+
+		/* Arm post-reset recovery if any CRTC has VRR active. */
+		for (i = 0; i < dm->cached_dc_state->stream_count; i++) {
+			struct amdgpu_crtc *acrtc = get_crtc_by_otg_inst(
+				adev, dm->cached_dc_state->stream_status[i].primary_otg_inst);
+
+			if (acrtc && acrtc->base.state &&
+			    amdgpu_dm_crtc_vrr_active(to_dm_crtc_state(acrtc->base.state))) {
+				WRITE_ONCE(dm->reset_recovery_pending, true);
+				break;
+			}
+		}
 
 		dc_state_release(dm->cached_dc_state);
 		dm->cached_dc_state = NULL;

@@ -541,6 +541,23 @@ struct amdgpu_display_manager {
 	struct workqueue_struct *vblank_control_workqueue;
 
 	/**
+	 * @post_reset_recovery_work:
+	 *
+	 * Drain stranded flips and force a full modeset on active CRTCs
+	 * after a MODE2 GPU reset. Armed by @reset_recovery_pending.
+	 */
+	struct work_struct post_reset_recovery_work;
+
+	/**
+	 * @reset_recovery_pending:
+	 *
+	 * Set at the end of dm_resume(in_reset) when a VRR-active CRTC is
+	 * present. Consumed by the first post-reset pflip IRQ, which queues
+	 * @post_reset_recovery_work.
+	 */
+	bool reset_recovery_pending;
+
+	/**
 	 * @idle_workqueue:
 	 *
 	 * Periodic work for idle events.
