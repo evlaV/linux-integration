@@ -75,6 +75,7 @@ enum {
 static int hibernation_mode = HIBERNATION_SHUTDOWN;
 
 bool freezer_test_done;
+bool platform_enter_test_done;
 
 static const struct platform_hibernation_ops *hibernation_ops;
 
@@ -636,6 +637,11 @@ int hibernation_platform_enter(void)
 		goto Power_up;
 	}
 
+	if (hibernation_test(TEST_PLATFORM_ENTER)) {
+		platform_enter_test_done = true;
+		goto Power_up;
+	}
+
 	hibernation_ops->enter();
 	/* We should never get here */
 	while (1);
@@ -700,6 +706,8 @@ static int power_down(void)
 		break;
 	case HIBERNATION_PLATFORM:
 		error = hibernation_platform_enter();
+		if (platform_enter_test_done)
+			goto exit;
 		if (error == -EAGAIN || error == -EBUSY) {
 			events_check_enabled = false;
 			pr_info("Wakeup event detected during hibernation, rolling back.\n");
@@ -848,7 +856,7 @@ int hibernate(void)
 			else
 				error = power_down();
 		}
-		if (error) {
+		if (error || platform_enter_test_done) {
 			/* recover any devices that refused to thaw */
 			dpm_resume_suspended_devices(PMSG_RECOVER);
 		}
@@ -870,8 +878,9 @@ int hibernate(void)
 	}
 	thaw_processes();
 
-	/* Don't bother checking whether freezer_test_done is true */
+	/* Don't bother checking whether any of the test_done flags are true */
 	freezer_test_done = false;
+	platform_enter_test_done = false;
  Exit:
 	filesystems_thaw();
 	pm_notifier_call_chain(PM_POST_HIBERNATION);
