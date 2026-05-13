@@ -273,6 +273,7 @@ static const char * const pm_tests[__TEST_AFTER_LAST] = {
 	[TEST_PLATFORM] = "platform",
 	[TEST_DEVICES] = "devices",
 	[TEST_FREEZER] = "freezer",
+	[TEST_PLATFORM_ENTER] = "platform_enter",
 };
 
 static ssize_t pm_test_show(struct kobject *kobj, struct kobj_attribute *attr,
