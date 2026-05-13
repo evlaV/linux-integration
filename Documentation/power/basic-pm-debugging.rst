@@ -47,7 +47,7 @@ a) Test modes of hibernation
 To find out why hibernation fails on your system, you can use a special testing
 facility available if the kernel is compiled with CONFIG_PM_DEBUG set.  Then,
 there is the file /sys/power/pm_test that can be used to make the hibernation
-core run in a test mode.  There are 5 test modes available:
+core run in a test mode.  There are 8 test modes available:
 
 freezer
 	- test the freezing of processes
@@ -67,6 +67,26 @@ core
 	- test the freezing of processes, suspending of devices, platform global
 	  control methods\ [1]_, the disabling of nonboot CPUs and suspending
 	  of platform/system devices
+
+disk-snapshot
+	- test the freezing of processes, suspending of devices, platform global
+	  control methods\ [1]_, the disabling of nonboot CPUs, suspending
+	  of platform/system devices and creation of a snapshot of the system
+	  memory
+
+disk-write
+	- test the freezing of processes, suspending of devices, platform global
+	  control methods\ [1]_, the disabling of nonboot CPUs, suspending
+	  of platform/system devices, creation of a snapshot of the system
+	  memory and write of the hibernation image to disk
+
+disk-platform-prepare
+	- test the freezing of processes, suspending of devices, platform global
+	  control methods\ [1]_, the disabling of nonboot CPUs, suspending
+	  of platform/system devices, creation of a snapshot of the system
+	  memory, write of the hibernation image to disk and platform prepare
+	  global control method. This test mode is only applicable to the
+	  "platform" hibernation mode.
 
 .. [1]
 
@@ -154,6 +174,16 @@ system to hang or become unstable, so please beware.  Such a failure usually
 indicates a serious problem that very well may be related to the hardware, but
 please report it anyway.
 
+The "disk-snapshot" and "disk-write" tests can be used not only to detect issues
+in the hibernation image creation and write to disk, respectively, but also to
+benchmark how long those processes are taking, which is not possible to do after
+resume.
+
+When using the "platform" hibernation mode, the "disk-platform-prepare" test
+will abort hibernation at the very last step possible, just before calling the
+platform global control method to enter low power state, and can thus be
+useful to test and/or benchmark the entire hibernation flow.
+
 b) Testing minimal configuration
 --------------------------------
 
@@ -228,7 +258,8 @@ to given string.  The STR test modes are defined in the same way as for
 hibernation, so please refer to Section 1 for more information about them.  In
 particular, the "core" test allows you to test everything except for the actual
 invocation of the platform firmware in order to put the system into the sleep
-state.
+state. Note that the "disk-\*" modes are specific to hibernation and not
+applicable to STR.
 
 Among other things, the testing with the help of /sys/power/pm_test may allow
 you to identify drivers that fail to suspend or resume their devices.  They
