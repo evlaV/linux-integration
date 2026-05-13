@@ -268,6 +268,9 @@ int pm_test_level = TEST_NONE;
 
 static const char * const pm_tests[__TEST_AFTER_LAST] = {
 	[TEST_NONE] = "none",
+	[TEST_HIBERNATE_PLATFORM_PREPARE] = "disk-platform-prepare",
+	[TEST_HIBERNATE_IMAGE_WRITE] = "disk-write",
+	[TEST_HIBERNATE_SNAPSHOT] = "disk-snapshot",
 	[TEST_CORE] = "core",
 	[TEST_CPUS] = "processors",
 	[TEST_PLATFORM] = "platform",
