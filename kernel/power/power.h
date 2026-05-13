@@ -254,6 +254,9 @@ static inline int restore_highmem(void) { return 0; }
 enum {
 	/* keep first */
 	TEST_NONE,
+	TEST_HIBERNATE_PLATFORM_ENTER,
+	TEST_HIBERNATE_IMAGE_WRITE,
+	TEST_HIBERNATE_SNAPSHOT,
 	TEST_CORE,
 	TEST_CPUS,
 	TEST_PLATFORM,
