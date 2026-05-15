@@ -40,6 +40,9 @@
 
 #include "power.h"
 
+static bool nozerocheck;
+module_param(nozerocheck, bool, 0644);
+
 #if defined(CONFIG_STRICT_KERNEL_RWX) && defined(CONFIG_ARCH_HAS_SET_MEMORY)
 static bool hibernate_restore_protection;
 static bool hibernate_restore_protection_active;
@@ -1425,11 +1428,9 @@ static unsigned int count_data_pages(void)
 }
 
 /*
- * This is needed, because copy_page and memcpy are not usable for copying
- * task structs. Returns true if the page was filled with only zeros,
- * otherwise false.
+ * Returns true if the page was filled with only zeros, otherwise false.
  */
-static inline bool do_copy_page(long *dst, long *src)
+static inline bool do_copy_page_zerocheck(long *dst, long *src)
 {
 	long z = 0;
 	int n;
@@ -1441,6 +1442,12 @@ static inline bool do_copy_page(long *dst, long *src)
 	return !z;
 }
 
+static inline bool do_copy_page_nozerocheck(long *dst, long *src)
+{
+	copy_page(dst, src);
+	return false;
+}
+
 /**
  * safe_copy_page - Copy a page in a safe way.
  *
@@ -1450,15 +1457,22 @@ static inline bool do_copy_page(long *dst, long *src)
  * always returns 'true'. Returns true if the page was entirely composed of
  * zeros, otherwise it will return false.
  */
-static bool safe_copy_page(void *dst, struct page *s_page)
+static bool safe_copy_page(void *dst, struct page *s_page,
+			   bool zero_check)
 {
 	bool zeros_only;
 
 	if (kernel_page_present(s_page)) {
-		zeros_only = do_copy_page(dst, page_address(s_page));
+		if (zero_check)
+			zeros_only = do_copy_page_zerocheck(dst, page_address(s_page));
+		else
+			zeros_only = do_copy_page_nozerocheck(dst, page_address(s_page));
 	} else {
 		hibernate_map_page(s_page);
-		zeros_only = do_copy_page(dst, page_address(s_page));
+		if (zero_check)
+			zeros_only = do_copy_page_zerocheck(dst, page_address(s_page));
+		else
+			zeros_only = do_copy_page_nozerocheck(dst, page_address(s_page));
 		hibernate_unmap_page(s_page);
 	}
 	return zeros_only;
@@ -1471,7 +1485,8 @@ static inline struct page *page_is_saveable(struct zone *zone, unsigned long pfn
 		saveable_highmem_page(zone, pfn) : saveable_page(zone, pfn);
 }
 
-static bool copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
+static bool copy_data_page(unsigned long dst_pfn, unsigned long src_pfn,
+			   bool zero_check)
 {
 	struct page *s_page, *d_page;
 	void *src, *dst;
@@ -1482,7 +1497,8 @@ static bool copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
 	if (PageHighMem(s_page)) {
 		src = kmap_local_page(s_page);
 		dst = kmap_local_page(d_page);
-		zeros_only = do_copy_page(dst, src);
+		zeros_only = zero_check ? do_copy_page_zerocheck(dst, src) :
+					  do_copy_page_nozerocheck(dst, src);
 		kunmap_local(dst);
 		kunmap_local(src);
 	} else {
@@ -1491,12 +1507,13 @@ static bool copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
 			 * The page pointed to by src may contain some kernel
 			 * data modified by kmap_atomic()
 			 */
-			zeros_only = safe_copy_page(buffer, s_page);
+			zeros_only = safe_copy_page(buffer, s_page, zero_check);
 			dst = kmap_local_page(d_page);
 			copy_page(dst, buffer);
 			kunmap_local(dst);
 		} else {
-			zeros_only = safe_copy_page(page_address(d_page), s_page);
+			zeros_only = safe_copy_page(page_address(d_page), s_page,
+						    zero_check);
 		}
 	}
 	return zeros_only;
@@ -1504,10 +1521,11 @@ static bool copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
 #else
 #define page_is_saveable(zone, pfn)	saveable_page(zone, pfn)
 
-static inline int copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
+static inline int copy_data_page(unsigned long dst_pfn, unsigned long src_pfn,
+				 bool zero_check)
 {
 	return safe_copy_page(page_address(pfn_to_page(dst_pfn)),
-				pfn_to_page(src_pfn));
+				pfn_to_page(src_pfn), zero_check);
 }
 #endif /* CONFIG_HIGHMEM */
 
@@ -1541,7 +1559,7 @@ static unsigned long copy_data_pages(struct memory_bitmap *copy_bm,
 		pfn = memory_bm_next_pfn(orig_bm);
 		if (unlikely(pfn == BM_END_OF_MAP))
 			break;
-		if (copy_data_page(copy_pfn, pfn)) {
+		if (copy_data_page(copy_pfn, pfn, !nozerocheck)) {
 			memory_bm_set_bit(zero_bm, pfn);
 			/* Use this copy_pfn for a page that is not full of zeros */
 			continue;
