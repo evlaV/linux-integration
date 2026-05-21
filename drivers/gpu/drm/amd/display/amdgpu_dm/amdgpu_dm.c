@@ -69,6 +69,7 @@
 
 #include "ivsrcid/ivsrcid_vislands30.h"
 
+#include <linux/i2c.h>
 #include <linux/backlight.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -163,6 +164,98 @@ MODULE_FIRMWARE(FIRMWARE_DCN_42B_DMUB);
 
 /* Maximum backlight level. */
 #define AMDGPU_MAX_BL_LEVEL 0xFFFF
+
+/* ---------------------------------------------------------------------------
+ *  FreeSync MCCS transition DDC/CI (deferred) helpers
+ * ---------------------------------------------------------------------------
+ *
+ * We never run I2C synchronously in the atomic path.  When a FreeSync MCCS
+ * transition happens, we queue a small worker that performs a benign DDC
+ * transaction on the connector's DDC to exercise/log the bus at that moment.
+ *
+ * NOTE: This is *not* attempting to toggle FreeSync VRR via DDC/CI (no such VCP
+ *  exists). FreeSync VRR is controlled by KMS/DRM and Display Core (infoframes/AUX).
+ */
+#define MCCS_SLAVE_ADDR 0x37
+static struct amdgpu_i2c_adapter *create_i2c(struct ddc_service *ddc_service, bool oem);
+struct dm_freesync_mccs_ddc_work {
+	struct work_struct work;
+	struct amdgpu_dm_connector *aconn;
+	bool freesync_enabled;
+};
+
+static void dm_freesync_mccs_ddc_worker(struct work_struct *work)
+{
+	struct dm_freesync_mccs_ddc_work *w = container_of(work,
+			struct dm_freesync_mccs_ddc_work, work);
+	struct amdgpu_dm_connector *aconn = w->aconn;
+	struct amdgpu_i2c_adapter *i2c_adap = NULL;
+	struct i2c_adapter *adap;
+	int ret = 0;
+
+	if (!aconn || !aconn->dc_link || !aconn->dc_link->ddc)
+		goto out_free;
+
+	/* For DisplayPort AUX2I2C (PCON) path */
+	if (aconn->dc_link->aux_mode) {
+		adap = &aconn->dm_dp_aux.aux.ddc;
+	} else {
+		/* Reuse cached adapter if present; else skip instead of creating a temporary one */
+		if (aconn->i2c)
+			i2c_adap = aconn->i2c;
+		else
+			DRM_ERROR("Cached i2c adapter not present\n");
+
+		if (!i2c_adap)
+			goto out_free;
+
+		adap = &i2c_adap->base;
+	}
+
+	/*
+	 * This simply exercises the DDC/CI path at 0x37.  Proper MCCS framing
+	 * requires byte count & checksum;
+	 * There are HDMI display devices require FreeSync MCCS VCP Code 230 (0xE6) from
+	 * AMD GPU to enable / disable FreeSync handling when FreeSync VRR is On / Off. Otherwise
+	 * those HDMI display devices will have issues like no video or flashing artifacts.
+	 */
+	{
+		static const u8 freesync_on[7]  =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x01, 0x5E };
+		static const u8 freesync_off[7] =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x00, 0x5E };
+
+		u8 wr[7];
+
+		memcpy(wr, w->freesync_enabled ? freesync_on : freesync_off, sizeof(wr));
+
+		u8 rd[64] = { 0 };
+		struct i2c_msg msgs[8] = {
+		    { .addr = MCCS_SLAVE_ADDR, .flags = 0,        .len = sizeof(wr), .buf = wr },
+		    { .addr = MCCS_SLAVE_ADDR, .flags = I2C_M_RD, .len = sizeof(rd), .buf = rd }
+		};
+
+		ret = i2c_transfer(adap, msgs, 1);
+		DRM_DEBUG_KMS("FreeSync MCCS DDC poke on %s: ret=%d freesync_enabled=%d\n",
+			      aconn->base.name, ret, w->freesync_enabled);
+	}
+
+out_free:
+	kfree(w);
+}
+
+static void dm_schedule_freesync_mccs_ddc_poke(struct amdgpu_dm_connector *aconn,
+					       bool freesync_enabled)
+{
+	struct dm_freesync_mccs_ddc_work *w;
+
+	w = kzalloc(sizeof(*w), GFP_ATOMIC);
+	if (!w)
+		return;
+
+	INIT_WORK(&w->work, dm_freesync_mccs_ddc_worker);
+	w->aconn = aconn;
+	w->freesync_enabled = freesync_enabled;
+	schedule_work(&w->work);
+}
 
 /**
  * DOC: overview
@@ -10030,7 +10123,13 @@ static void update_freesync_state_on_stream(
 
 	if (aconn && aconn->as_type == ADAPTIVE_SYNC_TYPE_HDMI)
 	{
-		packet_type = PACKET_TYPE_VTEM;
+		struct drm_connector *connector = &aconn->base;
+
+		/* if not HDMI VRR capable, use FreeSync SPD packet */
+		if (!connector->display_info.hdmi.vrr_cap.supported)
+			packet_type = PACKET_TYPE_VRR;
+		else
+			packet_type = PACKET_TYPE_VTEM;
 	}
 	else if (aconn && (aconn->as_type == ADAPTIVE_SYNC_TYPE_PCON_ALLOWED || aconn->vsdb_info.replay_mode))
 	{
@@ -10081,11 +10180,18 @@ static void update_freesync_state_on_stream(
 	new_stream->vrr_infopacket = vrr_infopacket;
 	new_stream->allow_freesync = mod_freesync_get_freesync_enabled(&vrr_params);
 
-	if (new_crtc_state->freesync_vrr_info_changed)
-		drm_dbg_kms(adev_to_drm(adev), "VRR packet update: crtc=%u enabled=%d state=%d",
+	if (new_crtc_state->freesync_vrr_info_changed) {
+		if (aconn && aconn->dc_link) {
+			drm_dbg_kms(adev_to_drm(adev), "FreeSync MCCS I2C Notify\n");
+			/* Defer the actual DDC action to a worker. */
+			dm_schedule_freesync_mccs_ddc_poke(aconn, new_crtc_state->base.vrr_enabled);
+		}
+
+		drm_dbg_kms(adev_to_drm(adev), "FreeSync VRR packet update: crtc=%u enabled=%d state=%d",
 			      new_crtc_state->base.crtc->base.id,
 			      (int)new_crtc_state->base.vrr_enabled,
 			      (int)vrr_params.state);
+	}
 
 	spin_unlock_irqrestore(&adev_to_drm(adev)->event_lock, flags);
 }
