@@ -293,7 +293,7 @@ struct claw_profile_report {
 } __packed;
 
 struct claw_mkey_report {
-	struct claw_profile_report;
+	struct claw_profile_report p;
 	u8 padding_0;
 	u8 padding_1;
 	u8 padding_2;
@@ -311,7 +311,7 @@ struct rgb_frame {
 };
 
 struct claw_rgb_report {
-	struct claw_profile_report;
+	struct claw_profile_report p;
 	u8 frame_bytes;
 	u8 padding;
 	u8 frame_count;
@@ -322,7 +322,7 @@ struct claw_rgb_report {
 } __packed;
 
 struct claw_rumble_report {
-	struct claw_profile_report;
+	struct claw_profile_report p;
 	u8 padding;
 	u8 intensity;
 } __packed;
@@ -422,7 +422,7 @@ static int claw_profile_event(struct claw_drvdata *drvdata, struct claw_command_
 	case CLAW_M2_PENDING:
 		key = (profile == CLAW_M1_PENDING) ? CLAW_KEY_M1 : CLAW_KEY_M2;
 		mkeys = (struct claw_mkey_report *)cmd_rep->data;
-		if (be16_to_cpu(mkeys->read_addr) != drvdata->bmap_addr[key])
+		if (be16_to_cpu(mkeys->p.read_addr) != drvdata->bmap_addr[key])
 			return -EAGAIN;
 		codes = (profile == CLAW_M1_PENDING) ? drvdata->m1_codes : drvdata->m2_codes;
 		for (i = 0; i < CLAW_KEYS_MAX; i++)
@@ -431,7 +431,7 @@ static int claw_profile_event(struct claw_drvdata *drvdata, struct claw_command_
 	case CLAW_RGB_PENDING:
 		frame = (struct claw_rgb_report *)cmd_rep->data;
 		rgb_addr = drvdata->rgb_addr;
-		read_addr = be16_to_cpu(frame->read_addr);
+		read_addr = be16_to_cpu(frame->p.read_addr);
 
 		if (read_addr < drvdata->rgb_addr)
 			return -EAGAIN;
@@ -462,14 +462,14 @@ static int claw_profile_event(struct claw_drvdata *drvdata, struct claw_command_
 		break;
 	case CLAW_RUMBLE_LEFT_PENDING:
 		rumble = (struct claw_rumble_report *)cmd_rep->data;
-		if (be16_to_cpu(rumble->read_addr) != rumble_addr[0])
+		if (be16_to_cpu(rumble->p.read_addr) != rumble_addr[0])
 			return -EAGAIN;
 		scoped_guard(spinlock_irqsave, &drvdata->rumble_lock)
 			drvdata->rumble_intensity_left = rumble->intensity;
 		break;
 	case CLAW_RUMBLE_RIGHT_PENDING:
 		rumble = (struct claw_rumble_report *)cmd_rep->data;
-		if (be16_to_cpu(rumble->read_addr) != rumble_addr[1])
+		if (be16_to_cpu(rumble->p.read_addr) != rumble_addr[1])
 			return -EAGAIN;
 		scoped_guard(spinlock_irqsave, &drvdata->rumble_lock)
 			drvdata->rumble_intensity_right = rumble->intensity;
@@ -1280,7 +1280,7 @@ static int claw_write_rgb_state(struct claw_drvdata *drvdata)
 			report.zone_data = drvdata->rgb_frames[f];
 
 		/* Set the MCU address to write the frame data to */
-		report.read_addr = cpu_to_be16(write_addr);
+		report.p.read_addr = cpu_to_be16(write_addr);
 
 		/* Serialize the rgb_report and write it to MCU */
 		ret = claw_hw_output_report(drvdata->hdev, CLAW_COMMAND_TYPE_WRITE_PROFILE_DATA,
