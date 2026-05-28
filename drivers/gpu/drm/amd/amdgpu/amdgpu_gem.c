@@ -993,7 +993,12 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 		break;
 	}
 
-	amdgpu_vm_update_ctx_commit(&update_ctx);
+	if (!r) {
+		r = amdgpu_vm_update_ctx_execute_replace(&update_ctx);
+		if (r)
+			goto error;
+		amdgpu_vm_update_ctx_commit(&update_ctx);
+	}
 
 	/*
 	 * Once the VA operation is done, update the VM and obtain the fence
