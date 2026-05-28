@@ -1148,6 +1148,7 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 	struct amdgpu_vm *vm = &fpriv->vm;
 	struct amdgpu_bo_list_entry *e;
 	struct amdgpu_bo_va *bo_va;
+	struct amdgpu_vm_update_ctx update_ctx;
 	unsigned int i;
 	int r;
 
@@ -1169,31 +1170,33 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 	if (!amdgpu_vm_ready(vm))
 		return -EINVAL;
 
-	r = amdgpu_vm_clear_freed(adev, vm, NULL);
+	r = amdgpu_vm_delayed_free(adev, vm, NULL);
 	if (r)
 		return r;
 
-	r = amdgpu_vm_bo_update(adev, fpriv->prt_va, false);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+
+	r = amdgpu_vm_bo_update(&update_ctx, fpriv->prt_va, false);
 	if (r)
-		return r;
+		goto err_fini_ctx;
 
 	r = amdgpu_sync_fence(&p->sync, fpriv->prt_va->last_pt_update,
 			      GFP_KERNEL);
 	if (r)
-		return r;
+		goto err_fini_ctx;
 
 	if (fpriv->csa_va) {
 		bo_va = fpriv->csa_va;
 		if (!bo_va)
 			return -ENOMEM;
-		r = amdgpu_vm_bo_update(adev, bo_va, false);
+		r = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
 		if (r)
-			return r;
+			goto err_fini_ctx;
 
 		r = amdgpu_sync_fence(&p->sync, bo_va->last_pt_update,
 				      GFP_KERNEL);
 		if (r)
-			return r;
+			goto err_fini_ctx;
 	}
 
 	/* FIXME: In theory this loop shouldn't be needed any more when
@@ -1206,17 +1209,20 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 		if (bo_va == NULL)
 			continue;
 
-		r = amdgpu_vm_bo_update(adev, bo_va, false);
+		r = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
 		if (r)
-			return r;
+			goto err_fini_ctx;
 
 		r = amdgpu_sync_fence(&p->sync, bo_va->last_pt_update,
 				      GFP_KERNEL);
 		if (r)
-			return r;
+			goto err_fini_ctx;
 	}
 
+	amdgpu_vm_update_ctx_fini(&update_ctx);
+
 	r = amdgpu_vm_handle_moved(adev, vm, drm_exec_ticket(&p->exec));
+
 	if (r)
 		return r;
 
@@ -1238,6 +1244,10 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 	}
 
 	return 0;
+
+err_fini_ctx:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
+	return r;
 }
 
 static int amdgpu_cs_sync_rings(struct amdgpu_cs_parser *p)
