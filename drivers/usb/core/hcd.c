@@ -1829,6 +1829,13 @@ rescan:
 	}
 }
 
+static void not_enough_bandwidth_notify(struct usb_hcd *hcd)
+{
+	static char *envp[2] = { "USB_NOT_ENOUGH_BANDWIDTH=1", NULL };
+
+	kobject_uevent_env(&hcd->self.root_hub->dev.kobj, KOBJ_CHANGE, envp);
+}
+
 /**
  * usb_hcd_alloc_bandwidth - check whether a new bandwidth setting exceeds
  *				the bus bandwidth
@@ -1958,6 +1965,8 @@ int usb_hcd_alloc_bandwidth(struct usb_device *udev,
 		}
 	}
 	ret = hcd->driver->check_bandwidth(hcd, udev);
+	if (ret == -ENOSPC)
+		not_enough_bandwidth_notify(hcd);
 reset:
 	if (ret < 0)
 		hcd->driver->reset_bandwidth(hcd, udev);
