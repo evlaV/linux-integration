@@ -66,6 +66,7 @@ int amdgpu_map_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			  struct amdgpu_bo *bo, struct amdgpu_bo_va **bo_va,
 			  uint64_t csa_addr, uint32_t size)
 {
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct drm_exec exec;
 	int r;
 
@@ -87,16 +88,20 @@ int amdgpu_map_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		goto error;
 	}
 
-	r = amdgpu_vm_bo_map(adev, *bo_va, csa_addr, 0, size,
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+
+	r = amdgpu_vm_bo_map(&update_ctx, *bo_va, csa_addr, 0, size,
 			     AMDGPU_PTE_READABLE | AMDGPU_PTE_WRITEABLE |
 			     AMDGPU_PTE_EXECUTABLE);
 
 	if (r) {
 		DRM_ERROR("failed to do bo_map on static CSA, err=%d\n", r);
-		amdgpu_vm_bo_del(adev, *bo_va);
-		goto error;
+		amdgpu_vm_bo_del(&update_ctx, *bo_va);
+		goto error_ctx;
 	}
 
+error_ctx:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 error:
 	drm_exec_fini(&exec);
 	return r;
@@ -106,6 +111,7 @@ int amdgpu_unmap_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			    struct amdgpu_bo *bo, struct amdgpu_bo_va *bo_va,
 			    uint64_t csa_addr)
 {
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct drm_exec exec;
 	int r;
 
@@ -121,14 +127,18 @@ int amdgpu_unmap_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		}
 	}
 
-	r = amdgpu_vm_bo_unmap(adev, bo_va, csa_addr);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+
+	r = amdgpu_vm_bo_unmap(&update_ctx, bo_va, csa_addr);
 	if (r) {
 		DRM_ERROR("failed to do bo_unmap on static CSA, err=%d\n", r);
-		goto error;
+		goto error_ctx;
 	}
 
-	amdgpu_vm_bo_del(adev, bo_va);
+	amdgpu_vm_bo_del(&update_ctx, bo_va);
 
+error_ctx:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 error:
 	drm_exec_fini(&exec);
 	return r;
