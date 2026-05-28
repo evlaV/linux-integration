@@ -979,6 +979,7 @@ amdgpu_userq_bo_validate(struct amdgpu_device *adev, struct drm_exec *exec,
 			 struct amdgpu_vm *vm)
 {
 	struct ttm_operation_ctx ctx = { false, false };
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_bo_va *bo_va;
 	struct amdgpu_bo *bo, *tmp;
 	int ret;
@@ -1003,8 +1004,10 @@ amdgpu_userq_bo_validate(struct amdgpu_device *adev, struct drm_exec *exec,
 		if (ret)
 			return ret;
 
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 		/* This moves the bo_va to the idle list */
-		ret = amdgpu_vm_bo_update(adev, bo_va, false);
+		ret = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		if (ret)
 			return ret;
 
@@ -1023,6 +1026,7 @@ amdgpu_userq_vm_validate_and_restore_queue(struct amdgpu_userq_mgr *uq_mgr)
 	bool invalidated = false, new_addition = false;
 	struct ttm_operation_ctx ctx = { true, false };
 	struct amdgpu_device *adev = uq_mgr->adev;
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_hmm_range *range;
 	struct amdgpu_vm *vm = &fpriv->vm;
 	unsigned long key, tmp_key;
@@ -1114,7 +1118,9 @@ retry_lock:
 	 * explicitly here (as the CS path does) so sparse mappings survive a
 	 * VRAM-lost reset.
 	 */
-	ret = amdgpu_vm_bo_update(adev, fpriv->prt_va, false);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+	ret = amdgpu_vm_bo_update(&update_ctx, fpriv->prt_va, false);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	if (ret)
 		goto unlock_all;
 
