@@ -1470,6 +1470,7 @@ void amdgpu_driver_postclose_kms(struct drm_device *dev,
 {
 	struct amdgpu_device *adev = drm_to_adev(dev);
 	struct amdgpu_fpriv *fpriv = file_priv->driver_priv;
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_bo_list *list;
 	struct amdgpu_bo *pd;
 	u32 pasid;
@@ -1498,7 +1499,9 @@ void amdgpu_driver_postclose_kms(struct drm_device *dev,
 	pasid = fpriv->vm.pasid;
 	pd = amdgpu_bo_ref(fpriv->vm.root.bo);
 	if (!WARN_ON(amdgpu_bo_reserve(pd, true, NULL))) {
-		amdgpu_vm_bo_del(adev, fpriv->prt_va);
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, &fpriv->vm);
+		amdgpu_vm_bo_del(&update_ctx, fpriv->prt_va);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		amdgpu_bo_unreserve(pd);
 	}
 
