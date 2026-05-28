@@ -289,9 +289,25 @@ struct amdgpu_vm_update_ctx {
 	struct rb_root_cached pending_maps;
 
 	/**
+	 * @cleared_ranges: Interval tree of VA ranges cleared by this update operation.
+	 */
+	struct rb_root_cached cleared_ranges;
+
+	/**
 	 * @new: Pending new mappings not yet applied to bookkeeping structures.
 	 */
 	struct list_head new;
+
+	/**
+	 * @deleted: Pending freed mappings not yet applied to bookkeeping structures.
+	 */
+	struct list_head deleted;
+
+	/**
+	 * @replaced: Pending mappings that have been cleared, potentially partially,
+	 * and are not yet applied to bookkeeping structures.
+	 */
+	struct list_head cleared;
 
 	/**
 	 * @freed: A list of mappings that are freed and pending PT/PD updates during
@@ -309,6 +325,13 @@ struct amdgpu_vm_update_ctx {
 	 * i.e. all previous submissions in the VM are waited on.
 	 */
 	bool unmap_synced;
+
+	/**
+	 * @explicit_sync_unmap: Whether it's allowed to sync explicitly (i.e. only wait
+	 * on explicit dependencies instead of every submission that may have used the BO)
+	 * before committing unmaps.
+	 */
+	bool explicit_sync_unmap;
 };
 
 /**
@@ -685,6 +708,7 @@ bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo);
 void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 			       struct amdgpu_device *adev,
 			       struct amdgpu_vm *vm);
+int amdgpu_vm_update_ctx_execute_replace(struct amdgpu_vm_update_ctx *ctx);
 void amdgpu_vm_update_ctx_commit(struct amdgpu_vm_update_ctx *ctx);
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx);
 int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx);

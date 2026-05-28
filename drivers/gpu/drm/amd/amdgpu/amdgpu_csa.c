@@ -140,6 +140,7 @@ int amdgpu_unmap_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			"failed to do bo_unmap on static CSA, err=%d\n", r);
 		goto error_ctx;
 	}
+	amdgpu_vm_update_ctx_commit(&update_ctx);
 
 	amdgpu_vm_bo_del(adev, bo_va);
 
