@@ -450,6 +450,37 @@ void amdgpu_vm_update_stats(struct amdgpu_vm_bo_base *base,
 }
 
 /**
+ * amdgpu_vm_update_ctx_add_freed_mapping - mark a mapping as freed
+ * @ctx: context for updating the VM
+ * @bo_va: BO/VA pair the mapping corresponds to
+ * @mapping: The mapping to free
+ *
+ * Adds the mapping to the context's freed list, as well as doing some bookkeeping
+ * about the mappings being freed.
+ */
+void amdgpu_vm_update_ctx_add_freed_mapping(struct amdgpu_vm_update_ctx *ctx,
+					    struct amdgpu_bo_va *bo_va,
+					    struct amdgpu_bo_va_mapping *mapping)
+{
+	struct amdgpu_bo *bo = bo_va->base.bo;
+
+	/* When unmapping buffers, we must make sure there is no way to free the
+	 * buffer's underlying memory before the GPU is absolutely guaranteed to
+	 * be done accessing it.
+	 *
+	 * With explicit syncing, userspace indicates when unmapping can be performed,
+	 * but if userspace is either malicious or sufficiently incompetent, the
+	 * GPU may access the buffer even after userspace indicated it is safe to free.
+	 * Therefore, only allow explicit sync on unmapping if the BO is
+	 * always valid in the VM (in which case freeing syncs to all submissions already)
+	 * or if it's a PRT page (in which case there is no memory being accessed in any case).
+	 */
+	ctx->explicit_sync_unmap &= amdgpu_vm_is_bo_always_valid(ctx->vm, bo) ||
+				    mapping->flags & AMDGPU_PTE_PRT_FLAG(ctx->adev);
+	list_add(&mapping->list, &ctx->freed);
+}
+
+/**
  * amdgpu_vm_update_ctx_ensure_unmap_synced - VM update sync helper
  * @ctx: context for updating the VM
  *
@@ -465,11 +496,13 @@ int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx)
 
 	/*
 	 * Implicitly sync to command submissions in the same VM before
-	 * unmapping.
+	 * unmapping, unless we unmap with explicit sync.
 	 */
 	r = amdgpu_sync_resv(ctx->adev, &ctx->sync,
 			     ctx->vm->root.bo->tbo.base.resv,
-			     AMDGPU_SYNC_EQ_OWNER, ctx->vm);
+			     ctx->explicit_sync_unmap ? AMDGPU_SYNC_EXPLICIT :
+							AMDGPU_SYNC_EQ_OWNER,
+			     ctx->vm);
 	if (r)
 		return r;
 
@@ -1619,6 +1652,9 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 	struct dma_fence *f = NULL;
 	int r;
 
+	if (list_empty(&ctx->freed))
+		return 0;
+
 	r = amdgpu_vm_update_ctx_ensure_unmap_synced(ctx);
 	if (r)
 		return r;
@@ -2076,7 +2112,7 @@ int amdgpu_vm_bo_unmap(struct amdgpu_vm_update_ctx *ctx,
 	trace_amdgpu_vm_bo_unmap(bo_va, mapping);
 
 	if (valid)
-		list_add(&mapping->list, &ctx->freed);
+		amdgpu_vm_update_ctx_add_freed_mapping(ctx, bo_va, mapping);
 	else
 		amdgpu_vm_free_mapping(ctx->adev, vm, mapping,
 				       bo_va->last_pt_update);
@@ -2100,6 +2136,7 @@ int amdgpu_vm_bo_clear_mappings(struct amdgpu_vm_update_ctx *ctx,
 				uint64_t saddr, uint64_t size)
 {
 	struct amdgpu_bo_va_mapping *before, *after, *tmp, *next;
+	struct amdgpu_bo_va *bo_va;
 	LIST_HEAD(removed);
 	uint64_t eaddr;
 	int r;
@@ -2164,8 +2201,9 @@ int amdgpu_vm_bo_clear_mappings(struct amdgpu_vm_update_ctx *ctx,
 		if (tmp->last > eaddr)
 		    tmp->last = eaddr;
 
+		bo_va = tmp->bo_va;
 		tmp->bo_va = NULL;
-		list_add(&tmp->list, &ctx->freed);
+		amdgpu_vm_update_ctx_add_freed_mapping(ctx, bo_va, tmp);
 		trace_amdgpu_vm_bo_unmap(NULL, tmp);
 	}
 
@@ -2293,9 +2331,10 @@ void amdgpu_vm_bo_del(struct amdgpu_vm_update_ctx *ctx,
 	list_for_each_entry_safe(mapping, next, &bo_va->valids, list) {
 		list_del(&mapping->list);
 		amdgpu_vm_it_remove(mapping, &vm->va);
+
 		mapping->bo_va = NULL;
 		trace_amdgpu_vm_bo_unmap(bo_va, mapping);
-		list_add(&mapping->list, &ctx->freed);
+		amdgpu_vm_update_ctx_add_freed_mapping(ctx, bo_va, mapping);
 	}
 	list_for_each_entry_safe(mapping, next, &bo_va->invalids, list) {
 		list_del(&mapping->list);
