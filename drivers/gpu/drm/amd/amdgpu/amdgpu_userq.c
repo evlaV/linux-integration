@@ -576,6 +576,7 @@ static int
 amdgpu_userq_validate_bos(struct amdgpu_userq_mgr *uq_mgr)
 {
 	struct amdgpu_fpriv *fpriv = uq_mgr_to_fpriv(uq_mgr);
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_vm *vm = &fpriv->vm;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct amdgpu_bo_va *bo_va;
@@ -615,7 +616,9 @@ amdgpu_userq_validate_bos(struct amdgpu_userq_mgr *uq_mgr)
 		spin_unlock(&vm->status_lock);
 
 		/* Per VM BOs never need to bo cleared in the page tables */
-		ret = amdgpu_vm_bo_update(adev, bo_va, false);
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+		ret = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		if (ret)
 			goto unlock_all;
 		spin_lock(&vm->status_lock);
@@ -649,7 +652,9 @@ amdgpu_userq_validate_bos(struct amdgpu_userq_mgr *uq_mgr)
 			unlock = false;
 		}
 
-		ret = amdgpu_vm_bo_update(adev, bo_va, clear);
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+		ret = amdgpu_vm_bo_update(&update_ctx, bo_va, clear);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 
 		if (unlock)
 			dma_resv_unlock(resv);

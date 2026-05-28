@@ -243,6 +243,39 @@ struct amdgpu_task_info {
 };
 
 /**
+ * struct amdgpu_vm_update_ctx
+ *
+ * Encapsulates various state that is carried around during VM updates.
+ */
+struct amdgpu_vm_update_ctx {
+	/**
+	 * @adev: amdgpu device the update is done on
+	 */
+	struct amdgpu_device *adev;
+	/**
+	 * @vm: target VM of the update
+	 */
+	struct amdgpu_vm *vm;
+
+	/**
+	 * @freed: A list of mappings that are freed and pending PT/PD updates during
+	 * this update operation.
+	 */
+	struct list_head freed;
+
+	/**
+	 * @sync: Container for everything to sync to before committing PT/PD updates.
+	 */
+	struct amdgpu_sync sync;
+
+	/**
+	 * @unmap_synced: Whether the sync is strong enough to guarantee a safe unmap,
+	 * i.e. all previous submissions in the VM are waited on.
+	 */
+	bool unmap_synced;
+};
+
+/**
  * struct amdgpu_vm_update_params
  *
  * Encapsulate some VM table update parameters to reduce
@@ -374,7 +407,7 @@ struct amdgpu_vm {
 	struct list_head	invalidated;
 
 	/* BO mappings freed, but not yet updated in the PT */
-	struct list_head	freed;
+	struct list_head	delayed_freed;
 
 	/* BOs which are invalidated, has been updated in the PTs */
 	struct list_head        done;
@@ -506,9 +539,9 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 int amdgpu_vm_flush(struct amdgpu_ring *ring, struct amdgpu_job *job, bool need_pipe_sync);
 int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
 			  struct amdgpu_vm *vm, bool immediate);
-int amdgpu_vm_clear_freed(struct amdgpu_device *adev,
-			  struct amdgpu_vm *vm,
+int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 			  struct dma_fence **fence);
+int amdgpu_vm_delayed_free(struct amdgpu_device *adev, struct amdgpu_vm *vm);
 int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 			   struct amdgpu_vm *vm,
 			   struct ww_acquire_ctx *ticket);
@@ -526,7 +559,7 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			   uint64_t offset, uint64_t vram_base,
 			   struct ttm_resource *res, dma_addr_t *pages_addr,
 			   struct dma_fence **fence);
-int amdgpu_vm_bo_update(struct amdgpu_device *adev,
+int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 			struct amdgpu_bo_va *bo_va,
 			bool clear);
 bool amdgpu_vm_evictable(struct amdgpu_bo *bo);
@@ -542,24 +575,25 @@ struct amdgpu_bo_va *amdgpu_vm_bo_find(struct amdgpu_vm *vm,
 struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 				      struct amdgpu_vm *vm,
 				      struct amdgpu_bo *bo);
-int amdgpu_vm_bo_map(struct amdgpu_device *adev,
+
+int amdgpu_vm_bo_map(struct amdgpu_vm_update_ctx *ctx,
 		     struct amdgpu_bo_va *bo_va,
 		     uint64_t addr, uint64_t offset,
 		     uint64_t size, uint64_t flags);
-int amdgpu_vm_bo_replace_map(struct amdgpu_device *adev,
+int amdgpu_vm_bo_replace_map(struct amdgpu_vm_update_ctx *ctx,
 			     struct amdgpu_bo_va *bo_va,
 			     uint64_t addr, uint64_t offset,
 			     uint64_t size, uint64_t flags);
-int amdgpu_vm_bo_unmap(struct amdgpu_device *adev,
+int amdgpu_vm_bo_unmap(struct amdgpu_vm_update_ctx *ctx,
 		       struct amdgpu_bo_va *bo_va,
 		       uint64_t addr);
-int amdgpu_vm_bo_clear_mappings(struct amdgpu_device *adev,
-				struct amdgpu_vm *vm,
+int amdgpu_vm_bo_clear_mappings(struct amdgpu_vm_update_ctx *ctx,
 				uint64_t saddr, uint64_t size);
+
 struct amdgpu_bo_va_mapping *amdgpu_vm_bo_lookup_mapping(struct amdgpu_vm *vm,
 							 uint64_t addr);
 void amdgpu_vm_bo_trace_cs(struct amdgpu_vm *vm, struct ww_acquire_ctx *ticket);
-void amdgpu_vm_bo_del(struct amdgpu_device *adev,
+void amdgpu_vm_bo_del(struct amdgpu_vm_update_ctx *ctx,
 		      struct amdgpu_bo_va *bo_va);
 void amdgpu_vm_adjust_size(struct amdgpu_device *adev, uint32_t min_vm_size,
 			   uint32_t fragment_size_default, unsigned max_level,
@@ -611,6 +645,40 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m);
 int amdgpu_vm_pt_map_tables(struct amdgpu_device *adev, struct amdgpu_vm *vm);
 
 bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo);
+
+int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx);
+
+/**
+ * amdgpu_vm_update_ctx_init - create a context for VM update operations
+ * @ctx: The new context to create
+ * @adev: The device associated with the VM update
+ * @vm: The VM being updated
+ *
+ * Initializes the context to an empty state.
+ */
+static inline void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
+					     struct amdgpu_device *adev,
+					     struct amdgpu_vm *vm)
+{
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->adev = adev;
+	ctx->vm = vm;
+	INIT_LIST_HEAD(&ctx->freed);
+	amdgpu_sync_create(&ctx->sync);
+}
+
+/**
+ * amdgpu_vm_update_ctx_fini - finish a VM update operation
+ * @ctx: The context of the update
+ *
+ * Adds any leftover mappings needing to be cleared to the VM's delayed free list,
+ * then frees up resources used by the context.
+ */
+static inline void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
+{
+	list_splice(&ctx->freed, &ctx->vm->delayed_freed);
+	amdgpu_sync_free(&ctx->sync);
+}
 
 /**
  * amdgpu_vm_tlb_seq - return tlb flush sequence number
