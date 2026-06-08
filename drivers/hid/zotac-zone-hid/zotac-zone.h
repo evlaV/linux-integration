@@ -48,25 +48,6 @@
 #define MAX_KEYBOARD_KEYS 6
 #define MAX_MOUSE_BUTTONS 3
 
-#define DEVICE_ATTR_RO_NAMED(_name, _attr_name)               \
-	struct device_attribute dev_attr_##_name = {   \
-		.attr = { .name = _attr_name, .mode = 0444 }, \
-		.show = _name##_show,                         \
-	}
-
-#define DEVICE_ATTR_WO_NAMED(_name, _attr_name)               \
-	struct device_attribute dev_attr_##_name = {   \
-		.attr = { .name = _attr_name, .mode = 0200 }, \
-		.store = _name##_store,                       \
-	}
-
-#define DEVICE_ATTR_RW_NAMED(_name, _attr_name)               \
-	struct device_attribute dev_attr_##_name = {   \
-		.attr = { .name = _attr_name, .mode = 0644 }, \
-		.show = _name##_show,                         \
-		.store = _name##_store,                       \
-	}
-
 enum qam_mode {
 	QAM_MODE_KEYBOARD = 0,
 	QAM_MODE_STEAM,
