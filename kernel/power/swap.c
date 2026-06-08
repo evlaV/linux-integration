@@ -565,7 +565,7 @@ static int save_image(struct swap_map_handle *handle,
 			if (pm_wakeup_pending()) {
 				pm_wakeup_clear(0);
 				pr_info("Wakeup pending, aborting image write\n");
-				ret = -EAGAIN;
+				ret = -ECANCELED;
 				break;
 			}
 		}
@@ -821,7 +821,7 @@ static int save_compressed_image(struct swap_map_handle *handle,
 					if (pm_wakeup_pending()) {
 						pm_wakeup_clear(0);
 						pr_info("Wakeup pending, aborting compressed image write\n");
-						ret = -EAGAIN;
+						ret = -ECANCELED;
 						goto out_finish;
 					}
 				}
