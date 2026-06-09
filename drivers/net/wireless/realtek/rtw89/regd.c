@@ -802,6 +802,13 @@ static bool regd_is_6ghz_blocked(struct rtw89_dev *rtwdev)
 	const struct rtw89_regd *regd = regulatory->regd;
 	u8 index;
 
+	/*
+	 * The worldwide domain is never subject to country-specific 6 GHz
+	 * policy restrictions; let cfg80211's regulatory rules govern it.
+	 */
+	if (rtw89_regd_is_ww(regd))
+		return false;
+
 	index = rtw89_regd_get_index(rtwdev, regd);
 	if (index != RTW89_REGD_MAX_COUNTRY_NUM &&
 	    !test_bit(index, regulatory->block_6ghz))
