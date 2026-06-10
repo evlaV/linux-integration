@@ -80,6 +80,9 @@ static const struct platform_hibernation_ops *hibernation_ops;
 
 static atomic_t hibernate_atomic = ATOMIC_INIT(1);
 
+ktime_t start_time = 0, end_time = 0;
+bool time_uswsusp = 0;
+
 #ifdef CONFIG_SUSPEND
 /**
  * pm_hibernation_mode_is_suspend - Check if hibernation has been set to suspend
@@ -627,6 +630,20 @@ int hibernation_platform_enter(void)
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
 
+	end_time = ktime_get();
+	if (!start_time)
+		pr_warn("nfrap: start_time not set!\n");
+	else {
+		ktime_t diff;
+		u64 diff_centisecs;
+
+		diff = ktime_sub(end_time, start_time);
+		diff_centisecs = ktime_divns(diff, 10*NSEC_PER_MSEC);
+		pr_warn("Hibernation latency: start: %llu ns, end: %llu ns, delta: %llu ns (%llu.%02llu seconds), userspace? %d\n",
+			start_time, end_time, diff, diff_centisecs / 100,
+			diff_centisecs % 100, time_uswsusp);
+	}
+
 	error = syscore_suspend();
 	if (error)
 		goto Enable_irqs;
@@ -769,6 +786,9 @@ int hibernate(void)
 	bool snapshot_test = false;
 	unsigned int sleep_flags;
 	int error;
+
+	time_uswsusp = false;
+	start_time = ktime_get();
 
 	if (!hibernation_available()) {
 		pm_pr_dbg("Hibernation not available.\n");

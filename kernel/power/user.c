@@ -28,6 +28,9 @@
 
 static bool need_wait;
 
+extern ktime_t start_time;
+extern bool time_uswsusp;
+
 static struct snapshot_data {
 	struct snapshot_handle handle;
 	int swap;
@@ -49,6 +52,9 @@ static int snapshot_open(struct inode *inode, struct file *filp)
 	struct snapshot_data *data;
 	unsigned int sleep_flags;
 	int error;
+
+	time_uswsusp = true;
+	start_time = ktime_get();
 
 	if (!hibernation_available())
 		return -EPERM;
