@@ -116,6 +116,8 @@ static int snapshot_release(struct inode *inode, struct file *filp)
 	data->dev = 0;
 	free_all_swap_pages(data->swap);
 	if (data->frozen) {
+		/* recover any devices that refused to thaw */
+		dpm_resume_suspended_devices(PMSG_RECOVER);
 		pm_restore_gfp_mask();
 		free_basic_memory_bitmaps();
 		thaw_processes();
