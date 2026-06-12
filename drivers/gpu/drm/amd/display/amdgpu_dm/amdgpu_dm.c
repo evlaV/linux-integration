@@ -771,14 +771,36 @@ static void dm_crtc_high_irq_handler(struct amdgpu_device *adev,
 	/*
 	 * Deliver pageflip completion events (DCN only).
 	 *
-	 * Since GRPH_PFLIP is not used, VUPDATE_NO_LOCK is the flip latch
-	 * point. Deliver any pending pageflip completion event from here.
+	 * On DCN, GRPH_PFLIP is not used; VUPDATE_NO_LOCK is the flip latch
+	 * point, so deliver any pending pageflip completion event from here.
+	 * But only once the armed flip has actually been programmed into HW
+	 * (flip_programmed) and HW has consumed the new address (the OTG no
+	 * longer reports a pending flip). This avoids reporting completion for
+	 * a flip whose address has not yet been latched, which would let
+	 * userspace render over the still-presented buffer and cause
+	 * corruption.
 	 *
-	 * NOTE: This can deliver an event for a flip that was armed but not yet
-	 * programmed into HW; that race is closed in a follow-up change by
-	 * checking the programmed flip status.
+	 * Also handle the case here where there aren't any active planes and
+	 * DCN HUBP may be clock-gated, so the flip-pending status may be
+	 * undefined.
 	 */
-	if (is_dcn && acrtc->pflip_status == AMDGPU_FLIP_SUBMITTED) {
+	if (is_dcn && acrtc->pflip_status == AMDGPU_FLIP_SUBMITTED &&
+	    acrtc->event &&
+	    try_wait_for_completion(&acrtc->dm_irq_params.flip_programmed)) {
+
+		if (!dc_get_flip_pending_on_otg(adev->dm.dc, acrtc->otg_inst)) {
+			drm_crtc_send_vblank_event(&acrtc->base, acrtc->event);
+			acrtc->event = NULL;
+			drm_crtc_vblank_put(&acrtc->base);
+			acrtc->pflip_status = AMDGPU_FLIP_NONE;
+		}
+		/*
+		 * If the flip is still pending, leave it armed and
+		 * retry on the next vupdate.
+		 */
+	} else if (is_dcn && acrtc->pflip_status == AMDGPU_FLIP_SUBMITTED &&
+		   acrtc->dm_irq_params.active_planes == 0) {
+
 		if (acrtc->event) {
 			drm_crtc_send_vblank_event(&acrtc->base, acrtc->event);
 			acrtc->event = NULL;
@@ -10089,17 +10111,17 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 		 * from 0 -> n planes we have to skip a hardware generated event
 		 * and rely on sending it from software.
 		 */
+		spin_lock_irqsave(&pcrtc->dev->event_lock, flags);
 		if (acrtc_attach->base.state->event &&
 		    acrtc_state->active_planes > 0) {
 			drm_crtc_vblank_get(pcrtc);
 
-			spin_lock_irqsave(&pcrtc->dev->event_lock, flags);
-
 			WARN_ON(acrtc_attach->pflip_status != AMDGPU_FLIP_NONE);
+			/* Arm flip completion handling and event delivery */
+			reinit_completion(&acrtc_attach->dm_irq_params.flip_programmed);
 			prepare_flip_isr(acrtc_attach);
-
-			spin_unlock_irqrestore(&pcrtc->dev->event_lock, flags);
 		}
+		spin_unlock_irqrestore(&pcrtc->dev->event_lock, flags);
 
 		if (acrtc_state->stream) {
 			if (acrtc_state->freesync_vrr_info_changed)
@@ -10182,6 +10204,7 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_state *state,
 					 &bundle->stream_update,
 					 bundle->surface_updates);
 		updated_planes_and_streams = true;
+		complete_all(&acrtc_attach->dm_irq_params.flip_programmed);
 
 		/**
 		 * Enable or disable the interrupts on the backend.
