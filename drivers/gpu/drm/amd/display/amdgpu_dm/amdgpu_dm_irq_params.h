@@ -26,12 +26,20 @@
 #ifndef __AMDGPU_DM_IRQ_PARAMS_H__
 #define __AMDGPU_DM_IRQ_PARAMS_H__
 
+#include <linux/completion.h>
+
 #include "amdgpu_dm_crc.h"
 
 struct dm_irq_params {
 	u32 last_flip_vblank;
 	struct mod_vrr_params vrr_params;
 	struct dc_stream_state *stream;
+
+	/*
+	 * Completed once an armed flip has actually been programmed into HW.
+	 */
+	struct completion flip_programmed;
+
 	int active_planes;
 	bool allow_sr_entry;
 	struct mod_freesync_config freesync_config;

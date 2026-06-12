@@ -819,6 +819,11 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
 #ifdef CONFIG_DRM_AMD_COLOR_STEAMDECK
 	dm_crtc_additional_color_mgmt(&acrtc->base);
 #endif
+
+	init_completion(&acrtc->dm_irq_params.flip_programmed);
+	/* No flip is in flight yet; start in the "programmed" state. */
+	complete_all(&acrtc->dm_irq_params.flip_programmed);
+
 	return 0;
 
 fail:
