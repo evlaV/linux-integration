@@ -1179,7 +1179,7 @@ static int amdgpu_uvd_send_msg(struct amdgpu_ring *ring, struct amdgpu_bo *bo,
 		f = amdgpu_job_submit(job);
 	}
 
-	amdgpu_bo_reserve(bo, true, NULL);
+	amdgpu_bo_reserve(bo, true);
 	amdgpu_bo_fence(bo, f, false);
 	amdgpu_bo_unreserve(bo);
 
