@@ -613,7 +613,7 @@ svm_range_vram_node_new(struct kfd_node *node, struct svm_range *prange,
 		 bo->tbo.resource->start << PAGE_SHIFT, bp.size,
 		 bp.xcp_id_plus1 - 1);
 
-	r = amdgpu_bo_reserve(bo, true, NULL);
+	r = amdgpu_bo_reserve(bo, true);
 	if (r) {
 		pr_debug("failed %d to reserve bo\n", r);
 		goto reserve_bo_failed;
@@ -2829,7 +2829,7 @@ svm_range_check_vm_userptr(struct kfd_process *p, uint64_t start, uint64_t last,
 			continue;
 
 		vm = drm_priv_to_vm(p->pdds[i]->drm_priv);
-		r = amdgpu_bo_reserve(vm->root.bo, false, NULL);
+		r = amdgpu_bo_reserve(vm->root.bo, false);
 		if (r)
 			return r;
 
@@ -3376,7 +3376,7 @@ svm_range_check_vm(struct kfd_process *p, uint64_t start, uint64_t last,
 			continue;
 
 		vm = drm_priv_to_vm(p->pdds[i]->drm_priv);
-		r = amdgpu_bo_reserve(vm->root.bo, false, NULL);
+		r = amdgpu_bo_reserve(vm->root.bo, false);
 		if (r)
 			return r;
 

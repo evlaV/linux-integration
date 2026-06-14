@@ -278,7 +278,7 @@ int amdgpu_bo_create_reserved(struct amdgpu_device *adev,
 		free = true;
 	}
 
-	r = amdgpu_bo_reserve(*bo_ptr, false, NULL);
+	r = amdgpu_bo_reserve(*bo_ptr, false);
 	if (r) {
 		dev_err(adev->dev, "(%d) failed to reserve kernel bo\n", r);
 		goto error_free;
@@ -386,7 +386,6 @@ int amdgpu_bo_create_isp_user(struct amdgpu_device *adev,
 
 {
 	struct drm_gem_object *gem_obj;
-	struct ww_acquire_ctx pin_ctx;
 	int r;
 
 	gem_obj = amdgpu_gem_prime_import(&adev->ddev, dma_buf);
@@ -396,22 +395,14 @@ int amdgpu_bo_create_isp_user(struct amdgpu_device *adev,
 		return -EINVAL;
 	}
 
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	r = amdgpu_bo_reserve(*bo, false, &pin_ctx);
+	r = amdgpu_bo_reserve(*bo, false);
 	if (r) {
-		ww_acquire_fini(&pin_ctx);
 		dev_err(adev->dev, "(%d) failed to reserve isp user bo\n", r);
 		return r;
 	}
 
 	r = amdgpu_bo_pin(*bo, domain);
 	if (r) {
-		if (r == -EDEADLOCK) {
-			amdgpu_bo_unreserve(*bo);
-			ww_acquire_fini(&pin_ctx);
-			goto pin_retry;
-		}
 		dev_err(adev->dev, "(%d) isp user bo pin failed\n", r);
 		goto error_unreserve;
 	}
@@ -426,7 +417,6 @@ pin_retry:
 		*gpu_addr = amdgpu_bo_gpu_offset(*bo);
 
 	amdgpu_bo_unreserve(*bo);
-	ww_acquire_fini(&pin_ctx);
 
 	return 0;
 
@@ -435,7 +425,6 @@ error_unpin:
 error_unreserve:
 	amdgpu_bo_unreserve(*bo);
 	amdgpu_bo_unref(bo);
-	ww_acquire_fini(&pin_ctx);
 
 	return r;
 }
@@ -527,7 +516,7 @@ void amdgpu_bo_free_kernel(struct amdgpu_bo **bo, u64 *gpu_addr,
 
 	WARN_ON(amdgpu_ttm_adev((*bo)->tbo.bdev)->in_suspend);
 
-	if (likely(amdgpu_bo_reserve(*bo, true, NULL) == 0)) {
+	if (likely(amdgpu_bo_reserve(*bo, true) == 0)) {
 		if (cpu_addr)
 			amdgpu_bo_kunmap(*bo);
 
@@ -558,7 +547,7 @@ void amdgpu_bo_free_isp_user(struct amdgpu_bo *bo)
 	if (bo == NULL)
 		return;
 
-	if (amdgpu_bo_reserve(bo, true, NULL) == 0) {
+	if (amdgpu_bo_reserve(bo, true) == 0) {
 		amdgpu_bo_unpin(bo);
 		amdgpu_bo_unreserve(bo);
 	}
@@ -944,11 +933,7 @@ void amdgpu_bo_unref(struct amdgpu_bo **bo)
 int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	struct ttm_operation_ctx ctx = {
-		.interruptible = false,
-		.no_wait_gpu = false,
-		.propagate_deadlock = true,
-	};
+	struct ttm_operation_ctx ctx = { false, false };
 	int r, i;
 
 	if (amdgpu_ttm_tt_get_usermm(bo->tbo.ttm))
@@ -1002,8 +987,7 @@ int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain)
 
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 	if (unlikely(r)) {
-		if (r != -EDEADLOCK)
-			dev_err(adev->dev, "%p pin failed\n", bo);
+		dev_err(adev->dev, "%p pin failed\n", bo);
 		goto error;
 	}
 

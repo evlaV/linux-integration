@@ -839,14 +839,9 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 		 * to return -EDEADLK causing the eviction to fail, so
 		 * after waiting for the ticketlock, revert back to
 		 * trylocking for this walk.
-		 *
-		 * When walk->ctx->propagate_deadlock is set, callers will
-		 * gracefully handle deadlocks, so it's fine to try harder
-		 * with ticketlocking.
 		 */
-		if (!arg->ctx->propagate_deadlock)
-			arg->ticket = NULL;
-	} else if (ret == -EDEADLK && !arg->ctx->propagate_deadlock) {
+		arg->ticket = NULL;
+	} else if (ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
 	}

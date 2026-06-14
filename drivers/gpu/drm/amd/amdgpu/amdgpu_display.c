@@ -176,7 +176,7 @@ static void amdgpu_display_unpin_work_func(struct work_struct *__work)
 	int r;
 
 	/* unpin of the old buffer */
-	r = amdgpu_bo_reserve(work->old_abo, true, NULL);
+	r = amdgpu_bo_reserve(work->old_abo, true);
 	if (likely(r == 0)) {
 		amdgpu_bo_unpin(work->old_abo);
 		amdgpu_bo_unreserve(work->old_abo);
@@ -197,7 +197,6 @@ int amdgpu_display_crtc_page_flip_target(struct drm_crtc *crtc,
 	struct drm_device *dev = crtc->dev;
 	struct amdgpu_device *adev = drm_to_adev(dev);
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_flip_work *work;
 	struct amdgpu_bo *new_abo;
@@ -228,9 +227,7 @@ int amdgpu_display_crtc_page_flip_target(struct drm_crtc *crtc,
 	new_abo = gem_to_amdgpu_bo(obj);
 
 	/* pin the new buffer */
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	r = amdgpu_bo_reserve(new_abo, false, &pin_ctx);
+	r = amdgpu_bo_reserve(new_abo, false);
 	if (unlikely(r != 0)) {
 		DRM_ERROR("failed to reserve new abo buffer before flip\n");
 		goto cleanup;
@@ -241,11 +238,6 @@ pin_retry:
 		r = amdgpu_bo_pin(new_abo,
 				  amdgpu_display_supported_domains(adev, new_abo->flags));
 		if (unlikely(r != 0)) {
-			if (r == -EDEADLOCK) {
-				amdgpu_bo_unreserve(new_abo);
-				ww_acquire_fini(&pin_ctx);
-				goto pin_retry;
-			}
 			DRM_ERROR("failed to pin new abo buffer before flip\n");
 			goto unreserve;
 		}
@@ -267,7 +259,6 @@ pin_retry:
 
 	amdgpu_bo_get_tiling_flags(new_abo, &tiling_flags);
 	amdgpu_bo_unreserve(new_abo);
-	ww_acquire_fini(&pin_ctx);
 
 	if (!adev->enable_virtual_display)
 		work->base = amdgpu_bo_gpu_offset(new_abo);
@@ -296,8 +287,7 @@ pin_retry:
 	return 0;
 
 pflip_cleanup:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	if (unlikely(amdgpu_bo_reserve(new_abo, false, &pin_ctx) != 0)) {
+	if (unlikely(amdgpu_bo_reserve(new_abo, false) != 0)) {
 		DRM_ERROR("failed to reserve new abo in error path\n");
 		goto cleanup;
 	}
@@ -309,7 +299,6 @@ unreserve:
 	amdgpu_bo_unreserve(new_abo);
 
 cleanup:
-	ww_acquire_fini(&pin_ctx);
 	amdgpu_bo_unref(&work->old_abo);
 	for (i = 0; i < work->shared_count; ++i)
 		dma_fence_put(work->shared[i]);
@@ -700,7 +689,7 @@ extract_render_dcc_offset(struct amdgpu_device *adev,
 	uint32_t size;
 
 	rbo = gem_to_amdgpu_bo(obj);
-	r = amdgpu_bo_reserve(rbo, false, NULL);
+	r = amdgpu_bo_reserve(rbo, false);
 
 	if (unlikely(r)) {
 		/* Don't show error message when returning -ERESTARTSYS */
@@ -1186,7 +1175,7 @@ static int amdgpu_display_get_fb_info(const struct amdgpu_framebuffer *amdgpu_fb
 	}
 
 	rbo = gem_to_amdgpu_bo(amdgpu_fb->base.obj[0]);
-	r = amdgpu_bo_reserve(rbo, false, NULL);
+	r = amdgpu_bo_reserve(rbo, false);
 
 	if (unlikely(r)) {
 		/* Don't show error message when returning -ERESTARTSYS */
@@ -1735,7 +1724,7 @@ int amdgpu_display_suspend_helper(struct amdgpu_device *adev)
 		if (amdgpu_crtc->cursor_bo && !adev->enable_virtual_display) {
 			struct amdgpu_bo *aobj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
 
-			r = amdgpu_bo_reserve(aobj, true, NULL);
+			r = amdgpu_bo_reserve(aobj, true);
 			if (r == 0) {
 				amdgpu_bo_unpin(aobj);
 				amdgpu_bo_unreserve(aobj);
@@ -1747,7 +1736,7 @@ int amdgpu_display_suspend_helper(struct amdgpu_device *adev)
 
 		robj = gem_to_amdgpu_bo(fb->obj[0]);
 		if (!amdgpu_display_robj_is_fb(adev, robj)) {
-			r = amdgpu_bo_reserve(robj, true, NULL);
+			r = amdgpu_bo_reserve(robj, true);
 			if (r == 0) {
 				amdgpu_bo_unpin(robj);
 				amdgpu_bo_unreserve(robj);
@@ -1760,7 +1749,6 @@ int amdgpu_display_suspend_helper(struct amdgpu_device *adev)
 int amdgpu_display_resume_helper(struct amdgpu_device *adev)
 {
 	struct drm_device *dev = adev_to_drm(adev);
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_connector *connector;
 	struct drm_connector_list_iter iter;
 	struct drm_crtc *crtc;
@@ -1773,24 +1761,15 @@ int amdgpu_display_resume_helper(struct amdgpu_device *adev)
 		if (amdgpu_crtc->cursor_bo && !adev->enable_virtual_display) {
 			struct amdgpu_bo *aobj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
 
-pin_retry:
-			ww_acquire_init(&pin_ctx, &reservation_ww_class);
-			r = amdgpu_bo_reserve(aobj, true, &pin_ctx);
+			r = amdgpu_bo_reserve(aobj, true);
 			if (r == 0) {
 				aobj->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
 				r = amdgpu_bo_pin(aobj, AMDGPU_GEM_DOMAIN_VRAM);
-				if (r != 0) {
-					if (r == -EDEADLOCK) {
-						amdgpu_bo_unreserve(aobj);
-						ww_acquire_fini(&pin_ctx);
-						goto pin_retry;
-					}
+				if (r != 0)
 					dev_err(adev->dev, "Failed to pin cursor BO (%d)\n", r);
-				}
 				amdgpu_crtc->cursor_addr = amdgpu_bo_gpu_offset(aobj);
 				amdgpu_bo_unreserve(aobj);
 			}
-			ww_acquire_fini(&pin_ctx);
 		}
 	}
 
