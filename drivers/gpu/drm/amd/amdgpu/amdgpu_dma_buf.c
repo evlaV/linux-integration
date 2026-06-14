@@ -128,7 +128,7 @@ static int amdgpu_dma_buf_pin(struct dma_buf_attachment *attach)
 	if (WARN_ON(!domains))
 		return -EINVAL;
 
-	return amdgpu_bo_pin(bo, domains);
+	return amdgpu_bo_pin(bo, NULL, domains);
 }
 
 /**
