@@ -1497,7 +1497,7 @@ void amdgpu_driver_postclose_kms(struct drm_device *dev,
 
 	pasid = fpriv->vm.pasid;
 	pd = amdgpu_bo_ref(fpriv->vm.root.bo);
-	if (!WARN_ON(amdgpu_bo_reserve(pd, true, NULL))) {
+	if (!WARN_ON(amdgpu_bo_reserve(pd, true))) {
 		amdgpu_vm_bo_del(adev, fpriv->prt_va);
 		amdgpu_bo_unreserve(pd);
 	}

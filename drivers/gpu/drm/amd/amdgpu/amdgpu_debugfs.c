@@ -1790,7 +1790,7 @@ static int amdgpu_debugfs_vm_info_show(struct seq_file *m, void *unused)
 			amdgpu_vm_put_task_info(ti);
 		}
 
-		r = amdgpu_bo_reserve(vm->root.bo, true, NULL);
+		r = amdgpu_bo_reserve(vm->root.bo, true);
 		if (r)
 			break;
 		amdgpu_debugfs_vm_bo_info(vm, m);

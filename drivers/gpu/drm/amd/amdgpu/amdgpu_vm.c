@@ -2664,7 +2664,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		goto error_free_delayed;
 
 	root_bo = amdgpu_bo_ref(&root->bo);
-	r = amdgpu_bo_reserve(root_bo, true, NULL);
+	r = amdgpu_bo_reserve(root_bo, true);
 	if (r) {
 		amdgpu_bo_unref(&root_bo);
 		goto error_free_delayed;
@@ -2725,7 +2725,7 @@ int amdgpu_vm_make_compute(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 {
 	int r;
 
-	r = amdgpu_bo_reserve(vm->root.bo, true, NULL);
+	r = amdgpu_bo_reserve(vm->root.bo, true);
 	if (r)
 		return r;
 
@@ -2793,7 +2793,7 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 	amdgpu_amdkfd_gpuvm_destroy_cb(adev, vm);
 
 	root = amdgpu_bo_ref(vm->root.bo);
-	amdgpu_bo_reserve(root, true, NULL);
+	amdgpu_bo_reserve(root, true);
 	amdgpu_vm_set_pasid(adev, vm, 0);
 	dma_fence_wait(vm->last_unlocked, false);
 	dma_fence_put(vm->last_unlocked);
@@ -3007,7 +3007,7 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 		return true;
 	}
 
-	r = amdgpu_bo_reserve(root, true, NULL);
+	r = amdgpu_bo_reserve(root, true);
 	if (r)
 		goto error_unref;
 

@@ -84,7 +84,6 @@ static int amdgpu_dm_wb_prepare_job(struct drm_writeback_connector *wb_connector
 			       struct drm_writeback_job *job)
 {
 	struct amdgpu_framebuffer *afb;
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_device *adev;
 	struct amdgpu_bo *rbo;
@@ -101,13 +100,16 @@ static int amdgpu_dm_wb_prepare_job(struct drm_writeback_connector *wb_connector
 	rbo = gem_to_amdgpu_bo(obj);
 	adev = amdgpu_ttm_adev(rbo->tbo.bdev);
 
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	r = amdgpu_bo_reserve(rbo, true, &pin_ctx);
+	r = amdgpu_bo_reserve(rbo, true);
 	if (r) {
-		ww_acquire_fini(&pin_ctx);
 		drm_err(adev_to_drm(adev), "fail to reserve bo (%d)\n", r);
 		return r;
+	}
+
+	r = dma_resv_reserve_fences(rbo->tbo.base.resv, 1);
+	if (r) {
+		drm_err(adev_to_drm(adev), "reserving fence slot failed (%d)\n", r);
+		goto error_unlock;
 	}
 
 	domain = amdgpu_display_supported_domains(adev, rbo->flags);
@@ -115,20 +117,8 @@ pin_retry:
 	rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
 	r = amdgpu_bo_pin(rbo, domain);
 	if (unlikely(r != 0)) {
-		if (r == -EDEADLOCK) {
-			amdgpu_bo_unreserve(rbo);
-			ww_acquire_fini(&pin_ctx);
-			goto pin_retry;
-		}
 		if (r != -ERESTARTSYS)
 			DRM_ERROR("Failed to pin framebuffer with error %d\n", r);
-		goto error_unlock;
-	}
-
-	r = dma_resv_reserve_fences(rbo->tbo.base.resv, 1);
-	if (r) {
-		drm_err(adev_to_drm(adev), "reserving fence slot failed (%d)\n",
-			r);
 		goto error_unlock;
 	}
 
@@ -139,7 +129,6 @@ pin_retry:
 	}
 
 	amdgpu_bo_unreserve(rbo);
-	ww_acquire_fini(&pin_ctx);
 
 	afb->address = amdgpu_bo_gpu_offset(rbo);
 
@@ -151,7 +140,6 @@ error_unpin:
 	amdgpu_bo_unpin(rbo);
 
 error_unlock:
-	ww_acquire_fini(&pin_ctx);
 	amdgpu_bo_unreserve(rbo);
 	return r;
 }
@@ -166,7 +154,7 @@ static void amdgpu_dm_wb_cleanup_job(struct drm_writeback_connector *connector,
 		return;
 
 	rbo = gem_to_amdgpu_bo(job->fb->obj[0]);
-	r = amdgpu_bo_reserve(rbo, false, NULL);
+	r = amdgpu_bo_reserve(rbo, false);
 	if (unlikely(r)) {
 		DRM_ERROR("failed to reserve rbo before unpin\n");
 		return;

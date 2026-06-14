@@ -365,7 +365,7 @@ int amdgpu_gfx_kiq_init(struct amdgpu_device *adev,
 
 	memset(hpd, 0, hpd_size);
 
-	r = amdgpu_bo_reserve(kiq->eop_obj, true, NULL);
+	r = amdgpu_bo_reserve(kiq->eop_obj, true);
 	if (unlikely(r != 0))
 		dev_warn(adev->dev, "(%d) reserve kiq eop bo failed\n", r);
 	amdgpu_bo_kunmap(kiq->eop_obj);
