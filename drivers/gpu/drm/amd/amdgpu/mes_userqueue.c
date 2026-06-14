@@ -72,7 +72,7 @@ mes_userq_create_wptr_mapping(struct amdgpu_device *adev,
 	}
 
 	/* TODO use eviction fence instead of pinning. */
-	ret = amdgpu_bo_pin(wptr_obj->obj, AMDGPU_GEM_DOMAIN_GTT);
+	ret = amdgpu_bo_pin(wptr_obj->obj, NULL, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
 		DRM_ERROR("Failed to pin wptr bo. ret %d\n", ret);
 		goto fail_map;
