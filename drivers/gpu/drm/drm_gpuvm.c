@@ -1090,7 +1090,7 @@ exec_prepare_obj(struct drm_exec *exec, struct drm_gem_object *obj,
 		 unsigned int num_fences)
 {
 	return num_fences ? drm_exec_prepare_obj(exec, obj, num_fences) :
-			    drm_exec_lock_obj(exec, obj);
+			    drm_exec_lock_obj(exec, obj, false);
 }
 
 /**

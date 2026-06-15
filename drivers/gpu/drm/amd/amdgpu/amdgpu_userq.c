@@ -591,7 +591,7 @@ amdgpu_userq_validate_bos(struct amdgpu_userq_mgr *uq_mgr)
 			if (!bo)
 				continue;
 
-			ret = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			ret = drm_exec_lock_obj(&exec, &bo->tbo.base, false);
 			drm_exec_retry_on_contention(&exec);
 			if (unlikely(ret))
 				goto unlock_all;

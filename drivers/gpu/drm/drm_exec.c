@@ -197,6 +197,8 @@ error_dropref:
  * drm_exec_lock_obj - lock a GEM object for use
  * @exec: the drm_exec object with the state
  * @obj: the GEM object to lock
+ * @no_ignore_duplicates: Per-call overrides to force returning
+ * -EALREADY when an object is already locked.
  *
  * Lock a GEM object for use and grab a reference to it.
  *
@@ -204,7 +206,8 @@ error_dropref:
  * already locked (can be suppressed by setting the DRM_EXEC_IGNORE_DUPLICATES
  * flag), -ENOMEM when memory allocation failed and zero for success.
  */
-int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj)
+int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj,
+		      bool no_ignore_duplicates)
 {
 	int ret;
 
@@ -229,7 +232,7 @@ int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj)
 		return -EDEADLK;
 	}
 
-	if (unlikely(ret == -EALREADY) &&
+	if (unlikely(ret == -EALREADY) && !no_ignore_duplicates &&
 	    exec->flags & DRM_EXEC_IGNORE_DUPLICATES)
 		return 0;
 
@@ -291,7 +294,7 @@ int drm_exec_prepare_obj(struct drm_exec *exec, struct drm_gem_object *obj,
 {
 	int ret;
 
-	ret = drm_exec_lock_obj(exec, obj);
+	ret = drm_exec_lock_obj(exec, obj, false);
 	if (ret)
 		return ret;
 

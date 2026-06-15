@@ -1379,9 +1379,9 @@ int xe_vm_lock_vma(struct drm_exec *exec, struct xe_vma *vma)
 
 	XE_WARN_ON(!vm);
 
-	err = drm_exec_lock_obj(exec, xe_vm_obj(vm));
+	err = drm_exec_lock_obj(exec, xe_vm_obj(vm), false);
 	if (!err && bo && !bo->vm)
-		err = drm_exec_lock_obj(exec, &bo->ttm.base);
+		err = drm_exec_lock_obj(exec, &bo->ttm.base, false);
 
 	return err;
 }
@@ -2362,11 +2362,11 @@ static struct xe_vma *new_vma(struct xe_vm *vm, struct drm_gpuva_op_map *op,
 		drm_exec_until_all_locked(&exec) {
 			err = 0;
 			if (!bo->vm) {
-				err = drm_exec_lock_obj(&exec, xe_vm_obj(vm));
+				err = drm_exec_lock_obj(&exec, xe_vm_obj(vm), false);
 				drm_exec_retry_on_contention(&exec);
 			}
 			if (!err) {
-				err = drm_exec_lock_obj(&exec, &bo->ttm.base);
+				err = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 				drm_exec_retry_on_contention(&exec);
 			}
 			if (err) {
@@ -2773,7 +2773,7 @@ static int vma_lock_and_validate(struct drm_exec *exec, struct xe_vma *vma,
 
 	if (bo) {
 		if (!bo->vm)
-			err = drm_exec_lock_obj(exec, &bo->ttm.base);
+			err = drm_exec_lock_obj(exec, &bo->ttm.base, false);
 		if (!err && validate)
 			err = xe_bo_validate(bo, vm,
 					     !xe_vm_in_preempt_fence_mode(vm));
@@ -2860,7 +2860,7 @@ static int vm_bind_ioctl_ops_lock_and_prep(struct drm_exec *exec,
 	struct xe_vma_op *op;
 	int err;
 
-	err = drm_exec_lock_obj(exec, xe_vm_obj(vm));
+	err = drm_exec_lock_obj(exec, xe_vm_obj(vm), false);
 	if (err)
 		return err;
 

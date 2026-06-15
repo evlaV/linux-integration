@@ -886,7 +886,7 @@ retry:
 retry_bind:
 	drm_exec_init(&exec, 0, 0);
 	drm_exec_until_all_locked(&exec) {
-		err = drm_exec_lock_obj(&exec, vm->gpuvm.r_obj);
+		err = drm_exec_lock_obj(&exec, vm->gpuvm.r_obj, false);
 		drm_exec_retry_on_contention(&exec);
 		if (err) {
 			drm_exec_fini(&exec);
