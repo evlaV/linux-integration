@@ -73,7 +73,7 @@ int amdgpu_map_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	drm_exec_until_all_locked(&exec) {
 		r = amdgpu_vm_lock_pd(vm, &exec, 0);
 		if (likely(!r))
-			r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			r = drm_exec_lock_obj(&exec, &bo->tbo.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r)) {
 			DRM_ERROR("failed to reserve CSA,PD BOs: err=%d\n", r);
@@ -113,7 +113,7 @@ int amdgpu_unmap_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	drm_exec_until_all_locked(&exec) {
 		r = amdgpu_vm_lock_pd(vm, &exec, 0);
 		if (likely(!r))
-			r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			r = drm_exec_lock_obj(&exec, &bo->tbo.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r)) {
 			DRM_ERROR("failed to reserve CSA,PD BOs: err=%d\n", r);

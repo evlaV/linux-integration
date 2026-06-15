@@ -80,7 +80,7 @@ int amdgpu_seq64_map(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	drm_exec_until_all_locked(&exec) {
 		r = amdgpu_vm_lock_pd(vm, &exec, 0);
 		if (likely(!r))
-			r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			r = drm_exec_lock_obj(&exec, &bo->tbo.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r))
 			goto error;
@@ -143,7 +143,7 @@ void amdgpu_seq64_unmap(struct amdgpu_device *adev, struct amdgpu_fpriv *fpriv)
 	drm_exec_until_all_locked(&exec) {
 		r = amdgpu_vm_lock_pd(vm, &exec, 0);
 		if (likely(!r))
-			r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+			r = drm_exec_lock_obj(&exec, &bo->tbo.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r))
 			goto error;

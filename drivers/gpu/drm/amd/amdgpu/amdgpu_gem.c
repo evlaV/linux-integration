@@ -888,7 +888,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 		      DRM_EXEC_IGNORE_DUPLICATES, 0);
 	drm_exec_until_all_locked(&exec) {
 		if (gobj) {
-			r = drm_exec_lock_obj(&exec, gobj);
+			r = drm_exec_lock_obj(&exec, gobj, false);
 			drm_exec_retry_on_contention(&exec);
 			if (unlikely(r))
 				goto error;
@@ -1006,7 +1006,7 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT |
 			  DRM_EXEC_IGNORE_DUPLICATES, 0);
 	drm_exec_until_all_locked(&exec) {
-		r = drm_exec_lock_obj(&exec, gobj);
+		r = drm_exec_lock_obj(&exec, gobj, false);
 		drm_exec_retry_on_contention(&exec);
 		if (r)
 			goto out_exec;
