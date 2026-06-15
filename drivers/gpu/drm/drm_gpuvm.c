@@ -1160,7 +1160,7 @@ exec_prepare_obj(struct drm_exec *exec, struct drm_gem_object *obj,
 		 unsigned int num_fences)
 {
 	return num_fences ? drm_exec_prepare_obj(exec, obj, num_fences) :
-			    drm_exec_lock_obj(exec, obj);
+			    drm_exec_lock_obj(exec, obj, false);
 }
 
 /**
@@ -2503,11 +2503,13 @@ drm_gpuva_sm_step_lock(struct drm_gpuva_op *op, void *priv)
 	switch (op->op) {
 	case DRM_GPUVA_OP_REMAP:
 		if (op->remap.unmap->va->gem.obj)
-			return drm_exec_lock_obj(exec, op->remap.unmap->va->gem.obj);
+			return drm_exec_lock_obj(
+				exec, op->remap.unmap->va->gem.obj, false);
 		return 0;
 	case DRM_GPUVA_OP_UNMAP:
 		if (op->unmap.va->gem.obj)
-			return drm_exec_lock_obj(exec, op->unmap.va->gem.obj);
+			return drm_exec_lock_obj(exec, op->unmap.va->gem.obj,
+						 false);
 		return 0;
 	default:
 		return 0;

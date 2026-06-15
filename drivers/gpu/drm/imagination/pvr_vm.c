@@ -697,7 +697,7 @@ pvr_vm_lock_extra(struct drm_gpuvm_exec *vm_exec)
 	struct pvr_gem_object *pvr_obj = bind_op->pvr_obj;
 
 	/* Acquire lock on the GEM object being mapped/unmapped. */
-	return drm_exec_lock_obj(&vm_exec->exec, gem_from_pvr_gem(pvr_obj));
+	return drm_exec_lock_obj(&vm_exec->exec, gem_from_pvr_gem(pvr_obj), false);
 }
 
 /**

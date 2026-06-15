@@ -1152,7 +1152,7 @@ int xe_bo_notifier_prepare_pinned(struct xe_bo *bo)
 	int ret = 0;
 
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {.exclusive = true}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		xe_assert(xe, !ret);
 		xe_assert(xe, !bo->backup_obj);
@@ -1290,7 +1290,7 @@ int xe_bo_evict_pinned(struct xe_bo *bo)
 	int ret = 0;
 
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {.exclusive = true}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		xe_assert(xe, !ret);
 
@@ -1916,7 +1916,7 @@ static vm_fault_t xe_bo_cpu_fault(struct vm_fault *vmf)
 			.gfp_retry_mayfail = retry_after_wait,
 		};
 
-		err = drm_exec_lock_obj(&exec, &tbo->base);
+		err = drm_exec_lock_obj(&exec, &tbo->base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (err)
 			break;
