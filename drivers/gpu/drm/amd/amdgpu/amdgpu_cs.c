@@ -660,6 +660,7 @@ static int amdgpu_cs_pass2(struct amdgpu_cs_parser *p)
 	return 0;
 }
 
+#if 0
 /* Convert microseconds to bytes. */
 static u64 us_to_bytes(struct amdgpu_device *adev, s64 us)
 {
@@ -679,6 +680,7 @@ static s64 bytes_to_us(struct amdgpu_device *adev, u64 bytes)
 
 	return bytes >> adev->mm_stats.log2_max_MBps;
 }
+#endif
 
 /* Returns how many bytes TTM can move right now. If no bytes can be moved,
  * it returns 0. If it returns non-zero, it's OK to move at least one buffer,
@@ -697,6 +699,9 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 					      u64 *max_bytes,
 					      u64 *max_vis_bytes)
 {
+	*max_bytes = U64_MAX;
+	*max_vis_bytes = U64_MAX;
+#if 0
 	s64 time_us, increment_us;
 	u64 free_vram, total_vram, used_vram;
 	/* Allow a maximum of 200 accumulated ms. This is basically per-IB
@@ -782,6 +787,7 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 	}
 
 	spin_unlock(&adev->mm_stats.lock);
+#endif
 }
 
 /* Report how many bytes have really been moved for the last command
@@ -791,10 +797,12 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 				  u64 num_vis_bytes)
 {
+#if 0
 	spin_lock(&adev->mm_stats.lock);
 	adev->mm_stats.accum_us -= bytes_to_us(adev, num_bytes);
 	adev->mm_stats.accum_us_vis -= bytes_to_us(adev, num_vis_bytes);
 	spin_unlock(&adev->mm_stats.lock);
+#endif
 }
 
 static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
