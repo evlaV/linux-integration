@@ -212,6 +212,18 @@ static void ttm_transfered_destroy(struct ttm_buffer_object *bo)
 	kfree(fbo);
 }
 
+static void ttm_bo_transfered_free(struct drm_gem_object *object)
+{
+	struct ttm_buffer_object *bo =
+		container_of(object, struct ttm_buffer_object, base);
+
+	ttm_bo_fini(bo);
+}
+
+const struct drm_gem_object_funcs ttm_transferred_object_funcs = {
+	.free = ttm_bo_transfered_free,
+};
+
 /**
  * ttm_buffer_object_transfer
  *
@@ -248,6 +260,7 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	drm_vma_node_reset(&fbo->base.base.vma_node);
 
 	kref_init(&fbo->base.base.refcount);
+	fbo->base.base.funcs = &ttm_transferred_object_funcs;
 	fbo->base.destroy = &ttm_transfered_destroy;
 	fbo->base.pin_count = 0;
 	if (bo->type != ttm_bo_type_sg)
