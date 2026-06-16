@@ -726,8 +726,11 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
 	/* Always start from the VM's existing last update fence. */
 	fence = dma_fence_get(vm->last_update);
 
-	if (!amdgpu_vm_ready(vm))
+	if (!amdgpu_vm_ready(vm)) {
+		/* Can't update now, mark it for later. */
+		amdgpu_vm_bo_invalidate(bo_va->base.bo, false);
 		return fence;
+	}
 
 	/*
 	 * First clean up any freed mappings in the VM.
