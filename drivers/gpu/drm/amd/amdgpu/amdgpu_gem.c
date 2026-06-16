@@ -768,8 +768,11 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
 	struct dma_fence *fence = dma_fence_get_stub();
 	int r;
 
-	if (!amdgpu_vm_ready(vm))
+	if (!amdgpu_vm_ready(vm)) {
+		/* Can't update now, mark it for later. */
+		amdgpu_vm_bo_invalidate(bo_va->base.bo, false);
 		return fence;
+	}
 
 	r = amdgpu_vm_clear_freed(adev, vm, &fence);
 	if (r)
@@ -785,8 +788,11 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
 	r = amdgpu_vm_update_pdes(adev, vm, false);
 
 error:
-	if (r && r != -ERESTARTSYS)
-		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);
+	if (r && r != -ERESTARTSYS) {
+		amdgpu_vm_bo_invalidate(bo_va->base.bo, false);
+		drm_warn(adev_to_drm(adev),
+			 "Couldn't update bo va (%d), retrying later\n", r);
+	}
 
 	return fence;
 }
