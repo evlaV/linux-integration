@@ -805,13 +805,8 @@ static bool regd_is_6ghz_blocked(struct rtw89_dev *rtwdev)
 	/*
 	 * The worldwide domain is never subject to country-specific 6 GHz
 	 * policy restrictions; let cfg80211's regulatory rules govern it.
-	 *
-	 * rtw89_regd_is_ww() does a pointer comparison against the static
-     * rtw89_ww_regd, so it does not recognise a worldwide ("00") entry
-     * supplied via the firmware-loaded regd table. Compare alpha2
-     * directly so both sources are handled.
 	 */
-	if (!memcmp(regd->alpha2, "00", 2))
+	if (rtw89_regd_is_ww(regd))
 		return false;
 
 	index = rtw89_regd_get_index(rtwdev, regd);
