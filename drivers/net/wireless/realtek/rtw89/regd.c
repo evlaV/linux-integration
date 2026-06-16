@@ -1152,7 +1152,8 @@ static int rtw89_reg_6ghz_power_recalc(struct rtw89_dev *rtwdev,
 	struct ieee80211_bss_conf *bss_conf;
 	bool dflt = false;
 
-	if (test_bit(index, regulatory->block_6ghz_vlp))
+	if (index == RTW89_REGD_MAX_COUNTRY_NUM ||
+	    test_bit(index, regulatory->block_6ghz_vlp))
 		blocked[RTW89_REG_6GHZ_POWER_VLP] = true;
 
 	rcu_read_lock();
