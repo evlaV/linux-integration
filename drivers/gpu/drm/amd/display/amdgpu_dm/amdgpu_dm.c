@@ -9266,41 +9266,44 @@ static void manage_dm_interrupts(struct amdgpu_device *adev,
 		drm_crtc_vblank_on_config(&acrtc->base,
 					  &config);
 		/*
-		 * Since pflip_high_irq is no longer registered for DCN, Grab an
-		 * extra reference to vupdate irq insteaad to workaround this
-		 * issue:
-		 * https://gitlab.freedesktop.org/drm/amd/-/work_items/3936
-		 *
-		 * The callbacks to drm_vblank_on/off should really take care of
-		 * this though.
+		 * On DCN, VUPDATE_NO_LOCK is the sole vblank and pageflip
+		 * completion source, so hold a reference to it for as long as
+		 * vblank is enabled. Besides the original dGPU pflip workaround
+		 * (https://gitlab.freedesktop.org/drm/amd/-/work_items/3936),
+		 * this reference is also what makes
+		 * amdgpu_irq_gpu_reset_resume_helper() re-arm vupdate after a
+		 * GPU reset. Without it the source is re-applied disabled.
 		 */
-		switch (amdgpu_ip_version(adev, DCE_HWIP, 0)) {
-		case IP_VERSION(3, 0, 0):
-		case IP_VERSION(3, 0, 2):
-		case IP_VERSION(3, 0, 3):
-		case IP_VERSION(3, 2, 0):
+		if (amdgpu_ip_version(adev, DCE_HWIP, 0) != 0) {
 			if (amdgpu_irq_get(adev, &adev->vupdate_irq, irq_type))
 				drm_err(dev, "DM_IRQ: Cannot get vupdate irq!\n");
-#if defined(CONFIG_DRM_AMD_SECURE_DISPLAY)
-			if (amdgpu_irq_get(adev, &adev->vline0_irq, irq_type))
-				drm_err(dev, "DM_IRQ: Cannot get vline0 irq!\n");
-#endif
 		}
-
-	} else {
-		/* Allow RX6xxx, RX7700, RX7800 GPUs to call amdgpu_irq_put.*/
+#if defined(CONFIG_DRM_AMD_SECURE_DISPLAY)
 		switch (amdgpu_ip_version(adev, DCE_HWIP, 0)) {
 		case IP_VERSION(3, 0, 0):
 		case IP_VERSION(3, 0, 2):
 		case IP_VERSION(3, 0, 3):
 		case IP_VERSION(3, 2, 0):
-#if defined(CONFIG_DRM_AMD_SECURE_DISPLAY)
-			if (amdgpu_irq_put(adev, &adev->vline0_irq, irq_type))
-				drm_err(dev, "DM_IRQ: Cannot put vline0 irq!\n");
+			if (amdgpu_irq_get(adev, &adev->vline0_irq, irq_type))
+				drm_err(dev, "DM_IRQ: Cannot get vline0 irq!\n");
+		}
 #endif
+
+	} else {
+		if (amdgpu_ip_version(adev, DCE_HWIP, 0) != 0) {
 			if (amdgpu_irq_put(adev, &adev->vupdate_irq, irq_type))
 				drm_err(dev, "DM_IRQ: Cannot put vupdate irq!\n");
 		}
+#if defined(CONFIG_DRM_AMD_SECURE_DISPLAY)
+		switch (amdgpu_ip_version(adev, DCE_HWIP, 0)) {
+		case IP_VERSION(3, 0, 0):
+		case IP_VERSION(3, 0, 2):
+		case IP_VERSION(3, 0, 3):
+		case IP_VERSION(3, 2, 0):
+			if (amdgpu_irq_put(adev, &adev->vline0_irq, irq_type))
+				drm_err(dev, "DM_IRQ: Cannot put vline0 irq!\n");
+		}
+#endif
 
 		drm_crtc_vblank_off(&acrtc->base);
 	}
