@@ -3649,6 +3649,20 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
 
 		dm_gpureset_toggle_interrupts(adev, dm->cached_dc_state, true);
 
+		/*
+		 * A VRR OTG re-enters DRR after the restore and parks in the
+		 * extended vblank. The reset path issues no flip to release it,
+		 * so force a frame to get it raising VUPDATE_NO_LOCK again.
+		 */
+		for (i = 0; i < dm->cached_dc_state->stream_count; i++) {
+			struct amdgpu_crtc *acrtc = get_crtc_by_otg_inst(adev,
+				dm->cached_dc_state->stream_status[i].primary_otg_inst);
+
+			if (acrtc && acrtc->base.state &&
+			    amdgpu_dm_crtc_vrr_active(to_dm_crtc_state(acrtc->base.state)))
+				dc_force_drr_frame(dm->dc, acrtc->otg_inst);
+		}
+
 		dc_state_release(dm->cached_dc_state);
 		dm->cached_dc_state = NULL;
 

@@ -5530,6 +5530,45 @@ bool dc_get_flip_pending_on_otg(struct dc *dc, int otg_inst)
 	return flip_pending;
 }
 
+/*
+ * dc_force_drr_frame() - kick a VRR OTG out of the extended vblank
+ *
+ * @dc: display core context
+ * @otg_inst: OTG instance to force a frame on
+ *
+ * A VRR OTG parked in the extended vblank at v_total_max only ends the frame
+ * on a TRIGA (flip or surface update) event. After a GPU reset there is no
+ * flip to drive it, so collapse v_total to base and pulse the manual trigger.
+ * The OTG then applies the base v_total, completes a frame, and resumes
+ * raising VUPDATE_NO_LOCK.
+ */
+void dc_force_drr_frame(struct dc *dc, int otg_inst)
+{
+	int i;
+
+	if (!dc || !dc->current_state)
+		return;
+
+	dc_exit_ips_for_hw_access(dc);
+
+	for (i = 0; i < dc->res_pool->pipe_count; i++) {
+		struct pipe_ctx *pipe_ctx = &dc->current_state->res_ctx.pipe_ctx[i];
+		struct timing_generator *tg = pipe_ctx->stream_res.tg;
+		struct dc_stream_state *stream = pipe_ctx->stream;
+
+		if (!stream || !tg || tg->inst != otg_inst)
+			continue;
+
+		if (tg->funcs->set_vtotal_min_max)
+			tg->funcs->set_vtotal_min_max(tg,
+				stream->timing.v_total - 1,
+				stream->timing.v_total - 1);
+		if (tg->funcs->program_manual_trigger)
+			tg->funcs->program_manual_trigger(tg);
+		break;
+	}
+}
+
 void dc_power_down_on_boot(struct dc *dc)
 {
 	if (dc->ctx->dce_environment != DCE_ENV_VIRTUAL_HW &&
