@@ -1831,9 +1831,9 @@ static void amdgpu_vm_bo_insert_map(struct amdgpu_device *adev,
 	if (mapping->flags & AMDGPU_PTE_PRT_FLAG(adev))
 		amdgpu_vm_prt_get(adev);
 
-	if (amdgpu_vm_is_bo_always_valid(vm, bo) && !bo_va->base.moved)
+	if (amdgpu_vm_is_bo_always_valid(vm, bo))
 		amdgpu_vm_bo_moved(&bo_va->base);
-	else if (!bo_va->base.moved)
+	else
 		amdgpu_vm_bo_invalidated(&bo_va->base);
 
 	trace_amdgpu_vm_bo_map(bo_va, mapping);
