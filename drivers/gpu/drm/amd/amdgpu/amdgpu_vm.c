@@ -1833,6 +1833,8 @@ static void amdgpu_vm_bo_insert_map(struct amdgpu_device *adev,
 
 	if (amdgpu_vm_is_bo_always_valid(vm, bo) && !bo_va->base.moved)
 		amdgpu_vm_bo_moved(&bo_va->base);
+	else if (!bo_va->base.moved)
+		amdgpu_vm_bo_invalidated(&bo_va->base);
 
 	trace_amdgpu_vm_bo_map(bo_va, mapping);
 }
@@ -2135,6 +2137,8 @@ int amdgpu_vm_bo_clear_mappings(struct amdgpu_device *adev,
 		if (amdgpu_vm_is_bo_always_valid(vm, bo) &&
 		    !before->bo_va->base.moved)
 			amdgpu_vm_bo_moved(&before->bo_va->base);
+		else if (!before->bo_va->base.moved)
+			amdgpu_vm_bo_invalidated(&before->bo_va->base);
 	} else {
 		kfree(before);
 	}
@@ -2150,6 +2154,8 @@ int amdgpu_vm_bo_clear_mappings(struct amdgpu_device *adev,
 		if (amdgpu_vm_is_bo_always_valid(vm, bo) &&
 		    !after->bo_va->base.moved)
 			amdgpu_vm_bo_moved(&after->bo_va->base);
+		else if (!after->bo_va->base.moved)
+			amdgpu_vm_bo_invalidated(&after->bo_va->base);
 	} else {
 		kfree(after);
 	}
