@@ -195,7 +195,7 @@ int ttm_device_swapout(struct ttm_device *bdev, struct ttm_operation_ctx *ctx,
 
 		ttm_bo_lru_for_each_reserved_guarded(&cursor, man, &arg, bo) {
 			lret = ttm_bo_swapout(bo, ctx, gfp_flags);
-				continue;
+
 			/* Can be both positive (num_pages) and negative (error) */
 			if (lret && lret != -EBUSY && lret != -EALREADY)
 				return lret;
