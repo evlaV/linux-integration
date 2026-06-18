@@ -1152,7 +1152,7 @@ int xe_bo_notifier_prepare_pinned(struct xe_bo *bo)
 	int ret = 0;
 
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {.exclusive = true}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		xe_assert(xe, !ret);
 		xe_assert(xe, !bo->backup_obj);
@@ -1290,7 +1290,7 @@ int xe_bo_evict_pinned(struct xe_bo *bo)
 	int ret = 0;
 
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {.exclusive = true}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		xe_assert(xe, !ret);
 
@@ -1467,31 +1467,6 @@ static unsigned long xe_ttm_io_mem_pfn(struct ttm_buffer_object *ttm_bo,
 
 static void __xe_bo_vunmap(struct xe_bo *bo);
 
-/*
- * TODO: Move this function to TTM so we don't rely on how TTM does its
- * locking, thereby abusing TTM internals.
- */
-static bool xe_ttm_bo_lock_in_destructor(struct ttm_buffer_object *ttm_bo)
-{
-	struct xe_device *xe = ttm_to_xe_device(ttm_bo->bdev);
-	bool locked;
-
-	xe_assert(xe, !kref_read(&ttm_bo->kref));
-
-	/*
-	 * We can typically only race with TTM trylocking under the
-	 * lru_lock, which will immediately be unlocked again since
-	 * the ttm_bo refcount is zero at this point. So trylocking *should*
-	 * always succeed here, as long as we hold the lru lock.
-	 */
-	spin_lock(&ttm_bo->bdev->lru_lock);
-	locked = dma_resv_trylock(&ttm_bo->base._resv);
-	spin_unlock(&ttm_bo->bdev->lru_lock);
-	xe_assert(xe, locked);
-
-	return locked;
-}
-
 static void xe_ttm_bo_release_notify(struct ttm_buffer_object *ttm_bo)
 {
 	struct dma_resv_iter cursor;
@@ -1505,8 +1480,11 @@ static void xe_ttm_bo_release_notify(struct ttm_buffer_object *ttm_bo)
 	bo = ttm_to_xe_bo(ttm_bo);
 	xe_assert(xe_bo_device(bo), !(bo->created && kref_read(&ttm_bo->base.refcount)));
 
-	if (!xe_ttm_bo_lock_in_destructor(ttm_bo))
-		return;
+	/*
+	 * This should never fail since there are no other references to the BO
+	 * any more.
+	 */
+	WARN_ON(!dma_resv_trylock(ttm_bo->base.resv));
 
 	/*
 	 * Scrub the preempt fences if any. The unbind fence is already
@@ -1706,7 +1684,7 @@ static void xe_gem_object_free(struct drm_gem_object *obj)
 	 * refcount directly if needed.
 	 */
 	__xe_bo_vunmap(gem_to_xe_bo(obj));
-	ttm_bo_put(container_of(obj, struct ttm_buffer_object, base));
+	drm_gem_object_put(obj);
 }
 
 static void xe_gem_object_close(struct drm_gem_object *obj,
@@ -1938,7 +1916,7 @@ static vm_fault_t xe_bo_cpu_fault(struct vm_fault *vmf)
 			.gfp_retry_mayfail = retry_after_wait,
 		};
 
-		err = drm_exec_lock_obj(&exec, &tbo->base);
+		err = drm_exec_lock_obj(&exec, &tbo->base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (err)
 			break;

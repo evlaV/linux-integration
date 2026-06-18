@@ -448,7 +448,8 @@ int xe_vm_madvise_ioctl(struct drm_device *dev, void *data, struct drm_file *fil
 
 				if (!bo)
 					continue;
-				err = drm_exec_lock_obj(&exec, &bo->ttm.base);
+				err = drm_exec_lock_obj(&exec, &bo->ttm.base,
+							false);
 				drm_exec_retry_on_contention(&exec);
 				if (err)
 					goto err_fini;

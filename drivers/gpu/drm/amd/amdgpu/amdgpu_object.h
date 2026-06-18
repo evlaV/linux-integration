@@ -36,6 +36,8 @@
 #include <linux/mmu_notifier.h>
 #endif
 
+struct drm_exec;
+
 #define AMDGPU_BO_INVALID_OFFSET	LONG_MAX
 #define AMDGPU_BO_MAX_PLACEMENTS	3
 
@@ -180,19 +182,17 @@ static inline unsigned amdgpu_mem_type_to_domain(u32 mem_type)
  * amdgpu_bo_reserve - reserve bo
  * @bo:		bo structure
  * @no_intr:	don't return -ERESTARTSYS on pending signal
- * @ctx:	acquire ctx to use for locking
  *
  * Returns:
  * -ERESTARTSYS: A wait for the buffer to become unreserved was interrupted by
  * a signal. Release all buffer reservations and return to user-space.
  */
-static inline int amdgpu_bo_reserve(struct amdgpu_bo *bo, bool no_intr,
-				    struct ww_acquire_ctx *ctx)
+static inline int amdgpu_bo_reserve(struct amdgpu_bo *bo, bool no_intr)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	int r;
 
-	r = ttm_bo_reserve(&bo->tbo, !no_intr, false, ctx);
+	r = ttm_bo_reserve(&bo->tbo, !no_intr, false, NULL);
 	if (unlikely(r != 0)) {
 		if (r != -ERESTARTSYS)
 			dev_err(adev->dev, "%p reserve failed\n", bo);
@@ -286,7 +286,7 @@ void *amdgpu_bo_kptr(struct amdgpu_bo *bo);
 void amdgpu_bo_kunmap(struct amdgpu_bo *bo);
 struct amdgpu_bo *amdgpu_bo_ref(struct amdgpu_bo *bo);
 void amdgpu_bo_unref(struct amdgpu_bo **bo);
-int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain);
+int amdgpu_bo_pin(struct amdgpu_bo *bo, struct drm_exec *exec, u32 domain);
 void amdgpu_bo_unpin(struct amdgpu_bo *bo);
 int amdgpu_bo_init(struct amdgpu_device *adev);
 void amdgpu_bo_fini(struct amdgpu_device *adev);

@@ -660,6 +660,7 @@ static int amdgpu_cs_pass2(struct amdgpu_cs_parser *p)
 	return 0;
 }
 
+#if 0
 /* Convert microseconds to bytes. */
 static u64 us_to_bytes(struct amdgpu_device *adev, s64 us)
 {
@@ -679,6 +680,7 @@ static s64 bytes_to_us(struct amdgpu_device *adev, u64 bytes)
 
 	return bytes >> adev->mm_stats.log2_max_MBps;
 }
+#endif
 
 /* Returns how many bytes TTM can move right now. If no bytes can be moved,
  * it returns 0. If it returns non-zero, it's OK to move at least one buffer,
@@ -697,6 +699,9 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 					      u64 *max_bytes,
 					      u64 *max_vis_bytes)
 {
+	*max_bytes = U64_MAX;
+	*max_vis_bytes = U64_MAX;
+#if 0
 	s64 time_us, increment_us;
 	u64 free_vram, total_vram, used_vram;
 	/* Allow a maximum of 200 accumulated ms. This is basically per-IB
@@ -782,6 +787,7 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 	}
 
 	spin_unlock(&adev->mm_stats.lock);
+#endif
 }
 
 /* Report how many bytes have really been moved for the last command
@@ -791,10 +797,12 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 				  u64 num_vis_bytes)
 {
+#if 0
 	spin_lock(&adev->mm_stats.lock);
 	adev->mm_stats.accum_us -= bytes_to_us(adev, num_bytes);
 	adev->mm_stats.accum_us_vis -= bytes_to_us(adev, num_vis_bytes);
 	spin_unlock(&adev->mm_stats.lock);
+#endif
 }
 
 static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
@@ -804,7 +812,7 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 	struct ttm_operation_ctx ctx = {
 		.interruptible = true,
 		.no_wait_gpu = false,
-		.resv = bo->tbo.base.resv
+		.exec = &p->exec,
 	};
 	uint32_t domain;
 	int r;
@@ -856,7 +864,10 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 				union drm_amdgpu_cs *cs)
 {
 	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
-	struct ttm_operation_ctx ctx = { true, false };
+	struct ttm_operation_ctx ctx = {
+		.interruptible =true,
+		.exec = &p->exec
+	};
 	struct amdgpu_vm *vm = &fpriv->vm;
 	struct amdgpu_bo_list_entry *e;
 	struct drm_gem_object *obj;
@@ -928,47 +939,53 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 			if (unlikely(r))
 				goto out_free_user_pages;
 		}
-	}
 
-	amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list) {
-		struct mm_struct *usermm;
+		amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list) {
+			struct mm_struct *usermm;
 
-		usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
-		if (usermm && usermm != current->mm) {
-			r = -EPERM;
-			goto out_free_user_pages;
-		}
-
-		if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
-		    e->user_invalidated) {
-			amdgpu_bo_placement_from_domain(e->bo,
-							AMDGPU_GEM_DOMAIN_CPU);
-			r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
-					    &ctx);
-			if (r)
+			usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
+			if (usermm && usermm != current->mm) {
+				r = -EPERM;
 				goto out_free_user_pages;
+			}
 
-			amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm,
-						     e->range);
+			if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
+			    e->user_invalidated) {
+				amdgpu_bo_placement_from_domain(e->bo,
+								AMDGPU_GEM_DOMAIN_CPU);
+				r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
+						    &ctx);
+				drm_exec_retry_on_contention(&p->exec);
+				if (r)
+					goto out_free_user_pages;
+
+				amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm,
+							     e->range);
+			}
 		}
-	}
 
-	amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
-					  &p->bytes_moved_vis_threshold);
-	p->bytes_moved = 0;
-	p->bytes_moved_vis = 0;
+		amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
+						  &p->bytes_moved_vis_threshold);
+		p->bytes_moved = 0;
+		p->bytes_moved_vis = 0;
 
-	r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL,
-			       amdgpu_cs_bo_validate, p);
-	if (r) {
-		drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
-		goto out_free_user_pages;
-	}
-
-	drm_exec_for_each_locked_object(&p->exec, index, obj) {
-		r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
-		if (unlikely(r))
+		r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL,
+				       amdgpu_cs_bo_validate, p);
+		drm_exec_retry_on_contention(&p->exec);
+		if (r) {
+			drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
 			goto out_free_user_pages;
+		}
+
+		drm_exec_for_each_locked_object(&p->exec, index, obj) {
+			r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
+			drm_exec_retry_on_contention(&p->exec);
+			if (unlikely(r))
+				goto out_free_user_pages;
+		}
+
+		amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
+					     p->bytes_moved_vis);
 	}
 
 	if (p->uf_bo) {
@@ -978,9 +995,6 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 
 		p->gang_leader->uf_addr += amdgpu_bo_gpu_offset(p->uf_bo);
 	}
-
-	amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
-				     p->bytes_moved_vis);
 
 	for (i = 0; i < p->gang_size; ++i)
 		amdgpu_job_set_resources(p->jobs[i], p->bo_list->gds_obj,

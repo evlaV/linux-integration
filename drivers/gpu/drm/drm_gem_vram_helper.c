@@ -234,11 +234,11 @@ EXPORT_SYMBOL(drm_gem_vram_create);
  * drm_gem_vram_put() - Releases a reference to a VRAM-backed GEM object
  * @gbo:	the GEM VRAM object
  *
- * See ttm_bo_put() for more information.
+ * See drm_gem_object_put() for more information.
  */
 void drm_gem_vram_put(struct drm_gem_vram_object *gbo)
 {
-	ttm_bo_put(&gbo->bo);
+	drm_gem_object_put(&gbo->bo.base);
 }
 EXPORT_SYMBOL(drm_gem_vram_put);
 

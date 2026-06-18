@@ -22,6 +22,7 @@
  */
 
 #include <drm/drm_edid.h>
+#include <drm/drm_exec.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
@@ -1844,9 +1845,9 @@ static int dce_v10_0_crtc_do_set_base(struct drm_crtc *crtc,
 	struct drm_device *dev = crtc->dev;
 	struct amdgpu_device *adev = drm_to_adev(dev);
 	struct drm_framebuffer *target_fb;
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_bo *abo;
+	struct drm_exec exec;
 	uint64_t fb_location, tiling_flags;
 	uint32_t fb_format, fb_pitch_pixels;
 	u32 fb_swap = REG_SET_FIELD(0, GRPH_SWAP_CNTL, GRPH_ENDIAN_SWAP, ENDIAN_NONE);
@@ -1871,30 +1872,31 @@ static int dce_v10_0_crtc_do_set_base(struct drm_crtc *crtc,
 	 */
 	obj = target_fb->obj[0];
 	abo = gem_to_amdgpu_bo(obj);
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	r = amdgpu_bo_reserve(abo, false, &pin_ctx);
-	if (unlikely(r != 0)) {
-		ww_acquire_fini(&pin_ctx);
-		return r;
-	}
 
-	if (!atomic) {
-		abo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-		r = amdgpu_bo_pin(abo, AMDGPU_GEM_DOMAIN_VRAM);
+	drm_exec_init(&exec, 0, 0);
+
+	drm_exec_until_all_locked(&exec) {
+		r = drm_exec_lock_obj(&exec, obj, false);
+		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r != 0)) {
-			amdgpu_bo_unreserve(abo);
-			ww_acquire_fini(&pin_ctx);
-			if (r == -EDEADLOCK)
-				goto pin_retry;
-			return -EINVAL;
+			drm_exec_fini(&exec);
+			return r;
+		}
+
+		if (!atomic) {
+			abo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+			r = amdgpu_bo_pin(abo, &exec, AMDGPU_GEM_DOMAIN_VRAM);
+			drm_exec_retry_on_contention(&exec);
+			if (unlikely(r != 0)) {
+				drm_exec_fini(&exec);
+				return -EINVAL;
+			}
 		}
 	}
 	fb_location = amdgpu_bo_gpu_offset(abo);
 
 	amdgpu_bo_get_tiling_flags(abo, &tiling_flags);
-	amdgpu_bo_unreserve(abo);
-	ww_acquire_fini(&pin_ctx);
+	drm_exec_fini(&exec);
 
 	pipe_config = AMDGPU_TILING_GET(tiling_flags, PIPE_CONFIG);
 
@@ -2079,7 +2081,7 @@ pin_retry:
 
 	if (!atomic && fb && fb != crtc->primary->fb) {
 		abo = gem_to_amdgpu_bo(fb->obj[0]);
-		r = amdgpu_bo_reserve(abo, true, NULL);
+		r = amdgpu_bo_reserve(abo, true);
 		if (unlikely(r != 0))
 			return r;
 		amdgpu_bo_unpin(abo);
@@ -2375,9 +2377,9 @@ static int dce_v10_0_crtc_cursor_set2(struct drm_crtc *crtc,
 				      int32_t hot_y)
 {
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_bo *aobj;
+	struct drm_exec exec;
 	int ret;
 
 	if (!handle) {
@@ -2400,26 +2402,28 @@ static int dce_v10_0_crtc_cursor_set2(struct drm_crtc *crtc,
 	}
 
 	aobj = gem_to_amdgpu_bo(obj);
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	ret = amdgpu_bo_reserve(aobj, false, &pin_ctx);
-	if (ret != 0) {
-		ww_acquire_fini(&pin_ctx);
-		drm_gem_object_put(obj);
-		return ret;
-	}
 
-	aobj->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-	ret = amdgpu_bo_pin(aobj, AMDGPU_GEM_DOMAIN_VRAM);
-	amdgpu_bo_unreserve(aobj);
-	ww_acquire_fini(&pin_ctx);
-	if (ret) {
-		if (ret == -EDEADLOCK)
-			goto pin_retry;
-		DRM_ERROR("Failed to pin new cursor BO (%d)\n", ret);
-		drm_gem_object_put(obj);
-		return ret;
+	drm_exec_init(&exec, 0, 0);
+	drm_exec_until_all_locked(&exec) {
+		ret = drm_exec_lock_obj(&exec, obj, false);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(ret != 0)) {
+			drm_exec_fini(&exec);
+			drm_gem_object_put(obj);
+			return ret;
+		}
+
+		aobj->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+		ret = amdgpu_bo_pin(aobj, &exec, AMDGPU_GEM_DOMAIN_VRAM);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(ret != 0)) {
+			DRM_ERROR("Failed to pin new cursor BO (%d)\n", ret);
+			drm_exec_fini(&exec);
+			drm_gem_object_put(obj);
+			return ret;
+		}
 	}
+	drm_exec_fini(&exec);
 	amdgpu_crtc->cursor_addr = amdgpu_bo_gpu_offset(aobj);
 
 	dce_v10_0_lock_cursor(crtc, true);
@@ -2447,7 +2451,7 @@ pin_retry:
 unpin:
 	if (amdgpu_crtc->cursor_bo) {
 		struct amdgpu_bo *aobj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
-		ret = amdgpu_bo_reserve(aobj, true, NULL);
+		ret = amdgpu_bo_reserve(aobj, true);
 		if (likely(ret == 0)) {
 			amdgpu_bo_unpin(aobj);
 			amdgpu_bo_unreserve(aobj);
@@ -2572,7 +2576,7 @@ static void dce_v10_0_crtc_disable(struct drm_crtc *crtc)
 		struct amdgpu_bo *abo;
 
 		abo = gem_to_amdgpu_bo(crtc->primary->fb->obj[0]);
-		r = amdgpu_bo_reserve(abo, true, NULL);
+		r = amdgpu_bo_reserve(abo, true);
 		if (unlikely(r))
 			DRM_ERROR("failed to reserve abo before unpin\n");
 		else {
