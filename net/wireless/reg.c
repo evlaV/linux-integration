@@ -1002,6 +1002,10 @@ static int query_regdb(const char *alpha2)
 	if (IS_ERR(regdb))
 		return PTR_ERR(regdb);
 
+	/* Skip WW regdom in firmware file, falling back to the static table. */
+	if (alpha2_equal("00", alpha2))
+		return -ENODATA;
+
 	country = &hdr->country[0];
 	while (country->coll_ptr) {
 		if (alpha2_equal(alpha2, country->alpha2))
