@@ -412,6 +412,8 @@ void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 void ttm_bo_set_bulk_move_ordered(struct ttm_buffer_object *bo,
 				  struct ttm_lru_bulk_move *bulk,
 				  uint32_t bulk_order);
+void ttm_bo_set_bulk_move_locked(struct ttm_buffer_object *bo,
+				 struct ttm_lru_bulk_move *bulk);
 int ttm_bo_evict(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx);
 bool ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 			      const struct ttm_place *place);

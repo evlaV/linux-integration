@@ -86,8 +86,8 @@ void ttm_bo_move_to_lru_tail(struct ttm_buffer_object *bo)
 }
 EXPORT_SYMBOL(ttm_bo_move_to_lru_tail);
 
-static void ttm_bo_set_bulk_move_locked(struct ttm_buffer_object *bo,
-					struct ttm_lru_bulk_move *bulk)
+void ttm_bo_set_bulk_move_locked(struct ttm_buffer_object *bo,
+				 struct ttm_lru_bulk_move *bulk)
 {
 	if (bo->resource)
 		ttm_resource_del_bulk_move(bo->resource, bo);
