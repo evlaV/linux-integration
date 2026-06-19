@@ -83,6 +83,17 @@ void ttm_bo_move_to_lru_tail(struct ttm_buffer_object *bo)
 }
 EXPORT_SYMBOL(ttm_bo_move_to_lru_tail);
 
+void ttm_bo_set_bulk_move_unlocked(struct ttm_buffer_object *bo,
+				   struct ttm_lru_bulk_move *bulk)
+{
+	if (bo->resource)
+		ttm_resource_del_bulk_move(bo->resource, bo);
+	bo->bulk_move = bulk;
+	if (bo->resource)
+		ttm_resource_add_bulk_move(bo->resource, bo);
+}
+EXPORT_SYMBOL(ttm_bo_set_bulk_move_unlocked);
+
 /**
  * ttm_bo_set_bulk_move - update BOs bulk move object
  *
@@ -106,11 +117,7 @@ void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 		return;
 
 	spin_lock(&bo->bdev->lru_lock);
-	if (bo->resource)
-		ttm_resource_del_bulk_move(bo->resource, bo);
-	bo->bulk_move = bulk;
-	if (bo->resource)
-		ttm_resource_add_bulk_move(bo->resource, bo);
+	ttm_bo_set_bulk_move_unlocked(bo, bulk);
 	spin_unlock(&bo->bdev->lru_lock);
 }
 EXPORT_SYMBOL(ttm_bo_set_bulk_move);

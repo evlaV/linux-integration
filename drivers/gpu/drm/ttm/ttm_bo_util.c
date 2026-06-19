@@ -280,9 +280,11 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	}
 
 	if (fbo->base.resource) {
-		ttm_resource_set_bo(fbo->base.resource, &fbo->base);
+		spin_lock(&bo->bdev->lru_lock);
+		fbo->base.resource->bo = &fbo->base;
 		bo->resource = NULL;
-		ttm_bo_set_bulk_move(&fbo->base, NULL);
+		ttm_bo_set_bulk_move_unlocked(&fbo->base, NULL);
+		spin_unlock(&bo->bdev->lru_lock);
 	} else {
 		fbo->base.bulk_move = NULL;
 	}
