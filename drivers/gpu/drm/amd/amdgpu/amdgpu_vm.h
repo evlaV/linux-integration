@@ -210,7 +210,7 @@ struct amdgpu_vm_bo_base {
 	 * protected by vm status_lock */
 	bool				shared;
 
-	/* protected by the BO being reserved */
+	/* protected by vm status lock */
 	bool				moved;
 };
 
