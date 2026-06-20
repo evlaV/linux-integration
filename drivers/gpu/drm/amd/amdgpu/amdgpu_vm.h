@@ -332,6 +332,11 @@ struct amdgpu_mem_stats {
 	uint64_t evicted;
 };
 
+/* TODO: Make these module parameters? */
+#define VM_EVICT_THROTTLE_SOFT_ALLOWED_DEADLOCKS 4
+#define VM_EVICT_THROTTLE_SOFT_TIMEOUT 200000
+#define VM_EVICT_THROTTLE_HARD_TIMEOUT 50000
+
 struct amdgpu_vm {
 	/* tree of virtual addresses mapped */
 	struct rb_root_cached	va;
@@ -348,6 +353,9 @@ struct amdgpu_vm {
 
 	/* Memory statistics for this vm, protected by status_lock */
 	struct amdgpu_mem_stats stats[__AMDGPU_PL_NUM];
+
+	/* Timestamp for tracking when to throttle VM allocations. */
+	u64			last_evict_throttle_start_us;
 
 	/*
 	 * The following lists contain amdgpu_vm_bo_base objects for either
