@@ -1838,6 +1838,7 @@ struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 
 	bo_va->ref_count = 1;
 	bo_va->last_pt_update = dma_fence_get_stub();
+	bo_va->priority = ~0u;
 	INIT_LIST_HEAD(&bo_va->valids);
 	INIT_LIST_HEAD(&bo_va->invalids);
 

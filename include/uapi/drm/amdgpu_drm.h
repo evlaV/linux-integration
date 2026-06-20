@@ -189,6 +189,9 @@ struct drm_amdgpu_gem_create_in  {
 	__u64 domains;
 	/** allocation flags */
 	__u64 domain_flags;
+	/** priority + 1 (0 means a priority of UINT32_MAX aka unset) */
+	__u32 priority_plus1;
+	__u32 pad;
 };
 
 struct drm_amdgpu_gem_create_out  {
@@ -800,6 +803,10 @@ union drm_amdgpu_wait_fences {
 
 #define AMDGPU_GEM_OP_GET_GEM_CREATE_INFO	0
 #define AMDGPU_GEM_OP_SET_PLACEMENT		1
+/* NOTE: This is backported from a later upstream version, so the numbers
+ * are non-contiguous.
+ */
+#define AMDGPU_GEM_OP_SET_PRIORITY              3
 
 /* Sets or returns a value associated with a buffer. */
 struct drm_amdgpu_gem_op {

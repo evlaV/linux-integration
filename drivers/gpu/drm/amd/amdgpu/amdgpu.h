@@ -1561,6 +1561,10 @@ bool amdgpu_device_should_use_aspm(struct amdgpu_device *adev);
 
 void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 				  u64 num_vis_bytes);
+bool amdgpu_cs_eviction_valuable(struct ttm_buffer_object *evictor,
+				 struct ttm_buffer_object *bo,
+				 void *evict_valuable_param,
+				 const struct ttm_place *place);
 int amdgpu_device_resize_fb_bar(struct amdgpu_device *adev);
 void amdgpu_device_program_register_sequence(struct amdgpu_device *adev,
 					     const u32 *registers,

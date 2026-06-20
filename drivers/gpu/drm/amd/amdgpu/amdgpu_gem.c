@@ -994,6 +994,7 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 	struct drm_amdgpu_gem_op *args = data;
 	struct drm_gem_object *gobj;
 	struct amdgpu_vm_bo_base *base;
+	struct amdgpu_fpriv *fpriv;
 	struct amdgpu_bo *robj;
 	int r;
 
@@ -1002,6 +1003,8 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 		return -ENOENT;
 
 	robj = gem_to_amdgpu_bo(gobj);
+
+	fpriv = filp->driver_priv;
 
 	r = amdgpu_bo_reserve(robj, false);
 	if (unlikely(r))
@@ -1054,6 +1057,23 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 
 		amdgpu_bo_unreserve(robj);
 		break;
+	case AMDGPU_GEM_OP_SET_PRIORITY: {
+		if (!amdgpu_vm_is_bo_always_valid(&fpriv->vm, robj) ||
+		    args->value > U32_MAX) {
+			amdgpu_bo_unreserve(robj);
+			r = -EINVAL;
+			break;
+		}
+
+		struct amdgpu_bo_va *bo_va =
+			amdgpu_vm_bo_find(&fpriv->vm, robj);
+		if (!bo_va)
+			r = -EINVAL;
+		else
+			bo_va->priority = args->value;
+		amdgpu_bo_unreserve(robj);
+		break;
+	}
 	default:
 		amdgpu_bo_unreserve(robj);
 		r = -EINVAL;

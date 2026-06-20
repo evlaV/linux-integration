@@ -1409,6 +1409,10 @@ static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 	if (!amdgpu_bo_is_amdgpu_bo(bo))
 		return ttm_bo_eviction_valuable(bo, place);
 
+	if (evictor && valuable_param &&
+	    !amdgpu_cs_eviction_valuable(evictor, bo, valuable_param, place))
+		return false;
+
 	/* Swapout? */
 	if (bo->resource->mem_type == TTM_PL_SYSTEM)
 		return true;

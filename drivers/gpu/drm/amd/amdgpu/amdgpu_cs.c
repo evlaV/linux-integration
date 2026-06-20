@@ -803,20 +803,78 @@ void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 	spin_unlock(&adev->mm_stats.lock);
 }
 
+bool amdgpu_cs_eviction_valuable(struct ttm_buffer_object *evictor,
+				 struct ttm_buffer_object *bo,
+				 void *evict_valuable_param,
+				 const struct ttm_place *place)
+{
+	struct amdgpu_cs_parser *p = evict_valuable_param;
+	struct amdgpu_bo *aevictor, *abo;
+	struct amdgpu_bo_va *evictor_va, *bo_va;
+	struct amdgpu_fpriv *fpriv;
+
+	if (!amdgpu_bo_is_amdgpu_bo(evictor) || !amdgpu_bo_is_amdgpu_bo(bo) ||
+	    !p)
+		return true;
+
+	fpriv = p->filp->driver_priv;
+	aevictor = ttm_to_amdgpu_bo(evictor);
+	abo = ttm_to_amdgpu_bo(bo);
+
+	/* Abort the evict if the BOs are not always valid. */
+	if (!amdgpu_vm_is_bo_always_valid(&fpriv->vm, aevictor) ||
+	    !amdgpu_vm_is_bo_always_valid(&fpriv->vm, abo) ||
+	    evictor->type == ttm_bo_type_kernel ||
+	    bo->type == ttm_bo_type_kernel)
+		return dma_resv_locking_ctx(bo->base.resv) != &p->exec.ticket;
+
+	/* We actually need this buffer in the submission, don't kick it into an invalid place */
+	if (!(amdgpu_mem_type_to_domain(place->mem_type) &
+	      abo->allowed_domains))
+		return false;
+
+	evictor_va = amdgpu_vm_bo_find(&fpriv->vm, aevictor);
+	bo_va = amdgpu_vm_bo_find(&fpriv->vm, abo);
+
+	if (!evictor_va || !bo_va)
+		return false;
+
+	drm_dbg(adev_to_drm(p->adev), "eviction priority: %u vs %u\n",
+		bo_va->priority, evictor_va->priority);
+
+	return bo_va->priority < evictor_va->priority;
+}
+
 static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	struct amdgpu_cs_parser *p = param;
+	struct amdgpu_bo_va *bo_va;
 	struct ttm_operation_ctx ctx = {
 		.interruptible = true,
 		.no_wait_gpu = false,
 		.exec = &p->exec,
 	};
+	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
 	uint32_t domain;
 	int r;
 
 	if (bo->tbo.pin_count)
 		return 0;
+
+	if (amdgpu_vm_is_bo_always_valid(&fpriv->vm, bo) &&
+	    bo->tbo.type != ttm_bo_type_kernel) {
+		ctx.allow_res_evict = true;
+		ctx.evict_valuable_param = param;
+		bo_va = amdgpu_vm_bo_find(&fpriv->vm, bo);
+		if (bo_va->priority == 0 &&
+		    amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
+			    bo->allowed_domains) {
+			drm_dbg(adev_to_drm(p->adev),
+				"priority 0, skipping validation\n");
+			return 0;
+		}
+	}
 
 	/* Don't move this buffer if we have depleted our allowance
 	 * to move it. Don't move anything if the threshold is zero.
