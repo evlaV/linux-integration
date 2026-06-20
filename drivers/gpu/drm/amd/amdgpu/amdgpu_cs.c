@@ -853,13 +853,24 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 	struct ttm_operation_ctx ctx = {
 		.interruptible = true,
 		.no_wait_gpu = false,
+		.cgroup_throttle = p->num_deadlocks > 0 ||
+				   p->vm_eviction_throttle_soft,
 		.exec = &p->exec,
 	};
 	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
+	bool in_allowed_domains;
 	uint32_t domain;
 	int r;
 
 	if (bo->tbo.pin_count)
+		return 0;
+
+	in_allowed_domains =
+		bo->tbo.resource &&
+		amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
+			bo->allowed_domains;
+
+	if (p->vm_eviction_throttle_hard && in_allowed_domains)
 		return 0;
 
 	if (amdgpu_vm_is_bo_always_valid(&fpriv->vm, bo) &&
@@ -867,9 +878,7 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 		ctx.allow_res_evict = true;
 		ctx.evict_valuable_param = param;
 		bo_va = amdgpu_vm_bo_find(&fpriv->vm, bo);
-		if (bo_va->priority == 0 &&
-		    amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
-			    bo->allowed_domains) {
+		if (bo_va->priority == 0 && in_allowed_domains) {
 			drm_dbg(adev_to_drm(p->adev),
 				"priority 0, skipping validation\n");
 			return 0;
@@ -902,6 +911,8 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 retry:
 	amdgpu_bo_placement_from_domain(bo, domain);
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
+	if (r == -EDEADLOCK)
+		++p->num_deadlocks;
 
 	p->bytes_moved += ctx.bytes_moved;
 	if (!amdgpu_gmc_vram_full_visible(&adev->gmc) &&
@@ -927,6 +938,8 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 	struct amdgpu_vm *vm = &fpriv->vm;
 	struct amdgpu_bo_list_entry *e;
 	struct drm_gem_object *obj;
+	u64 us_since_eviction_throttle;
+	uint32_t num_allowed_deadlocks;
 	unsigned long index;
 	unsigned int i;
 	int r;
@@ -989,6 +1002,21 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 		drm_exec_retry_on_contention(&p->exec);
 		if (unlikely(r))
 			goto out_free_user_pages;
+
+		us_since_eviction_throttle =
+			ktime_to_us(ktime_get()) -
+			fpriv->vm.last_evict_throttle_start_us;
+		p->vm_eviction_throttle_soft = us_since_eviction_throttle <=
+					       VM_EVICT_THROTTLE_SOFT_TIMEOUT;
+		p->vm_eviction_throttle_hard = us_since_eviction_throttle <=
+					       VM_EVICT_THROTTLE_HARD_TIMEOUT;
+		num_allowed_deadlocks = 0;
+		if (p->vm_eviction_throttle_soft)
+			num_allowed_deadlocks =
+				VM_EVICT_THROTTLE_SOFT_ALLOWED_DEADLOCKS;
+		if (p->num_deadlocks > num_allowed_deadlocks)
+			p->vm_eviction_throttle_soft =
+				p->vm_eviction_throttle_hard = true;
 
 		amdgpu_bo_list_for_each_entry(e, p->bo_list) {
 			/* One fence for TTM and one for each CS job */
@@ -1473,7 +1501,18 @@ static int amdgpu_cs_submit(struct amdgpu_cs_parser *p,
 /* Cleanup the parser structure */
 static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser)
 {
+	struct amdgpu_fpriv *fpriv = parser->filp->driver_priv;
 	unsigned int i;
+	uint32_t num_allowed_deadlocks = 0;
+
+	if (parser->vm_eviction_throttle_soft)
+		num_allowed_deadlocks =
+			VM_EVICT_THROTTLE_SOFT_ALLOWED_DEADLOCKS;
+
+	if (parser->num_deadlocks > num_allowed_deadlocks) {
+		fpriv->vm.last_evict_throttle_start_us =
+			ktime_to_us(ktime_get());
+	}
 
 	amdgpu_sync_free(&parser->sync);
 	drm_exec_fini(&parser->exec);
