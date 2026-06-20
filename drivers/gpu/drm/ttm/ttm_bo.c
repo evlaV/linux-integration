@@ -805,6 +805,7 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 	may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
 	below_low = dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
 	below_low &= !bo->bdev->always_throttle_cgroup;
+	below_low &= !ctx->cgroup_throttle;
 	alloc_state->only_evict_unprotected = !may_evict && below_low;
 
 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
