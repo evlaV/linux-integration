@@ -1000,12 +1000,14 @@ static long xe_bo_shrink_purge(struct ttm_operation_ctx *ctx,
 	return lret;
 }
 
-static bool
-xe_bo_eviction_valuable(struct ttm_buffer_object *bo, const struct ttm_place *place)
+static bool xe_bo_eviction_valuable(struct ttm_buffer_object *evictor,
+				    struct ttm_buffer_object *bo,
+				    void *valuable_param,
+				    const struct ttm_place *place)
 {
 	struct drm_gpuvm_bo *vm_bo;
 
-	if (!ttm_bo_eviction_valuable(bo, place))
+	if (!ttm_bo_eviction_valuable(evictor, bo, valuable_param, place))
 		return false;
 
 	if (!xe_bo_is_xe_bo(bo))
@@ -1053,7 +1055,7 @@ long xe_bo_shrink(struct ttm_operation_ctx *ctx, struct ttm_buffer_object *bo,
 	    (flags.purge && !xe_tt->purgeable))
 		return -EBUSY;
 
-	if (!xe_bo_eviction_valuable(bo, &place))
+	if (!xe_bo_eviction_valuable(NULL, bo, NULL, &place))
 		return -EBUSY;
 
 	if (!xe_bo_is_xe_bo(bo) || !xe_bo_get_unless_zero(xe_bo))
