@@ -112,6 +112,7 @@ struct ttm_buffer_object {
 	struct ttm_resource *resource;
 	struct ttm_tt *ttm;
 	struct ttm_lru_bulk_move *bulk_move;
+	uint32_t bulk_move_order;
 	unsigned priority;
 	unsigned pin_count;
 
@@ -416,6 +417,9 @@ int ttm_bo_validate(struct ttm_buffer_object *bo,
 void ttm_bo_fini(struct ttm_buffer_object *bo);
 void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 			  struct ttm_lru_bulk_move *bulk);
+void ttm_bo_set_bulk_move_ordered(struct ttm_buffer_object *bo,
+				  struct ttm_lru_bulk_move *bulk,
+				  uint32_t bulk_order);
 bool ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
 			      struct ttm_buffer_object *bo, void *evict_param,
 			      const struct ttm_place *place);

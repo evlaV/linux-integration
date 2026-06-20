@@ -1700,7 +1700,7 @@ struct xe_vm *xe_vm_create(struct xe_device *xe, u32 flags, struct xe_file *xef)
 	init_rwsem(&vm->userptr.notifier_lock);
 	spin_lock_init(&vm->userptr.invalidated_lock);
 
-	ttm_lru_bulk_move_init(&vm->lru_bulk_move);
+	ttm_lru_bulk_move_init(&vm->lru_bulk_move, false);
 
 	INIT_WORK(&vm->destroy_work, vm_destroy_work_func);
 

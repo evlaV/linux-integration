@@ -821,7 +821,7 @@ bool amdgpu_cs_eviction_valuable(struct ttm_buffer_object *evictor,
 	aevictor = ttm_to_amdgpu_bo(evictor);
 	abo = ttm_to_amdgpu_bo(bo);
 
-	/* Abort the evict if the BOs are not always valid. */
+	/* Abort the evict if the BOs are not always valid or not user BOs. */
 	if (!amdgpu_vm_is_bo_always_valid(&fpriv->vm, aevictor) ||
 	    !amdgpu_vm_is_bo_always_valid(&fpriv->vm, abo) ||
 	    evictor->type == ttm_bo_type_kernel ||

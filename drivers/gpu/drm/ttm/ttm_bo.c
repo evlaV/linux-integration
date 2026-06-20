@@ -100,6 +100,9 @@ void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 {
 	dma_resv_assert_held(bo->base.resv);
 
+	/* Unordered insertions into ordered bulk moves are forbidden. */
+	WARN_ON_ONCE(bulk && bulk->ordered);
+
 	if (bo->bulk_move == bulk)
 		return;
 
@@ -112,6 +115,32 @@ void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 	spin_unlock(&bo->bdev->lru_lock);
 }
 EXPORT_SYMBOL(ttm_bo_set_bulk_move);
+
+void ttm_bo_set_bulk_move_ordered(struct ttm_buffer_object *bo,
+				  struct ttm_lru_bulk_move *bulk,
+				  uint32_t bulk_order)
+{
+	dma_resv_assert_held(bo->base.resv);
+
+	if (!bulk)
+		return ttm_bo_set_bulk_move(bo, NULL);
+
+	/* Ordered insertions into unordered bulk moves are forbidden. */
+	WARN_ON_ONCE(!bulk->ordered);
+
+	if (bo->bulk_move == bulk && bo->bulk_move_order == bulk_order)
+		return;
+
+	spin_lock(&bo->bdev->lru_lock);
+	if (bo->resource)
+		ttm_resource_del_bulk_move(bo->resource, bo);
+	bo->bulk_move_order = bulk_order;
+	bo->bulk_move = bulk;
+	if (bo->resource)
+		ttm_resource_add_bulk_move(bo->resource, bo);
+	spin_unlock(&bo->bdev->lru_lock);
+}
+EXPORT_SYMBOL(ttm_bo_set_bulk_move_ordered);
 
 static int ttm_bo_handle_move_mem(struct ttm_buffer_object *bo,
 				  struct ttm_resource *mem, bool evict,

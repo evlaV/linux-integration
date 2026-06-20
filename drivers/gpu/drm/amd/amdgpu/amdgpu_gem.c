@@ -1067,10 +1067,13 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 
 		struct amdgpu_bo_va *bo_va =
 			amdgpu_vm_bo_find(&fpriv->vm, robj);
-		if (!bo_va)
+		if (!bo_va) {
 			r = -EINVAL;
-		else
+		} else {
 			bo_va->priority = args->value;
+			ttm_bo_set_bulk_move_ordered(
+				&robj->tbo, robj->tbo.bulk_move, args->value);
+		}
 		amdgpu_bo_unreserve(robj);
 		break;
 	}

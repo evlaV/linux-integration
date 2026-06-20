@@ -497,7 +497,7 @@ void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
 
 	dma_resv_assert_held(vm->root.bo->tbo.base.resv);
 
-	ttm_bo_set_bulk_move(&bo->tbo, &vm->lru_bulk_move);
+	ttm_bo_set_bulk_move_ordered(&bo->tbo, &vm->lru_bulk_move, U32_MAX);
 	if (bo->tbo.type == ttm_bo_type_kernel && bo->parent)
 		amdgpu_vm_bo_relocated(base, false);
 	else
@@ -2679,7 +2679,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (r)
 		return r;
 
-	ttm_lru_bulk_move_init(&vm->lru_bulk_move);
+	ttm_lru_bulk_move_init(&vm->lru_bulk_move, true);
 
 	vm->is_compute_context = false;
 
