@@ -960,11 +960,18 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 			goto error_unlock;
 		}
 
-		if (plane->type != DRM_PLANE_TYPE_CURSOR)
+		if (plane->type != DRM_PLANE_TYPE_CURSOR) {
 			domain = amdgpu_display_supported_domains(adev,
 								  rbo->flags);
-		else
+			/*
+			 * Keep the swapchain in one memory domain: prefer VRAM
+			 * (evicting to fit) so it does not split across the
+			 * VRAM/GTT aperture boundary.
+			 */
+			rbo->display_prefer_vram = true;
+		} else {
 			domain = AMDGPU_GEM_DOMAIN_VRAM;
+		}
 
 		rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
 		r = amdgpu_bo_pin(rbo, &exec, domain);

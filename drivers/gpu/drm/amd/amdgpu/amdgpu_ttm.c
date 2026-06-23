@@ -1405,6 +1405,7 @@ static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
 					    void *valuable_param,
 					    const struct ttm_place *place)
 {
+	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->bdev);
 	struct dma_resv_iter resv_cursor;
 	struct dma_fence *f;
 
@@ -1414,6 +1415,19 @@ static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
 
 	if (evictor && valuable_param &&
 	    !amdgpu_cs_eviction_valuable(evictor, bo, valuable_param, place))
+		return false;
+
+	/*
+	 * On APUs prefer evicting other buffers over an idle display scanout
+	 * buffer so the swapchain stays VRAM-resident. Gated on the evictor
+	 * also being a display buffer, so non-display allocations can still
+	 * reclaim this one and an all-display VRAM just falls back to GTT.
+	 */
+	if ((adev->flags & AMD_IS_APU) &&
+	    ttm_to_amdgpu_bo(bo)->display_prefer_vram &&
+	    bo->resource->mem_type == TTM_PL_VRAM &&
+	    evictor && amdgpu_bo_is_amdgpu_bo(evictor) &&
+	    ttm_to_amdgpu_bo(evictor)->display_prefer_vram)
 		return false;
 
 	/* Swapout? */

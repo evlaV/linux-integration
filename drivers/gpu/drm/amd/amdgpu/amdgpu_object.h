@@ -116,6 +116,8 @@ struct amdgpu_bo {
 	struct ttm_buffer_object	tbo;
 	struct ttm_bo_kmap_obj		kmap;
 	u64				flags;
+	/* scanout buffer: prefer VRAM, evict to fit on APUs (see prepare_fb) */
+	bool				display_prefer_vram;
 	/* per VM structure for page tables and with virtual addresses */
 	struct amdgpu_vm_bo_base	*vm_bo;
 	/* Constant after initialization */

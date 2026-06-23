@@ -162,8 +162,12 @@ void amdgpu_bo_placement_from_domain(struct amdgpu_bo *abo, u32 domain)
 		/*
 		 * When GTT is just an alternative to VRAM make sure that we
 		 * only use it as fallback and still try to fill up VRAM first.
+		 * Skipped on APUs where the two are equivalent, except for
+		 * display scanout buffers that must not split across the
+		 * VRAM/GTT aperture boundary.
 		 */
-		if (abo->tbo.resource && !(adev->flags & AMD_IS_APU) &&
+		if (abo->tbo.resource &&
+		    (!(adev->flags & AMD_IS_APU) || abo->display_prefer_vram) &&
 		    domain & abo->preferred_domains & AMDGPU_GEM_DOMAIN_VRAM)
 			places[c].flags |= TTM_PL_FLAG_FALLBACK;
 		c++;
