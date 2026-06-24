@@ -167,6 +167,25 @@ int amdgpu_vm_set_pasid(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	return 0;
 }
 
+static void amdgpu_vm_bo_insert_soft_evicted(struct amdgpu_vm_bo_base *vm_bo)
+{
+	struct amdgpu_vm_bo_base *insert_point;
+	struct amdgpu_vm *vm = vm_bo->vm;
+
+	struct amdgpu_bo_va *bo_va =
+		container_of(vm_bo, struct amdgpu_bo_va, base);
+
+	list_for_each_entry(insert_point, &vm->soft_evicted, vm_status) {
+		struct amdgpu_bo_va *insert_va =
+			container_of(insert_point, struct amdgpu_bo_va, base);
+		if (insert_va->priority < bo_va->priority)
+			return list_move_tail(&vm_bo->vm_status,
+					      &insert_point->vm_status);
+	}
+
+	list_move_tail(&vm_bo->vm_status, &vm->soft_evicted);
+}
+
 /**
  * amdgpu_vm_bo_evicted - vm_bo is evicted
  *
@@ -187,7 +206,7 @@ static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo, bool soft)
 	if (bo->tbo.type == ttm_bo_type_kernel)
 		list_move(&vm_bo->vm_status, &vm->evicted);
 	else if (soft)
-		list_move_tail(&vm_bo->vm_status, &vm->soft_evicted);
+		amdgpu_vm_bo_insert_soft_evicted(vm_bo);
 	else
 		list_move_tail(&vm_bo->vm_status, &vm->evicted);
 	spin_unlock(&vm_bo->vm->status_lock);
