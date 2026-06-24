@@ -2691,8 +2691,10 @@ static void generic_acomp_pin_eld_notify(void *audio_ptr, int port, int dev_id)
 	/* skip notification during system suspend (but not in runtime PM);
 	 * the state will be updated at resume
 	 */
-	if (codec->core.dev.power.power_state.event == PM_EVENT_SUSPEND)
+	if (codec->core.dev.power.power_state.event == PM_EVENT_SUSPEND) {
+		codec->acomp_requested_resume = 1;
 		return;
+	}
 
 	check_presence_and_report(codec, pin_nid, dev_id);
 }
