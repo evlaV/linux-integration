@@ -3183,12 +3183,14 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 	struct amdgpu_bo_va *bo_va, *tmp;
 	u64 total_idle = 0;
 	u64 total_evicted = 0;
+	u64 total_soft_evicted = 0;
 	u64 total_relocated = 0;
 	u64 total_moved = 0;
 	u64 total_invalidated = 0;
 	u64 total_done = 0;
 	unsigned int total_idle_objs = 0;
 	unsigned int total_evicted_objs = 0;
+	unsigned int total_soft_evicted_objs = 0;
 	unsigned int total_relocated_objs = 0;
 	unsigned int total_moved_objs = 0;
 	unsigned int total_invalidated_objs = 0;
@@ -3203,6 +3205,11 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 		if (!bo_va->base.bo)
 			continue;
 		total_idle += amdgpu_bo_print_info(id++, bo_va->base.bo, m);
+		if (amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo) &&
+		    bo_va->base.bo->tbo.type != ttm_bo_type_kernel) {
+			seq_printf(m, "\t\tpriority = %u\n",
+				   READ_ONCE(bo_va->priority));
+		}
 	}
 	total_idle_objs = id;
 	id = 0;
@@ -3212,6 +3219,27 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 		if (!bo_va->base.bo)
 			continue;
 		total_evicted += amdgpu_bo_print_info(id++, bo_va->base.bo, m);
+		if (amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo) &&
+		    bo_va->base.bo->tbo.type != ttm_bo_type_kernel) {
+			seq_printf(m, "\t\tpriority = %u\n",
+				   READ_ONCE(bo_va->priority));
+		}
+	}
+	total_evicted_objs = id;
+	id = 0;
+
+	seq_puts(m, "\tSoft-Evicted BOs:\n");
+	list_for_each_entry_safe(bo_va, tmp, &vm->soft_evicted,
+				 base.vm_status) {
+		if (!bo_va->base.bo)
+			continue;
+		total_soft_evicted +=
+			amdgpu_bo_print_info(id++, bo_va->base.bo, m);
+		if (amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo) &&
+		    bo_va->base.bo->tbo.type != ttm_bo_type_kernel) {
+			seq_printf(m, "\t\tpriority = %u\n",
+				   READ_ONCE(bo_va->priority));
+		}
 	}
 	total_evicted_objs = id;
 	id = 0;
@@ -3230,6 +3258,11 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 		if (!bo_va->base.bo)
 			continue;
 		total_moved += amdgpu_bo_print_info(id++, bo_va->base.bo, m);
+		if (amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo) &&
+		    bo_va->base.bo->tbo.type != ttm_bo_type_kernel) {
+			seq_printf(m, "\t\tpriority = %u\n",
+				   READ_ONCE(bo_va->priority));
+		}
 	}
 	total_moved_objs = id;
 	id = 0;
@@ -3239,6 +3272,11 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 		if (!bo_va->base.bo)
 			continue;
 		total_invalidated += amdgpu_bo_print_info(id++,	bo_va->base.bo, m);
+		if (amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo) &&
+		    bo_va->base.bo->tbo.type != ttm_bo_type_kernel) {
+			seq_printf(m, "\t\tpriority = %u\n",
+				   READ_ONCE(bo_va->priority));
+		}
 	}
 	total_invalidated_objs = id;
 	id = 0;
@@ -3256,6 +3294,8 @@ void amdgpu_debugfs_vm_bo_info(struct amdgpu_vm *vm, struct seq_file *m)
 		   total_idle_objs);
 	seq_printf(m, "\tTotal evicted size:     %12lld\tobjs:\t%d\n", total_evicted,
 		   total_evicted_objs);
+	seq_printf(m, "\tTotal soft-evicted size:     %12lld\tobjs:\t%d\n",
+		   total_soft_evicted, total_soft_evicted_objs);
 	seq_printf(m, "\tTotal relocated size:   %12lld\tobjs:\t%d\n", total_relocated,
 		   total_relocated_objs);
 	seq_printf(m, "\tTotal moved size:       %12lld\tobjs:\t%d\n", total_moved,
