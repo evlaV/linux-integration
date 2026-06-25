@@ -2411,7 +2411,7 @@ void amdgpu_vm_bo_invalidate(struct amdgpu_bo *bo, bool evicted)
  * Update the memory stats for the new placement and mark @bo as invalid.
  */
 void amdgpu_vm_bo_move(struct amdgpu_bo *bo, struct ttm_resource *new_mem,
-		       bool evicted)
+		       bool evicted, bool soft_evicted)
 {
 	struct amdgpu_vm_bo_base *bo_base;
 
@@ -2424,7 +2424,7 @@ void amdgpu_vm_bo_move(struct amdgpu_bo *bo, struct ttm_resource *new_mem,
 		spin_unlock(&vm->status_lock);
 	}
 
-	amdgpu_vm_bo_invalidate(bo, evicted);
+	amdgpu_vm_bo_invalidate(bo, evicted && !soft_evicted);
 }
 
 /**
