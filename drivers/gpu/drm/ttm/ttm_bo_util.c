@@ -852,6 +852,68 @@ static void ttm_lru_walk_unlock(struct ttm_buffer_object *bo,
 		dma_resv_unlock(bo->base.resv);
 }
 
+s64 ttm_lru_walk_ordered_bulk_for_evict(struct ttm_lru_walk *walk,
+					struct ttm_device *bdev,
+					struct ttm_resource_manager *man,
+					u32 mem_type,
+					struct ttm_buffer_object *evictor,
+					s64 target)
+{
+	struct ttm_resource_cursor cursor;
+	struct ttm_resource *res;
+	s64 progress = 0;
+	s64 lret;
+
+	spin_lock(&bdev->lru_lock);
+
+	if (!evictor->bulk_move || !evictor->bulk_move->ordered) {
+		spin_unlock(&bdev->lru_lock);
+		return 0;
+	}
+
+	ttm_resource_cursor_init(&cursor, man);
+	cursor.mem_type = mem_type;
+	ttm_resource_manager_for_each_res_on_bulk(&cursor, res,
+						  evictor->bulk_move)
+	{
+		struct ttm_buffer_object *bo = res->bo;
+
+		if (bo->bulk_move_order >= evictor->bulk_move_order)
+			break;
+
+		if (walk->ctx->exec) {
+			if (WARN_ON(dma_resv_locking_ctx(bo->base.resv) !=
+				    &walk->ctx->exec->ticket))
+				break;
+		} else if (walk->ticket) {
+			if (WARN_ON(dma_resv_locking_ctx(bo->base.resv) !=
+				    walk->ticket))
+				break;
+		}
+
+		if (!ttm_bo_get_unless_zero(bo))
+			continue;
+		spin_unlock(&bdev->lru_lock);
+
+		lret = walk->process_bo(walk, bo);
+
+		ttm_bo_put(bo);
+
+		if (lret == -EBUSY)
+			lret = 0;
+		progress = (lret < 0) ? lret : progress + lret;
+
+		spin_lock(&bdev->lru_lock);
+		if (progress < 0 || progress >= target)
+			break;
+	}
+	ttm_resource_cursor_fini(&cursor);
+	spin_unlock(&bdev->lru_lock);
+
+	return progress;
+}
+EXPORT_SYMBOL(ttm_lru_walk_ordered_bulk_for_evict);
+
 /**
  * ttm_lru_walk_for_evict() - Perform a LRU list walk, with actions taken on
  * valid items.

@@ -476,7 +476,12 @@ void ttm_resource_manager_debug(struct ttm_resource_manager *man,
 struct ttm_resource *
 ttm_resource_manager_first(struct ttm_resource_cursor *cursor);
 struct ttm_resource *
+ttm_resource_manager_first_on_bulk(struct ttm_resource_cursor *cursor,
+				   struct ttm_lru_bulk_move *bulk);
+struct ttm_resource *
 ttm_resource_manager_next(struct ttm_resource_cursor *cursor);
+struct ttm_resource *
+ttm_resource_manager_next_on_bulk(struct ttm_resource_cursor *cursor);
 
 struct ttm_resource *
 ttm_lru_first_res_or_null(struct list_head *head);
@@ -491,6 +496,10 @@ ttm_lru_first_res_or_null(struct list_head *head);
 #define ttm_resource_manager_for_each_res(cursor, res)	\
 	for (res = ttm_resource_manager_first(cursor); res;	\
 	     res = ttm_resource_manager_next(cursor))
+
+#define ttm_resource_manager_for_each_res_on_bulk(cursor, res, bulk)      \
+	for (res = ttm_resource_manager_first_on_bulk(cursor, bulk); res; \
+	     res = ttm_resource_manager_next_on_bulk(cursor))
 
 struct ttm_kmap_iter *
 ttm_kmap_iter_iomap_init(struct ttm_kmap_iter_iomap *iter_io,

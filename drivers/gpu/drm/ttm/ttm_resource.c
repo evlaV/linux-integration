@@ -729,6 +729,68 @@ ttm_resource_manager_first(struct ttm_resource_cursor *cursor)
 	return ttm_resource_manager_next(cursor);
 }
 
+struct ttm_resource *
+ttm_resource_manager_first_on_bulk(struct ttm_resource_cursor *cursor,
+				   struct ttm_lru_bulk_move *bulk)
+{
+	struct ttm_resource_manager *man = cursor->man;
+	struct ttm_resource *first;
+
+	if (WARN_ON_ONCE(!man))
+		return NULL;
+
+	lockdep_assert_held(&man->bdev->lru_lock);
+
+	for (;;) {
+		first = bulk->pos[cursor->mem_type][cursor->priority].first;
+
+		if (first)
+			break;
+		if (++cursor->priority >= TTM_MAX_BO_PRIORITY)
+			return NULL;
+	}
+
+	ttm_resource_cursor_check_bulk(cursor, &first->lru);
+	list_move(&cursor->hitch.link, &first->lru.link);
+	return first;
+}
+
+struct ttm_resource *
+ttm_resource_manager_next_on_bulk(struct ttm_resource_cursor *cursor)
+{
+	struct ttm_resource_manager *man = cursor->man;
+	struct ttm_lru_bulk_move *bulk = cursor->bulk;
+	struct ttm_lru_item *lru;
+
+	lockdep_assert_held(&man->bdev->lru_lock);
+
+	if (WARN_ON(!bulk))
+		return NULL;
+
+	for (;;) {
+		lru = &cursor->hitch;
+		list_for_each_entry_continue(lru, &man->lru[cursor->priority],
+					     link) {
+			if (!ttm_lru_item_is_res(lru))
+				continue;
+
+			ttm_resource_cursor_check_bulk(cursor, lru);
+			if (cursor->bulk != bulk)
+				break;
+
+			list_move(&cursor->hitch.link, &lru->link);
+			return ttm_lru_item_to_res(lru);
+		}
+
+		if (++cursor->priority >= TTM_MAX_BO_PRIORITY)
+			break;
+
+		return ttm_resource_manager_first_on_bulk(cursor, bulk);
+	}
+
+	return NULL;
+}
+
 /**
  * ttm_resource_manager_next() - Continue iterating over the resource manager
  * resources

@@ -214,6 +214,12 @@ struct ttm_lru_walk {
 
 s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 			   struct ttm_resource_manager *man, s64 target);
+s64 ttm_lru_walk_ordered_bulk_for_evict(struct ttm_lru_walk *walk,
+					struct ttm_device *bdev,
+					struct ttm_resource_manager *man,
+					u32 mem_type,
+					struct ttm_buffer_object *evictor,
+					s64 target);
 
 /**
  * struct ttm_bo_shrink_flags - flags to govern the bo shrinking behaviour
