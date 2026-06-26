@@ -564,7 +564,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 		container_of(walk, typeof(*evict_walk), walk);
 	s64 lret;
 
-	if (bo->resource && bo->resource->needs_contiguous) {
+	if (bo->resource && bo->resource->needs_contiguous &&
+	    ktime_to_us(ktime_get()) - bo->last_pin_us <=
+		    TTM_CONTIGUOUS_PIN_TIMEOUT) {
 		evict_walk->hit_contiguous = true;
 		if (!evict_walk->try_contiguous)
 			return 0;
@@ -733,6 +735,7 @@ void ttm_bo_pin(struct ttm_buffer_object *bo)
 {
 	dma_resv_assert_held(bo->base.resv);
 	spin_lock(&bo->bdev->lru_lock);
+	bo->last_pin_us = ktime_to_us(ktime_get());
 	if (bo->resource)
 		ttm_resource_del_bulk_move(bo->resource, bo);
 	if (!bo->pin_count++ && bo->resource)
@@ -1143,6 +1146,7 @@ int ttm_bo_init_reserved(struct ttm_device *bdev, struct ttm_buffer_object *bo,
 	bo->page_alignment = alignment;
 	bo->destroy = destroy;
 	bo->pin_count = 0;
+	bo->last_pin_us = 0;
 	bo->sg = sg;
 	bo->bulk_move = NULL;
 	if (resv)
