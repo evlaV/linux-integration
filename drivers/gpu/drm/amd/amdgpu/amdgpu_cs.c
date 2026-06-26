@@ -833,6 +833,7 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 
 	if (amdgpu_vm_is_bo_always_valid(&fpriv->vm, bo) &&
 	    bo->tbo.type != ttm_bo_type_kernel) {
+		ctx.allow_bulk_evict = true;
 		bo_va = amdgpu_vm_bo_find(&fpriv->vm, bo);
 		if (bo_va->priority == 0 && in_allowed_domains) {
 			drm_dbg(adev_to_drm(p->adev),
