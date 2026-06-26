@@ -177,6 +177,7 @@ struct ttm_operation_ctx {
 	bool no_wait_gpu;
 	bool gfp_retry_mayfail;
 	bool allow_res_evict;
+	bool allow_bulk_evict;
 	bool cgroup_throttle;
 	struct dma_resv *resv;
 	uint64_t bytes_moved;

@@ -548,6 +548,8 @@ struct ttm_bo_evict_walk {
 	/** @hit_low: If we cannot evict a bo when @try_low is false (first pass) */
 	bool hit_low;
 
+	bool from_bulk;
+
 	/** @alloc_state: */
 	struct ttm_bo_alloc_state *alloc_state;
 };
@@ -567,7 +569,8 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 	 * cgroup is always allowed to evict from itself even if it is protected.
 	 */
 	if (evict_walk->alloc_state->only_evict_unprotected &&
-			bo->resource->css == evict_walk->alloc_state->charge_pool)
+	    bo->resource->css == evict_walk->alloc_state->charge_pool &&
+	    !evict_walk->from_bulk)
 		return 0;
 
 	limit_pool = evict_walk->alloc_state->limit_pool;
@@ -589,7 +592,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 							 evict_walk->alloc_state->charge_pool);
 
 	if (!dmem_cgroup_state_evict_valuable(limit_pool, bo->resource->css,
-					      evict_walk->try_low, &evict_walk->hit_low))
+					      evict_walk->try_low,
+					      &evict_walk->hit_low) &&
+	    !evict_walk->from_bulk)
 		return 0;
 
 	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
@@ -644,6 +649,22 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
 		.alloc_state = state,
 	};
 	s64 lret;
+
+	if (ctx->allow_bulk_evict && evictor->bulk_move) {
+		evict_walk.from_bulk = true;
+		lret = ttm_lru_walk_ordered_bulk_for_evict(&evict_walk.walk,
+							   bdev, man,
+							   place->mem_type,
+							   evictor, 1);
+		if (lret)
+			goto out;
+		evict_walk.from_bulk = false;
+	}
+
+	if (state->only_evict_unprotected && ctx->cgroup_throttle) {
+		lret = 0;
+		goto out;
+	}
 
 	evict_walk.walk.trylock_only = true;
 	lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
@@ -828,7 +849,6 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 	 */
 	may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
 	below_low = dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
-	below_low &= !ctx->cgroup_throttle;
 	alloc_state->only_evict_unprotected = !may_evict && below_low;
 
 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
