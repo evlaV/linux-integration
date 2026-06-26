@@ -899,7 +899,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
 				res, &alloc_state);
 
 		if (ret == -ENOSPC) {
-			dmem_cgroup_pool_state_put(alloc_state.charge_pool);
+			dmem_cgroup_uncharge(alloc_state.charge_pool,
+					     bo->base.size);
 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
 			continue;
 		} else if (ret == -EBUSY) {
@@ -909,14 +910,15 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
 
 			if (ret) {
-				dmem_cgroup_pool_state_put(
-						alloc_state.charge_pool);
+				dmem_cgroup_uncharge(alloc_state.charge_pool,
+						     bo->base.size);
 				if (ret != -ENOSPC && ret != -EBUSY)
 					return ret;
 				continue;
 			}
 		} else if (ret) {
-			dmem_cgroup_pool_state_put(alloc_state.charge_pool);
+			dmem_cgroup_uncharge(alloc_state.charge_pool,
+					     bo->base.size);
 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
 			return ret;
 		}
