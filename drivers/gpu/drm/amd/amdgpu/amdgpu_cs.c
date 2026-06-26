@@ -812,6 +812,7 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 		.interruptible = true,
 		.no_wait_gpu = false,
 		.cgroup_throttle = p->num_deadlocks > 0 ||
+				   p->num_unsuccessful_evicts > 0 ||
 				   p->vm_eviction_throttle_soft,
 		.exec = &p->exec,
 	};
@@ -870,6 +871,7 @@ retry:
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 	if (r == -EDEADLOCK)
 		++p->num_deadlocks;
+	p->num_unsuccessful_evicts += ctx.unsuccessful_evicts;
 
 	p->bytes_moved += ctx.bytes_moved;
 	if (!amdgpu_gmc_vram_full_visible(&adev->gmc) &&
@@ -1469,6 +1471,10 @@ static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser)
 	if (parser->num_deadlocks > num_allowed_deadlocks) {
 		fpriv->vm.last_evict_throttle_start_us =
 			ktime_to_us(ktime_get());
+	} else if (parser->num_unsuccessful_evicts) {
+		fpriv->vm.last_evict_throttle_start_us =
+			ktime_to_us(ktime_get()) -
+			VM_EVICT_THROTTLE_HARD_TIMEOUT;
 	}
 
 	amdgpu_sync_free(&parser->sync);

@@ -712,6 +712,8 @@ retry:
 		goto retry;
 	}
 
+	if (!lret)
+		++ctx->unsuccessful_evicts;
 out:
 	if (lret < 0)
 		return lret;
