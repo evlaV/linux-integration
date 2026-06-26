@@ -351,9 +351,7 @@ static void i915_ttm_tt_destroy(struct ttm_device *bdev, struct ttm_tt *ttm)
 	i915_refct_sgt_put(&i915_tt->cached_rsgt);
 }
 
-static bool i915_ttm_eviction_valuable(struct ttm_buffer_object *evictor,
-				       struct ttm_buffer_object *bo,
-				       void *valuable_param,
+static bool i915_ttm_eviction_valuable(struct ttm_buffer_object *bo,
 				       const struct ttm_place *place)
 {
 	struct drm_i915_gem_object *obj = i915_ttm_to_gem(bo);
@@ -373,7 +371,7 @@ static bool i915_ttm_eviction_valuable(struct ttm_buffer_object *evictor,
 	if (!i915_gem_object_evictable(obj))
 		return false;
 
-	return ttm_bo_eviction_valuable(evictor, bo, valuable_param, place);
+	return ttm_bo_eviction_valuable(bo, place);
 }
 
 static void i915_ttm_evict_flags(struct ttm_buffer_object *bo,

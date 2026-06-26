@@ -454,9 +454,7 @@ out:
  *
  * Check if it is valuable to evict the BO to make room for the given placement.
  */
-bool ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
-			      struct ttm_buffer_object *bo,
-			      void *valuable_param,
+bool ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 			      const struct ttm_place *place)
 {
 	struct ttm_resource *res = bo->resource;
@@ -594,10 +592,7 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 					      evict_walk->try_low, &evict_walk->hit_low))
 		return 0;
 
-	if (bo->pin_count ||
-	    !bo->bdev->funcs->eviction_valuable(evict_walk->evictor, bo,
-						walk->ctx->evict_valuable_param,
-						evict_walk->place))
+	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
 		return 0;
 
 
@@ -1285,9 +1280,7 @@ ttm_bo_swapout_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo)
 	 * The driver may use the fact that we're moving from SYSTEM
 	 * as an indication that we're about to swap out.
 	 */
-	if (bo->pin_count ||
-	    !bo->bdev->funcs->eviction_valuable(
-		    NULL, bo, ctx->evict_valuable_param, &place)) {
+	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, &place)) {
 		ret = -EBUSY;
 		goto out;
 	}

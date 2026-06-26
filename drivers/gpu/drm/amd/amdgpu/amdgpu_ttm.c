@@ -1400,21 +1400,14 @@ uint64_t amdgpu_ttm_tt_pte_flags(struct amdgpu_device *adev, struct ttm_tt *ttm,
  * it can find space for a new object and by ttm_bo_force_list_clean() which is
  * used to clean out a memory space.
  */
-static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
-					    struct ttm_buffer_object *bo,
-					    void *valuable_param,
+static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 					    const struct ttm_place *place)
 {
 	struct dma_resv_iter resv_cursor;
 	struct dma_fence *f;
 
 	if (!amdgpu_bo_is_amdgpu_bo(bo))
-		return ttm_bo_eviction_valuable(evictor, bo, valuable_param,
-						place);
-
-	if (evictor && valuable_param &&
-	    !amdgpu_cs_eviction_valuable(evictor, bo, valuable_param, place))
-		return false;
+		return ttm_bo_eviction_valuable(bo, place);
 
 	/* Swapout? */
 	if (bo->resource->mem_type == TTM_PL_SYSTEM)
@@ -1457,7 +1450,7 @@ static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
 	    amdgpu_bo_encrypted(ttm_to_amdgpu_bo(bo)))
 		return false;
 
-	return ttm_bo_eviction_valuable(evictor, bo, valuable_param, place);
+	return ttm_bo_eviction_valuable(bo, place);
 }
 
 static void amdgpu_ttm_vram_mm_access(struct amdgpu_device *adev, loff_t pos,

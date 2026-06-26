@@ -116,9 +116,7 @@ struct ttm_device_funcs {
 	 * Check with the driver if it is valuable to evict a BO to make room
 	 * for a certain placement.
 	 */
-	bool (*eviction_valuable)(struct ttm_buffer_object *evictor,
-				  struct ttm_buffer_object *bo,
-				  void *valuable_param,
+	bool (*eviction_valuable)(struct ttm_buffer_object *bo,
 				  const struct ttm_place *place);
 	/**
 	 * struct ttm_bo_driver member evict_flags:

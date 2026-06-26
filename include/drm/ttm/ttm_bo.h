@@ -185,7 +185,6 @@ struct ttm_operation_ctx {
 	 * tracking which are locked.
 	 */
 	struct drm_exec *exec;
-	void *evict_valuable_param;
 };
 
 /**
@@ -420,8 +419,7 @@ void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 void ttm_bo_set_bulk_move_ordered(struct ttm_buffer_object *bo,
 				  struct ttm_lru_bulk_move *bulk,
 				  uint32_t bulk_order);
-bool ttm_bo_eviction_valuable(struct ttm_buffer_object *evictor,
-			      struct ttm_buffer_object *bo, void *evict_param,
+bool ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 			      const struct ttm_place *place);
 int ttm_bo_init_reserved(struct ttm_device *bdev, struct ttm_buffer_object *bo,
 			 enum ttm_bo_type type, struct ttm_placement *placement,
