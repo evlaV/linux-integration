@@ -1073,6 +1073,10 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 			bo_va->priority = args->value;
 			ttm_bo_set_bulk_move_ordered(
 				&robj->tbo, robj->tbo.bulk_move, args->value);
+			/* Invalidate the buffer to get it reshuffled in the soft-evicted
+			 * list, if it's there.
+			 */
+			amdgpu_vm_bo_invalidate(robj, false);
 		}
 		amdgpu_bo_unreserve(robj);
 		break;
