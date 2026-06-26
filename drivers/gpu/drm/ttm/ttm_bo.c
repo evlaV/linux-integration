@@ -550,6 +550,9 @@ struct ttm_bo_evict_walk {
 
 	bool from_bulk;
 
+	bool try_contiguous;
+	bool hit_contiguous;
+
 	/** @alloc_state: */
 	struct ttm_bo_alloc_state *alloc_state;
 };
@@ -560,6 +563,12 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 	struct ttm_bo_evict_walk *evict_walk =
 		container_of(walk, typeof(*evict_walk), walk);
 	s64 lret;
+
+	if (bo->resource && bo->resource->needs_contiguous) {
+		evict_walk->hit_contiguous = true;
+		if (!evict_walk->try_contiguous)
+			return 0;
+	}
 
 	/*
 	 * If only_evict_unprotected is set, then we're trying to evict unprotected
@@ -696,6 +705,13 @@ retry:
 		evict_walk.try_low = true;
 		goto retry;
 	}
+
+	if (!lret && !evict_walk.try_contiguous && !evict_walk.hit_contiguous &&
+	    !state->only_evict_unprotected) {
+		evict_walk.try_contiguous = true;
+		goto retry;
+	}
+
 out:
 	if (lret < 0)
 		return lret;
@@ -849,6 +865,7 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 	 */
 	may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
 	below_low = dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
+	below_low &= !ctx->cgroup_throttle;
 	alloc_state->only_evict_unprotected = !may_evict && below_low;
 
 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
