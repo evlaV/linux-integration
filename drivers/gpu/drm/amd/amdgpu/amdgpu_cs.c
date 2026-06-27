@@ -1473,8 +1473,7 @@ static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser)
 			ktime_to_us(ktime_get());
 	} else if (parser->num_unsuccessful_evicts) {
 		fpriv->vm.last_evict_throttle_start_us =
-			ktime_to_us(ktime_get()) -
-			VM_EVICT_THROTTLE_HARD_TIMEOUT;
+			ktime_to_us(ktime_get());
 	}
 
 	amdgpu_sync_free(&parser->sync);
