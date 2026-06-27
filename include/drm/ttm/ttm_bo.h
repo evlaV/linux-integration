@@ -70,7 +70,7 @@ enum ttm_bo_type {
 	ttm_bo_type_sg
 };
 
-#define TTM_CONTIGUOUS_PIN_TIMEOUT 2000000
+#define TTM_CONTIGUOUS_PIN_TIMEOUT 20000000L
 
 /**
  * struct ttm_buffer_object
