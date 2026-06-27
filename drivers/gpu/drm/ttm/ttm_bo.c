@@ -661,7 +661,8 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
 	};
 	s64 lret;
 
-	if (ctx->allow_bulk_evict && evictor->bulk_move) {
+	if (ctx->allow_bulk_evict && evictor->bulk_move &&
+	    evictor->bulk_move_order != U32_MAX) {
 		evict_walk.from_bulk = true;
 		lret = ttm_lru_walk_ordered_bulk_for_evict(&evict_walk.walk,
 							   bdev, man,
