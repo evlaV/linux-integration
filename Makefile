@@ -2,7 +2,7 @@
 VERSION = 6
 PATCHLEVEL = 16
 SUBLEVEL = 12
-EXTRAVERSION = -drmexec6-valve24
+EXTRAVERSION = -drmexec7-valve24
 NAME = Baby Opossum Posse
 
 # *DOCUMENTATION*
