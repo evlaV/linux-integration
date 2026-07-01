@@ -226,6 +226,12 @@ struct ttm_device {
 	const struct ttm_device_funcs *funcs;
 
 	/**
+	 * True if cgroup protections should always be throttled, i.e.
+	 * no extra eviction is triggered for protected cgroups.
+	 */
+	bool always_throttle_cgroup;
+
+	/**
 	 * @sysman: Resource manager for the system domain.
 	 * Access via ttm_manager_type.
 	 */

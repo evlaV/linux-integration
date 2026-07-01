@@ -242,6 +242,7 @@ int ttm_device_init(struct ttm_device *bdev, const struct ttm_device_funcs *func
 
 	ttm_pool_init(&bdev->pool, dev, nid, use_dma_alloc, use_dma32);
 
+	bdev->always_throttle_cgroup = false;
 	bdev->vma_manager = vma_manager;
 	spin_lock_init(&bdev->lru_lock);
 	INIT_LIST_HEAD(&bdev->unevictable);
