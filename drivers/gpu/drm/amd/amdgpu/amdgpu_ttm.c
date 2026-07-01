@@ -1950,6 +1950,8 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 			"failed initializing buffer object driver(%d).\n", r);
 		return r;
 	}
+	if (adev->flags & AMD_IS_APU)
+		adev->mman.bdev.always_throttle_cgroup = true;
 
 	r = amdgpu_ttm_pools_init(adev);
 	if (r) {
