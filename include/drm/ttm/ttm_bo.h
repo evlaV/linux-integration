@@ -185,6 +185,7 @@ struct ttm_operation_ctx {
 	bool cgroup_throttle;
 	struct dma_resv *resv;
 	uint64_t bytes_moved;
+	uint32_t unsuccessful_evicts;
 	/**
 	 * @exec: optional drm_exec object to use for locking BOs and
 	 * tracking which are locked.
