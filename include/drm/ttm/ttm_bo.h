@@ -112,6 +112,7 @@ struct ttm_buffer_object {
 	struct ttm_resource *resource;
 	struct ttm_tt *ttm;
 	struct ttm_lru_bulk_move *bulk_move;
+	uint32_t bulk_move_order;
 	unsigned priority;
 	unsigned pin_count;
 
@@ -222,6 +223,12 @@ struct ttm_lru_walk {
 
 s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 			   struct ttm_resource_manager *man, s64 target);
+s64 ttm_lru_walk_ordered_bulk_for_evict(struct ttm_lru_walk *walk,
+					struct ttm_device *bdev,
+					struct ttm_resource_manager *man,
+					u32 mem_type,
+					struct ttm_buffer_object *evictor,
+					s64 target);
 
 /**
  * struct ttm_bo_shrink_flags - flags to govern the bo shrinking behaviour
@@ -386,6 +393,9 @@ int ttm_bo_validate(struct ttm_buffer_object *bo,
 void ttm_bo_fini(struct ttm_buffer_object *bo);
 void ttm_bo_set_bulk_move(struct ttm_buffer_object *bo,
 			  struct ttm_lru_bulk_move *bulk);
+void ttm_bo_set_bulk_move_ordered(struct ttm_buffer_object *bo,
+				  struct ttm_lru_bulk_move *bulk,
+				  uint32_t bulk_order);
 void ttm_bo_set_bulk_move_unlocked(struct ttm_buffer_object *bo,
 				   struct ttm_lru_bulk_move *bulk);
 int ttm_bo_evict(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx);
@@ -481,16 +491,21 @@ struct ttm_bo_lru_cursor {
 	 * unlock before the next iteration or after loop exit.
 	 */
 	bool needs_unlock;
+	/**
+	 * @bulk_move: Optional pointer to a bulk_move structure to iterate
+	 * over. If non-NULL, only buffers from that bulk move are included
+	 * in the iteration.
+	 */
+	struct ttm_lru_bulk_move *bulk_move;
 	/** @arg: Pointer to common BO LRU walk arguments. */
 	struct ttm_lru_walk_arg *arg;
 };
 
 void ttm_bo_lru_cursor_fini(struct ttm_bo_lru_cursor *curs);
 
-struct ttm_bo_lru_cursor *
-ttm_bo_lru_cursor_init(struct ttm_bo_lru_cursor *curs,
-		       struct ttm_resource_manager *man,
-		       struct ttm_lru_walk_arg *arg);
+struct ttm_bo_lru_cursor *ttm_bo_lru_cursor_init(
+	struct ttm_bo_lru_cursor *curs, struct ttm_resource_manager *man,
+	struct ttm_lru_walk_arg *arg, u32 mem_type, struct ttm_lru_bulk_move *bulk);
 
 struct ttm_buffer_object *ttm_bo_lru_cursor_first(struct ttm_bo_lru_cursor *curs);
 
@@ -499,11 +514,12 @@ struct ttm_buffer_object *ttm_bo_lru_cursor_next(struct ttm_bo_lru_cursor *curs)
 /*
  * Defines needed to use autocleanup (linux/cleanup.h) with struct ttm_bo_lru_cursor.
  */
-DEFINE_CLASS(ttm_bo_lru_cursor, struct ttm_bo_lru_cursor *,
-	     if (_T) {ttm_bo_lru_cursor_fini(_T); },
-	     ttm_bo_lru_cursor_init(curs, man, arg),
-	     struct ttm_bo_lru_cursor *curs, struct ttm_resource_manager *man,
-	     struct ttm_lru_walk_arg *arg);
+DEFINE_CLASS(
+	ttm_bo_lru_cursor, struct ttm_bo_lru_cursor *,
+	if (_T) { ttm_bo_lru_cursor_fini(_T); },
+	ttm_bo_lru_cursor_init(curs, man, arg, mem_type, bulk),
+	struct ttm_bo_lru_cursor *curs, struct ttm_resource_manager *man,
+	struct ttm_lru_walk_arg *arg, u32 mem_type, struct ttm_lru_bulk_move *bulk);
 static inline void *
 class_ttm_bo_lru_cursor_lock_ptr(class_ttm_bo_lru_cursor_t *_T)
 { return *_T; }
@@ -532,9 +548,16 @@ class_ttm_bo_lru_cursor_lock_ptr(class_ttm_bo_lru_cursor_t *_T)
  * dereference @_bo after loop exit.
  */
 #define ttm_bo_lru_for_each_reserved_guarded(_cursor, _man, _arg, _bo)	\
-	scoped_guard(ttm_bo_lru_cursor, _cursor, _man, _arg)		\
+	scoped_guard(ttm_bo_lru_cursor, _cursor, _man, _arg, 0, NULL)	\
 		for ((_bo) = ttm_bo_lru_cursor_first(_cursor);		\
 		       !IS_ERR_OR_NULL(_bo);				\
 		       (_bo) = ttm_bo_lru_cursor_next(_cursor))
+
+#define ttm_bo_lru_for_each_on_bulk_reserved_guarded(_cursor, _man, _arg, _bo,	\
+						     _mem_type, _bulk)		\
+	scoped_guard(ttm_bo_lru_cursor, _cursor, _man, _arg, _mem_type, _bulk)	\
+		for ((_bo) = ttm_bo_lru_cursor_first(_cursor);			\
+			   !IS_ERR_OR_NULL(_bo);				\
+			   (_bo) = ttm_bo_lru_cursor_next(_cursor))
 
 #endif
