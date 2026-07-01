@@ -780,6 +780,8 @@ retry:
 		goto retry;
 	}
 
+	if (!lret)
+		++ctx->unsuccessful_evicts;
 out:
 	state->in_evict = false;
 	if (lret < 0)
