@@ -8018,6 +8018,7 @@ enum {
 	ALC287_FIXUP_CS35L41_I2C_2_THINKPAD_ACPI,
 	ALC287_FIXUP_TAS2781_I2C,
 	ALC287_FIXUP_ASUS_ALLY_X,
+	ALC287_FIXUP_ASUS_ALLY_X_SPEAKER,
 	ALC287_FIXUP_ASUS_ALLY_X_I2C,
 	ALC245_FIXUP_TAS2781_SPI_2,
 	ALC287_FIXUP_TXNW2781_I2C,
@@ -10284,6 +10285,15 @@ static const struct hda_fixup alc269_fixups[] = {
 		.chain_id = ALC285_FIXUP_THINKPAD_HEADSET_JACK,
 	},
 	[ALC287_FIXUP_ASUS_ALLY_X] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = (const struct hda_pintbl[]) {
+			{ 0x19, 0x03a11050 }, /* headset mic */
+			{ }
+		},
+		.chained = true,
+		.chain_id = ALC287_FIXUP_ASUS_ALLY_X_SPEAKER,
+	},
+	[ALC287_FIXUP_ASUS_ALLY_X_SPEAKER] = {
 		.type = HDA_FIXUP_FUNC,
 		.v.func = alc285_fixup_speaker2_to_dac1,
 		.chained = true,
