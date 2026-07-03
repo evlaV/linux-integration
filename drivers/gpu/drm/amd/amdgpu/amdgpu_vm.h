@@ -273,8 +273,6 @@ struct amdgpu_vm_update_ctx {
 	 * i.e. all previous submissions in the VM are waited on.
 	 */
 	bool unmap_synced;
-
-	bool explicit_sync_unmap;
 };
 
 /**
@@ -648,9 +646,6 @@ int amdgpu_vm_pt_map_tables(struct amdgpu_device *adev, struct amdgpu_vm *vm);
 
 bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo);
 
-void amdgpu_vm_update_ctx_add_freed_mapping(
-	struct amdgpu_vm_update_ctx *ctx, struct amdgpu_bo_va *bo_va,
-	struct amdgpu_bo_va_mapping *mapping);
 int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx);
 
 /**

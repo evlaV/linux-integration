@@ -829,13 +829,12 @@ uint64_t amdgpu_gem_va_map_flags(struct amdgpu_device *adev, uint32_t flags)
 int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 			  struct drm_file *filp)
 {
-	const uint32_t valid_flags =
-		AMDGPU_VM_EXPLICIT_SYNC | AMDGPU_VM_DELAY_UPDATE |
+	const uint32_t valid_flags = AMDGPU_VM_DELAY_UPDATE |
 		AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE |
 		AMDGPU_VM_PAGE_EXECUTABLE | AMDGPU_VM_MTYPE_MASK |
 		AMDGPU_VM_PAGE_NOALLOC;
-	const uint32_t prt_flags = AMDGPU_VM_EXPLICIT_SYNC |
-				   AMDGPU_VM_DELAY_UPDATE | AMDGPU_VM_PAGE_PRT;
+	const uint32_t prt_flags = AMDGPU_VM_DELAY_UPDATE |
+		AMDGPU_VM_PAGE_PRT;
 
 	struct drm_amdgpu_gem_va *args = data;
 	struct drm_gem_object *gobj;
@@ -909,7 +908,6 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 	}
 
 	amdgpu_vm_update_ctx_init(&update_ctx, adev, &fpriv->vm);
-	update_ctx.explicit_sync_unmap = args->flags & AMDGPU_VM_EXPLICIT_SYNC;
 
 	r = amdgpu_gem_add_input_fence(filp, &update_ctx,
 				       args->input_fence_syncobj_handles,
