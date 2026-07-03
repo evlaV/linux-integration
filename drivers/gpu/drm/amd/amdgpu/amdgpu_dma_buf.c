@@ -434,7 +434,7 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 		/* Reserve fences for two SDMA page table updates */
 		r = dma_resv_reserve_fences(resv, 2);
 		if (!r)
-			r = amdgpu_vm_delayed_free(adev, vm);
+			r = amdgpu_vm_clear_freed(adev, vm, NULL);
 		if (!r)
 			r = amdgpu_vm_handle_moved(adev, vm, ticket);
 
