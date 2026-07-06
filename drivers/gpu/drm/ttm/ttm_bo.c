@@ -696,10 +696,6 @@ out:
 	return lret;
 }
 
-static const struct ttm_lru_walk_ops ttm_evict_walk_ops = {
-	.process_bo = ttm_bo_evict_cb,
-};
-
 static int ttm_bo_evict_alloc(struct ttm_device *bdev,
 			      struct ttm_resource_manager *man,
 			      const struct ttm_place *place,
@@ -711,7 +707,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
 {
 	struct ttm_bo_evict_walk evict_walk = {
 		.walk = {
-			.ops = &ttm_evict_walk_ops,
+			.process_bo = ttm_bo_evict_cb,
 			.arg = {
 				.ctx = ctx,
 				.ticket = ticket,
@@ -1350,10 +1346,6 @@ out:
 	return ret;
 }
 
-const struct ttm_lru_walk_ops ttm_swap_ops = {
-	.process_bo = ttm_bo_swapout_cb,
-};
-
 /**
  * ttm_bo_swapout() - Swap out buffer objects on the LRU list to shmem.
  * @bdev: The ttm device.
@@ -1372,7 +1364,7 @@ s64 ttm_bo_swapout(struct ttm_device *bdev, struct ttm_operation_ctx *ctx,
 {
 	struct ttm_bo_swapout_walk swapout_walk = {
 		.walk = {
-			.ops = &ttm_swap_ops,
+			.process_bo = ttm_bo_swapout_cb,
 			.arg = {
 				.ctx = ctx,
 				.trylock_only = true,
