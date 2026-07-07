@@ -21,8 +21,10 @@ void rtw89_regd_notifier(struct wiphy *wiphy, struct regulatory_request *request
 
 static_assert(BITS_PER_TYPE(unsigned long) >= NUM_OF_RTW89_REGD_FUNC);
 
+static const struct rtw89_regd rtw89_ww_regd =
+	COUNTRY_REGD("00", RTW89_WW, RTW89_WW, RTW89_WW, 0x0);
+
 static const struct rtw89_regd rtw89_regd_map[] = {
-	COUNTRY_REGD("00", RTW89_WW, RTW89_WW, RTW89_WW, 0x0),
 	COUNTRY_REGD("AR", RTW89_MEXICO, RTW89_MEXICO, RTW89_FCC, 0x0),
 	COUNTRY_REGD("BO", RTW89_FCC, RTW89_FCC, RTW89_NA, 0x0),
 	COUNTRY_REGD("BR", RTW89_FCC, RTW89_FCC, RTW89_FCC, 0x0),
@@ -314,13 +316,12 @@ static const struct rtw89_regd *rtw89_regd_find_reg_by_name(struct rtw89_dev *rt
 			return &regd_ctrl->map[i];
 	}
 
-	return NULL;
+	return &rtw89_ww_regd;
 }
 
 static bool rtw89_regd_is_ww(const struct rtw89_regd *regd)
 {
-	/* Index 0 in the static map contains the WW domain entry. */
-	return regd == &rtw89_regd_map[0];
+	return regd == &rtw89_ww_regd;
 }
 
 static u8 rtw89_regd_get_index(struct rtw89_dev *rtwdev, const struct rtw89_regd *regd)
@@ -330,6 +331,9 @@ static u8 rtw89_regd_get_index(struct rtw89_dev *rtwdev, const struct rtw89_regd
 
 	BUILD_BUG_ON(ARRAY_SIZE(rtw89_regd_map) > RTW89_REGD_MAX_COUNTRY_NUM);
 
+	if (rtw89_regd_is_ww(regd))
+		return RTW89_REGD_MAX_COUNTRY_NUM;
+
 	return regd - regd_ctrl->map;
 }
 
@@ -338,10 +342,6 @@ static u8 rtw89_regd_get_index_by_name(struct rtw89_dev *rtwdev, const char *alp
 	const struct rtw89_regd *regd;
 
 	regd = rtw89_regd_find_reg_by_name(rtwdev, alpha2);
-
-	if (!regd)
-		return RTW89_REGD_MAX_COUNTRY_NUM;
-
 	return rtw89_regd_get_index(rtwdev, regd);
 }
 
@@ -745,7 +745,7 @@ int rtw89_regd_init_hint(struct rtw89_dev *rtwdev)
 		return -EINVAL;
 
 	chip_regd = rtw89_regd_find_reg_by_name(rtwdev, rtwdev->efuse.country_code);
-	if (chip_regd && !rtw89_regd_is_ww(chip_regd)) {
+	if (!rtw89_regd_is_ww(chip_regd)) {
 		rtwdev->regulatory.regd = chip_regd;
 		rtwdev->regulatory.programmed = true;
 
@@ -883,15 +883,7 @@ static void rtw89_regd_notifier_apply(struct rtw89_dev *rtwdev,
 				      struct wiphy *wiphy,
 				      struct regulatory_request *request)
 {
-	const struct rtw89_regd *regd = rtw89_regd_find_reg_by_name(rtwdev, request->alpha2);
-
-	if (!regd) {
-		/* Fallback to WW domain if name not found. */
-		regd = &rtw89_regd_map[0];
-	}
-
-	rtwdev->regulatory.regd = regd;
-
+	rtwdev->regulatory.regd = rtw89_regd_find_reg_by_name(rtwdev, request->alpha2);
 	/* This notification might be set from the system of distros,
 	 * and it does not expect the regulatory will be modified by
 	 * connecting to an AP (i.e. country ie).
