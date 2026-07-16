@@ -852,6 +852,10 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
 
 #ifdef CONFIG_DRM_AMD_COLOR_STEAMDECK
 	dm_crtc_additional_color_mgmt(&acrtc->base);
+#else
+	res = dm_crtc_init_colorops(&acrtc->base);
+	if (res)
+		return res;
 #endif
 	return 0;
 
