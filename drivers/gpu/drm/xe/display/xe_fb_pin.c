@@ -312,7 +312,7 @@ static struct i915_vma *__xe_pin_fb_vma(const struct intel_framebuffer *fb,
 	 */
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {.interruptible = true},
 			    ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (ret)
 			break;

@@ -38,6 +38,7 @@
 #include <drm/ttm/ttm_tt.h>
 
 #include <drm/drm_cache.h>
+#include <drm/drm_exec.h>
 
 #include "ttm_bo_internal.h"
 
@@ -212,6 +213,18 @@ static void ttm_transfered_destroy(struct ttm_buffer_object *bo)
 	kfree(fbo);
 }
 
+static void ttm_bo_transfered_free(struct drm_gem_object *object)
+{
+	struct ttm_buffer_object *bo =
+		container_of(object, struct ttm_buffer_object, base);
+
+	ttm_bo_fini(bo);
+}
+
+const struct drm_gem_object_funcs ttm_transferred_object_funcs = {
+	.free = ttm_bo_transfered_free,
+};
+
 /**
  * ttm_buffer_object_transfer
  *
@@ -247,7 +260,8 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	atomic_inc(&ttm_glob.bo_count);
 	drm_vma_node_reset(&fbo->base.base.vma_node);
 
-	kref_init(&fbo->base.kref);
+	kref_init(&fbo->base.base.refcount);
+	fbo->base.base.funcs = &ttm_transferred_object_funcs;
 	fbo->base.destroy = &ttm_transfered_destroy;
 	fbo->base.pin_count = 0;
 	if (bo->type != ttm_bo_type_sg)
@@ -806,6 +820,8 @@ static bool ttm_lru_walk_trylock(struct ttm_bo_lru_cursor *curs,
 	struct ttm_operation_ctx *ctx = curs->arg->ctx;
 
 	curs->needs_unlock = false;
+	if (ctx->exec)
+		return false;
 
 	if (dma_resv_trylock(bo->base.resv)) {
 		curs->needs_unlock = true;
@@ -824,13 +840,14 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 				   struct ttm_buffer_object *bo)
 {
 	struct ttm_lru_walk_arg *arg = curs->arg;
-	struct dma_resv *resv = bo->base.resv;
 	int ret;
 
-	if (arg->ctx->interruptible)
-		ret = dma_resv_lock_interruptible(resv, arg->ticket);
+	if (arg->ctx->exec)
+		ret = drm_exec_lock_obj(arg->ctx->exec, &bo->base, true);
+	else if (arg->ctx->interruptible)
+		ret = dma_resv_lock_interruptible(bo->base.resv, arg->ticket);
 	else
-		ret = dma_resv_lock(resv, arg->ticket);
+		ret = dma_resv_lock(bo->base.resv, arg->ticket);
 
 	if (!ret) {
 		curs->needs_unlock = true;
@@ -839,16 +856,14 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 		 * to return -EDEADLK causing the eviction to fail, so
 		 * after waiting for the ticketlock, revert back to
 		 * trylocking for this walk.
-		 *
-		 * When walk->ctx->propagate_deadlock is set, callers will
-		 * gracefully handle deadlocks, so it's fine to try harder
-		 * with ticketlocking.
 		 */
-		if (!arg->ctx->propagate_deadlock)
-			arg->ticket = NULL;
-	} else if (ret == -EDEADLK && !arg->ctx->propagate_deadlock) {
+		arg->ticket = NULL;
+	} else if (!arg->ctx->exec && ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
+	} else if (arg->ctx->exec && ret == -EALREADY &&
+		   arg->ctx->allow_res_evict) {
+		ret = 0;
 	}
 
 	return ret;
@@ -894,7 +909,7 @@ s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 	s64 lret;
 
 	ttm_bo_lru_for_each_reserved_guarded(&cursor, man, &walk->arg, bo) {
-		lret = walk->ops->process_bo(walk, bo);
+		lret = walk->process_bo(walk, bo);
 		if (lret == -EBUSY || lret == -EALREADY)
 			lret = 0;
 		progress = (lret < 0) ? lret : progress + lret;
@@ -912,12 +927,17 @@ static void ttm_bo_lru_cursor_cleanup_bo(struct ttm_bo_lru_cursor *curs)
 {
 	struct ttm_buffer_object *bo = curs->bo;
 
-	if (bo) {
-		if (curs->needs_unlock)
+	if (!bo)
+		return;
+
+	if (curs->needs_unlock) {
+		if (curs->arg->ctx->exec)
+			drm_exec_unlock_obj(curs->arg->ctx->exec, &bo->base);
+		else
 			dma_resv_unlock(bo->base.resv);
-		ttm_bo_put(bo);
-		curs->bo = NULL;
 	}
+	ttm_bo_put(bo);
+	curs->bo = NULL;
 }
 
 /**
@@ -987,7 +1007,8 @@ __ttm_bo_lru_cursor_next(struct ttm_bo_lru_cursor *curs)
 		bo = res->bo;
 		if (ttm_lru_walk_trylock(curs, bo))
 			bo_locked = true;
-		else if (!arg->ticket || arg->ctx->no_wait_gpu || arg->trylock_only)
+		else if ((!arg->ticket || arg->ctx->no_wait_gpu ||
+			    arg->trylock_only) && !arg->ctx->exec)
 			continue;
 
 		if (!ttm_bo_get_unless_zero(bo)) {

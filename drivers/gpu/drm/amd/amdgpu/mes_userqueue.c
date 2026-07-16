@@ -35,7 +35,7 @@ mes_userq_map_gtt_bo_to_gart(struct amdgpu_bo *bo)
 {
 	int ret;
 
-	ret = amdgpu_bo_reserve(bo, true, NULL);
+	ret = amdgpu_bo_reserve(bo, true);
 	if (ret) {
 		DRM_ERROR("Failed to reserve bo. ret %d\n", ret);
 		goto err_reserve_bo_failed;
@@ -69,7 +69,7 @@ mes_userq_create_wptr_mapping(struct amdgpu_userq_mgr *uq_mgr,
 	int ret;
 
 	wptr_vm = queue->vm;
-	ret = amdgpu_bo_reserve(wptr_vm->root.bo, false, NULL);
+	ret = amdgpu_bo_reserve(wptr_vm->root.bo, false);
 	if (ret)
 		return ret;
 

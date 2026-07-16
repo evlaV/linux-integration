@@ -172,7 +172,7 @@ static int xe_dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 
 	/* Can we do interruptible lock here? */
 	xe_validation_guard(&ctx, &xe_bo_device(bo)->val, &exec, (struct xe_val_flags) {}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
+		ret = drm_exec_lock_obj(&exec, &bo->ttm.base, false);
 		drm_exec_retry_on_contention(&exec);
 		if (ret)
 			break;
@@ -244,7 +244,7 @@ xe_dma_buf_create_obj(struct drm_device *dev, struct dma_buf *dma_buf)
 
 	dummy_obj->resv = resv;
 	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {}, ret) {
-		ret = drm_exec_lock_obj(&exec, dummy_obj);
+		ret = drm_exec_lock_obj(&exec, dummy_obj, false);
 		drm_exec_retry_on_contention(&exec);
 		if (ret)
 			break;

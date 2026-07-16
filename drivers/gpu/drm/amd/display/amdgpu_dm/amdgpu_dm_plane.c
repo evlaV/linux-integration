@@ -26,6 +26,7 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_exec.h>
 #include "drm/drm_framebuffer.h"
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
@@ -925,12 +926,13 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 					     struct drm_plane_state *new_state)
 {
 	struct amdgpu_framebuffer *afb;
-	struct ww_acquire_ctx pin_ctx;
 	struct drm_gem_object *obj;
 	struct amdgpu_device *adev;
 	struct amdgpu_bo *rbo;
+	struct drm_exec exec;
 	struct dm_plane_state *dm_plane_state_new, *dm_plane_state_old;
 	uint32_t domain;
+	bool pin_vram_only;
 	int r;
 
 	if (!new_state->fb) {
@@ -947,38 +949,62 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 
 	rbo = gem_to_amdgpu_bo(obj);
 	adev = amdgpu_ttm_adev(rbo->tbo.bdev);
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	r = amdgpu_bo_reserve(rbo, true, &pin_ctx);
-	if (r) {
-		drm_err(adev_to_drm(adev), "fail to reserve bo (%d)\n", r);
-		ww_acquire_fini(&pin_ctx);
-		return r;
-	}
 
-	if (plane->type != DRM_PLANE_TYPE_CURSOR)
-		domain = amdgpu_display_supported_domains(adev, rbo->flags);
-	else
-		domain = AMDGPU_GEM_DOMAIN_VRAM;
-
-	rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-	r = amdgpu_bo_pin(rbo, domain);
-	if (unlikely(r != 0)) {
-		if (r == -EDEADLOCK) {
-			amdgpu_bo_unreserve(rbo);
-			ww_acquire_fini(&pin_ctx);
-			goto pin_retry;
+	drm_exec_init(&exec, 0, 0);
+	drm_exec_until_all_locked(&exec)
+	{
+		r = drm_exec_prepare_obj(&exec, obj, 1);
+		drm_exec_retry_on_contention(&exec);
+		if (r) {
+			drm_err(adev_to_drm(adev),
+				"Failed to prepare framebuffer BO (%d)\n", r);
+			goto error_unlock;
 		}
-		if (r != -ERESTARTSYS)
-			DRM_ERROR("Failed to pin framebuffer with error %d\n", r);
-		goto error_unlock;
-	}
 
-	r = dma_resv_reserve_fences(rbo->tbo.base.resv, 1);
-	if (r) {
-		drm_err(adev_to_drm(adev), "reserving fence slot failed (%d)\n",
-			r);
-		goto error_unlock;
+		/*
+		 * Keep native scanout in VRAM on APUs so the swapchain stays
+		 * in one memory domain. A VRAM/GTT split makes
+		 * amdgpu_dm_crtc_mem_type_changed() reject the async flip.
+		 * Skip small carveouts that may not fit, and imported buffers.
+		 */
+		pin_vram_only = plane->type != DRM_PLANE_TYPE_CURSOR &&
+				(adev->flags & AMD_IS_APU) &&
+				!rbo->tbo.base.import_attach &&
+				adev->gmc.real_vram_size > AMDGPU_SG_THRESHOLD;
+
+		if (plane->type == DRM_PLANE_TYPE_CURSOR || pin_vram_only)
+			domain = AMDGPU_GEM_DOMAIN_VRAM;
+		else
+			domain = amdgpu_display_supported_domains(adev,
+								  rbo->flags);
+
+		rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+		r = amdgpu_bo_pin(rbo, &exec, domain);
+		drm_exec_retry_on_contention(&exec);
+		if (pin_vram_only &&
+		    (r == -ENOMEM || (r == -EINVAL && rbo->tbo.pin_count))) {
+			/*
+			 * VRAM is full (-ENOMEM), or another plane already
+			 * pinned this shared fb to GTT (-EINVAL, only when the
+			 * bo is already pinned). Fall back to GTT where allowed
+			 * so the flip still succeeds and the swapchain stays in
+			 * one domain.
+			 */
+			domain = amdgpu_display_supported_domains(adev,
+								  rbo->flags);
+			if (domain & AMDGPU_GEM_DOMAIN_GTT) {
+				domain = AMDGPU_GEM_DOMAIN_GTT;
+				r = amdgpu_bo_pin(rbo, &exec, domain);
+				drm_exec_retry_on_contention(&exec);
+			}
+		}
+		if (unlikely(r != 0)) {
+			if (r != -ERESTARTSYS)
+				DRM_ERROR(
+					"Failed to pin framebuffer with error %d\n",
+					r);
+			goto error_unlock;
+		}
 	}
 
 	r = amdgpu_ttm_alloc_gart(&rbo->tbo);
@@ -991,8 +1017,7 @@ pin_retry:
 	if (unlikely(r != 0))
 		goto error_unpin;
 
-	amdgpu_bo_unreserve(rbo);
-	ww_acquire_fini(&pin_ctx);
+	drm_exec_fini(&exec);
 
 	afb->address = amdgpu_bo_gpu_offset(rbo);
 
@@ -1028,8 +1053,7 @@ error_unpin:
 	amdgpu_bo_unpin(rbo);
 
 error_unlock:
-	amdgpu_bo_unreserve(rbo);
-	ww_acquire_fini(&pin_ctx);
+	drm_exec_fini(&exec);
 	return r;
 }
 
@@ -1043,7 +1067,7 @@ static void amdgpu_dm_plane_helper_cleanup_fb(struct drm_plane *plane,
 		return;
 
 	rbo = gem_to_amdgpu_bo(old_state->fb->obj[0]);
-	r = amdgpu_bo_reserve(rbo, false, NULL);
+	r = amdgpu_bo_reserve(rbo, false);
 	if (unlikely(r)) {
 		DRM_ERROR("failed to reserve rbo before unpin\n");
 		return;

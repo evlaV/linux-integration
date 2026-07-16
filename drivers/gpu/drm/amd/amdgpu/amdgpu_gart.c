@@ -119,7 +119,6 @@ int amdgpu_gart_table_ram_alloc(struct amdgpu_device *adev)
 {
 	unsigned int order = get_order(adev->gart.table_size);
 	gfp_t gfp_flags = GFP_KERNEL | __GFP_ZERO;
-	struct ww_acquire_ctx pin_ctx;
 	struct amdgpu_bo *bo = NULL;
 	struct sg_table *sg = NULL;
 	struct amdgpu_bo_param bp;
@@ -186,21 +185,13 @@ int amdgpu_gart_table_ram_alloc(struct amdgpu_device *adev)
 	bo->allowed_domains = AMDGPU_GEM_DOMAIN_GTT;
 	bo->preferred_domains = AMDGPU_GEM_DOMAIN_GTT;
 
-pin_retry:
-	ww_acquire_init(&pin_ctx, &reservation_ww_class);
-	ret = amdgpu_bo_reserve(bo, true, &pin_ctx);
+	ret = amdgpu_bo_reserve(bo, true);
 	if (ret) {
-		ww_acquire_fini(&pin_ctx);
 		dev_err(adev->dev, "(%d) failed to reserve bo for GART system bo\n", ret);
 		goto error;
 	}
 
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
-	if (ret == -EDEADLOCK) {
-		amdgpu_bo_unreserve(bo);
-		ww_acquire_fini(&pin_ctx);
-		goto pin_retry;
-	}
+	ret = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_GTT);
 	WARN(ret, "Pinning the GART table failed");
 	if (ret)
 		goto error_resv;
@@ -212,13 +203,11 @@ pin_retry:
 	if (ret)
 		amdgpu_gart_table_ram_free(adev);
 	amdgpu_bo_unreserve(bo);
-	ww_acquire_fini(&pin_ctx);
 
 	return 0;
 
 error_resv:
 	amdgpu_bo_unreserve(bo);
-	ww_acquire_fini(&pin_ctx);
 error:
 	amdgpu_bo_unref(&bo);
 	if (sg) {
@@ -245,7 +234,7 @@ void amdgpu_gart_table_ram_free(struct amdgpu_device *adev)
 	unsigned long x;
 	int ret;
 
-	ret = amdgpu_bo_reserve(adev->gart.bo, false, NULL);
+	ret = amdgpu_bo_reserve(adev->gart.bo, false);
 	if (!ret) {
 		amdgpu_bo_unpin(adev->gart.bo);
 		amdgpu_bo_unreserve(adev->gart.bo);
