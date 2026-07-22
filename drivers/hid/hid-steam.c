@@ -480,13 +480,12 @@ static int steam_recv_report_id(struct steam_device *steam,
 	}
 
 	kfree(buf);
-	/*
-	 * Don't log if the failure is -ENODEV, as this
-	 * can happen normally on disconnect.
-	 */
-	if (ret < 0 && ret != -ENODEV)
+	if (ret < 0)
 		hid_err(steam->hdev, "%s: error %d\n", __func__, ret);
-	else if (ret > 0)
+
+	if (ret < 0)
+		hid_err(steam->hdev, "%s: error %d\n", __func__, ret);
+	else
 		hid_dbg(steam->hdev, "Received report %*ph\n", ret, data);
 
 	if (ret >= 2 && data[1] > ret + 2) {
@@ -558,11 +557,7 @@ static int steam_send_report_id(struct steam_device *steam,
 	} while (--retries);
 
 	kfree(buf);
-	/*
-	 * Don't log if the failure is -ENODEV, as this
-	 * can happen normally on disconnect.
-	 */
-	if (ret < 0 && ret != -ENODEV)
+	if (ret < 0)
 		hid_err(steam->hdev, "%s: error %d (%*ph)\n", __func__,
 				ret, size, cmd);
 	return ret;
