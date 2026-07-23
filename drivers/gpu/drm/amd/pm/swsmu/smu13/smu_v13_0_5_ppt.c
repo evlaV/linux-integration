@@ -582,6 +582,12 @@ static int smu_v13_0_5_od_edit_dpm_table(struct smu_context *smu, enum PP_OD_DPM
 				dev_err(smu->adev->dev, "Set soft max sclk failed!");
 				return ret;
 			}
+
+			if (smu->gfx_actual_hard_min_freq != smu->gfx_default_hard_min_freq ||
+			    smu->gfx_actual_soft_max_freq != smu->gfx_default_soft_max_freq)
+				smu->user_dpm_profile.user_od = true;
+			else
+				smu->user_dpm_profile.user_od = false;
 		}
 		break;
 	default:
@@ -589,6 +595,29 @@ static int smu_v13_0_5_od_edit_dpm_table(struct smu_context *smu, enum PP_OD_DPM
 	}
 
 	return ret;
+}
+
+static int smu_v13_0_5_restore_user_od_settings(struct smu_context *smu)
+{
+	int ret;
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetHardMinGfxClk,
+					      smu->gfx_actual_hard_min_freq,
+					      NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore hard min sclk!\n");
+		return ret;
+	}
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetSoftMaxGfxClk,
+					      smu->gfx_actual_soft_max_freq,
+					      NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore soft max sclk!\n");
+		return ret;
+	}
+
+	return 0;
 }
 
 static int smu_v13_0_5_get_current_clk_freq(struct smu_context *smu,
@@ -1088,8 +1117,10 @@ static int smu_v13_0_5_set_fine_grain_gfx_freq_parameters(struct smu_context *sm
 
 	smu->gfx_default_hard_min_freq = clk_table->MinGfxClk;
 	smu->gfx_default_soft_max_freq = clk_table->MaxGfxClk;
-	smu->gfx_actual_hard_min_freq = 0;
-	smu->gfx_actual_soft_max_freq = 0;
+	if (smu->gfx_actual_hard_min_freq == 0)
+		smu->gfx_actual_hard_min_freq = smu->gfx_default_hard_min_freq;
+	if (smu->gfx_actual_soft_max_freq == 0)
+		smu->gfx_actual_soft_max_freq = smu->gfx_default_soft_max_freq;
 
 	return 0;
 }
@@ -1117,6 +1148,7 @@ static const struct pptable_funcs smu_v13_0_5_ppt_funcs = {
 	.mode2_reset = smu_v13_0_5_mode2_reset,
 	.get_dpm_ultimate_freq = smu_v13_0_5_get_dpm_ultimate_freq,
 	.od_edit_dpm_table = smu_v13_0_5_od_edit_dpm_table,
+	.restore_user_od_settings = smu_v13_0_5_restore_user_od_settings,
 	.print_clk_levels = smu_v13_0_5_print_clk_levels,
 	.force_clk_levels = smu_v13_0_5_force_clk_levels,
 	.set_performance_level = smu_v13_0_5_set_performance_level,
