@@ -527,12 +527,38 @@ static int cyan_skillfish_od_edit_dpm_table(struct smu_context *smu,
 			}
 		}
 
+		if (cyan_skillfish_user_settings.sclk != cyan_skillfish_sclk_default ||
+		    cyan_skillfish_user_settings.vddc != CYAN_SKILLFISH_VDDC_MAGIC)
+			smu->user_dpm_profile.user_od = true;
+		else
+			smu->user_dpm_profile.user_od = false;
+
 		break;
 	default:
 		return -EOPNOTSUPP;
 	}
 
 	return ret;
+}
+
+static int cyan_skillfish_restore_user_od_settings(struct smu_context *smu)
+{
+	uint32_t vid;
+	int ret;
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_RequestGfxclk,
+					      cyan_skillfish_user_settings.sclk, NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore sclk!\n");
+		return ret;
+	}
+
+	if (cyan_skillfish_user_settings.vddc == CYAN_SKILLFISH_VDDC_MAGIC)
+		return smu_cmn_send_smc_msg(smu, SMU_MSG_UnforceGfxVid, NULL);
+
+	vid = (1550 - cyan_skillfish_user_settings.vddc) * 160 / 1000;
+
+	return smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_ForceGfxVid, vid, NULL);
 }
 
 static int cyan_skillfish_get_dpm_ultimate_freq(struct smu_context *smu,
@@ -589,6 +615,7 @@ static const struct pptable_funcs cyan_skillfish_ppt_funcs = {
 	.is_dpm_running = cyan_skillfish_is_dpm_running,
 	.get_gpu_metrics = cyan_skillfish_get_gpu_metrics,
 	.od_edit_dpm_table = cyan_skillfish_od_edit_dpm_table,
+	.restore_user_od_settings = cyan_skillfish_restore_user_od_settings,
 	.get_dpm_ultimate_freq = cyan_skillfish_get_dpm_ultimate_freq,
 	.register_irq_handler = smu_v11_0_register_irq_handler,
 	.notify_memory_pool_location = smu_v11_0_notify_memory_pool_location,
