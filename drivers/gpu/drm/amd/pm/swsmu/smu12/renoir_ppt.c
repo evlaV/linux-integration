@@ -458,6 +458,12 @@ static int renoir_od_edit_dpm_table(struct smu_context *smu,
 				dev_err(smu->adev->dev, "Set soft max sclk failed!");
 				return ret;
 			}
+
+			if (smu->gfx_actual_hard_min_freq != smu->gfx_default_hard_min_freq ||
+			    smu->gfx_actual_soft_max_freq != smu->gfx_default_soft_max_freq)
+				smu->user_dpm_profile.user_od = true;
+			else
+				smu->user_dpm_profile.user_od = false;
 		}
 		break;
 	default:
@@ -465,6 +471,29 @@ static int renoir_od_edit_dpm_table(struct smu_context *smu,
 	}
 
 	return ret;
+}
+
+static int renoir_restore_user_od_settings(struct smu_context *smu)
+{
+	int ret;
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetHardMinGfxClk,
+					      smu->gfx_actual_hard_min_freq,
+					      NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore hard min sclk!\n");
+		return ret;
+	}
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetSoftMaxGfxClk,
+					      smu->gfx_actual_soft_max_freq,
+					      NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore soft max sclk!\n");
+		return ret;
+	}
+
+	return 0;
 }
 
 static int renoir_set_fine_grain_gfx_freq_parameters(struct smu_context *smu)
@@ -485,8 +514,10 @@ static int renoir_set_fine_grain_gfx_freq_parameters(struct smu_context *smu)
 
 	smu->gfx_default_hard_min_freq = min;
 	smu->gfx_default_soft_max_freq = max;
-	smu->gfx_actual_hard_min_freq = 0;
-	smu->gfx_actual_soft_max_freq = 0;
+	if (smu->gfx_actual_hard_min_freq == 0)
+		smu->gfx_actual_hard_min_freq = smu->gfx_default_hard_min_freq;
+	if (smu->gfx_actual_soft_max_freq == 0)
+		smu->gfx_actual_soft_max_freq = smu->gfx_default_soft_max_freq;
 
 	return 0;
 }
@@ -1484,6 +1515,7 @@ static const struct pptable_funcs renoir_ppt_funcs = {
 	.get_gpu_metrics = renoir_get_gpu_metrics,
 	.gfx_state_change_set = renoir_gfx_state_change_set,
 	.set_fine_grain_gfx_freq_parameters = renoir_set_fine_grain_gfx_freq_parameters,
+	.restore_user_od_settings = renoir_restore_user_od_settings,
 	.od_edit_dpm_table = renoir_od_edit_dpm_table,
 	.get_vbios_bootup_values = smu_v12_0_get_vbios_bootup_values,
 };
