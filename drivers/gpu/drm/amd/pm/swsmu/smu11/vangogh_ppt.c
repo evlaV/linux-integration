@@ -2125,6 +2125,14 @@ static int vangogh_od_edit_dpm_table(struct smu_context *smu, enum PP_OD_DPM_TAB
 				return ret;
 			}
 
+			if (smu->gfx_actual_hard_min_freq != smu->gfx_default_hard_min_freq ||
+			    smu->gfx_actual_soft_max_freq != smu->gfx_default_soft_max_freq ||
+			    smu->cpu_actual_soft_min_freq != smu->cpu_default_soft_min_freq ||
+			    smu->cpu_actual_soft_max_freq != smu->cpu_default_soft_max_freq)
+				smu->user_dpm_profile.user_od = true;
+			else
+				smu->user_dpm_profile.user_od = false;
+
 			if (smu->adev->pm.fw_version < 0x43f1b00) {
 				dev_warn(smu->adev->dev, "CPUSoftMax/CPUSoftMin are not supported, please update SBIOS!\n");
 				break;
@@ -2156,6 +2164,46 @@ static int vangogh_od_edit_dpm_table(struct smu_context *smu, enum PP_OD_DPM_TAB
 	return ret;
 }
 
+static int vangogh_restore_user_od_settings(struct smu_context *smu)
+{
+	int ret;
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetHardMinGfxClk,
+					      smu->gfx_actual_hard_min_freq, NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore hard min sclk!\n");
+		return ret;
+	}
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetSoftMaxGfxClk,
+					      smu->gfx_actual_soft_max_freq, NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore soft max sclk!\n");
+		return ret;
+	}
+
+	if (smu->adev->pm.fw_version < 0x43f1b00)
+		return 0;
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetSoftMinCclk,
+					      (smu->cpu_core_id_select << 20) |
+					      smu->cpu_actual_soft_min_freq, NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore min cclk!\n");
+		return ret;
+	}
+
+	ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetSoftMaxCclk,
+					      (smu->cpu_core_id_select << 20) |
+					      smu->cpu_actual_soft_max_freq, NULL);
+	if (ret) {
+		dev_err(smu->adev->dev, "Failed to restore max cclk!\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 static int vangogh_set_default_dpm_tables(struct smu_context *smu)
 {
 	struct smu_table_context *smu_table = &smu->smu_table;
@@ -2169,13 +2217,17 @@ static int vangogh_set_fine_grain_gfx_freq_parameters(struct smu_context *smu)
 
 	smu->gfx_default_hard_min_freq = clk_table->MinGfxClk;
 	smu->gfx_default_soft_max_freq = clk_table->MaxGfxClk;
-	smu->gfx_actual_hard_min_freq = 0;
-	smu->gfx_actual_soft_max_freq = 0;
+	if (smu->gfx_actual_hard_min_freq == 0)
+		smu->gfx_actual_hard_min_freq = smu->gfx_default_hard_min_freq;
+	if (smu->gfx_actual_soft_max_freq == 0)
+		smu->gfx_actual_soft_max_freq = smu->gfx_default_soft_max_freq;
 
 	smu->cpu_default_soft_min_freq = 1400;
 	smu->cpu_default_soft_max_freq = 3500;
-	smu->cpu_actual_soft_min_freq = 0;
-	smu->cpu_actual_soft_max_freq = 0;
+	if (smu->cpu_actual_soft_min_freq == 0)
+		smu->cpu_actual_soft_min_freq = smu->cpu_default_soft_min_freq;
+	if (smu->cpu_actual_soft_max_freq == 0)
+		smu->cpu_actual_soft_max_freq = smu->cpu_default_soft_max_freq;
 
 	return 0;
 }
@@ -2536,6 +2588,7 @@ static const struct pptable_funcs vangogh_ppt_funcs = {
 	.interrupt_work = smu_v11_0_interrupt_work,
 	.get_gpu_metrics = vangogh_common_get_gpu_metrics,
 	.od_edit_dpm_table = vangogh_od_edit_dpm_table,
+	.restore_user_od_settings = vangogh_restore_user_od_settings,
 	.print_clk_levels = vangogh_common_print_clk_levels,
 	.set_default_dpm_table = vangogh_set_default_dpm_tables,
 	.set_fine_grain_gfx_freq_parameters = vangogh_set_fine_grain_gfx_freq_parameters,
