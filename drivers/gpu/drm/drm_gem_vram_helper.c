@@ -520,7 +520,7 @@ static void drm_gem_vram_object_free(struct drm_gem_object *gem)
 {
 	struct drm_gem_vram_object *gbo = drm_gem_vram_of_gem(gem);
 
-	drm_gem_vram_put(gbo);
+	ttm_bo_fini(&gbo->bo);
 }
 
 /*
