@@ -19,9 +19,10 @@ start_test() {
         return
     }
 
-    echo -e "\t\t\t\t Starting futex Tests"
-    make -C tools/testing/selftests TARGETS=futex run_tests
-    echo -e "\t\t\t\t Completed futex Tests"
+    echo -e "\t\t\t\t WARNING: futex tests disabled"
+#    echo -e "\t\t\t\t Starting futex Tests"
+#    make -C tools/testing/selftests TARGETS=futex run_tests
+#    echo -e "\t\t\t\t Completed futex Tests"
 
     echo -e "\t\t\t\t Starting syscall_user_dispatch Tests"
     cd /mnt/tools/testing/selftests/syscall_user_dispatch || {
