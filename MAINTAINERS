@@ -11107,6 +11107,12 @@ S:	Maintained
 B:	https://github.com/JacKeTUs/universal-pidff/issues
 F:	drivers/hid/hid-universal-pidff.c
 
+HID STEAM CONTROLLER
+M:	Vicki Pfau <vi@endrift.com>
+L:	linux-input@vger.kernel.org
+S:	Maintained
+F:	drivers/hid/hid-steam.c
+
 HID VRC-2 CAR CONTROLLER DRIVER
 M:	Marcus Folkesson <marcus.folkesson@gmail.com>
 L:	linux-input@vger.kernel.org
