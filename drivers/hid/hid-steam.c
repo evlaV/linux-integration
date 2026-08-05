@@ -1328,7 +1328,6 @@ static int steam_probe(struct hid_device *hdev,
 {
 	struct steam_device *steam;
 	int ret;
-	unsigned long flags;
 
 	ret = hid_parse(hdev);
 	if (ret) {
@@ -1354,14 +1353,6 @@ static int steam_probe(struct hid_device *hdev,
 	if (!steam)
 		return -ENOMEM;
 
-	/*
-	 * With the real steam controller interface, do not connect hidraw.
-	 * Instead, create the client_hid and connect that.
-	 */
-	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_HIDRAW);
-	if (ret)
-		return ret;
-
 	steam->hdev = hdev;
 	hid_set_drvdata(hdev, steam);
 	spin_lock_init(&steam->lock);
@@ -1378,6 +1369,22 @@ static int steam_probe(struct hid_device *hdev,
 	else
 		steam->sensor_update_rate_us = 9000;
 
+	/*
+	 * With the real steam controller interface, do not connect hidraw.
+	 * Instead, create the client_hid and connect that.
+	 */
+	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_HIDRAW);
+	if (ret)
+		goto err_cancel_work;
+
+	ret = hid_hw_open(hdev);
+	if (ret) {
+		hid_err(hdev,
+			"%s:hid_hw_open\n",
+			__func__);
+		goto err_hw_stop;
+	}
+
 	if (steam->quirks & STEAM_QUIRK_WIRELESS) {
 		hid_info(hdev, "Steam wireless receiver connected");
 		/* If using a wireless adaptor ask for connection status */
@@ -1391,22 +1398,14 @@ static int steam_probe(struct hid_device *hdev,
 			hid_err(hdev,
 				"%s:steam_register failed with error %d\n",
 				__func__, ret);
-			goto err_hw_stop;
+			goto err_hw_close;
 		}
-	}
-
-	ret = hid_hw_open(hdev);
-	if (ret) {
-		hid_err(hdev,
-			"%s:hid_hw_open\n",
-			__func__);
-		goto err_steam_unregister;
 	}
 
 	steam->client_hdev = steam_create_client_hid(hdev);
 	if (IS_ERR(steam->client_hdev)) {
 		ret = PTR_ERR(steam->client_hdev);
-		goto err_hw_close;
+		goto err_steam_unregister;
 	}
 	steam->client_hdev->driver_data = steam;
 
@@ -1418,20 +1417,18 @@ static int steam_probe(struct hid_device *hdev,
 
 err_destroy:
 	hid_destroy_device(steam->client_hdev);
-err_hw_close:
-	hid_hw_close(hdev);
 err_steam_unregister:
-	spin_lock_irqsave(&steam->lock, flags);
-	steam->client_opened = 0;
-	spin_unlock_irqrestore(&steam->lock, flags);
-	cancel_work_sync(&steam->work_connect);
 	if (steam->connected)
 		steam_unregister(steam);
-	cancel_delayed_work_sync(&steam->mode_switch);
+err_hw_close:
+	hid_hw_close(hdev);
 err_hw_stop:
+	hid_hw_stop(hdev);
+err_cancel_work:
+	cancel_work_sync(&steam->work_connect);
+	cancel_delayed_work_sync(&steam->mode_switch);
 	cancel_work_sync(&steam->rumble_work);
 	cancel_delayed_work_sync(&steam->coalesce_rumble_work);
-	hid_hw_stop(hdev);
 
 	return ret;
 }
@@ -1439,27 +1436,25 @@ err_hw_stop:
 static void steam_remove(struct hid_device *hdev)
 {
 	struct steam_device *steam = hid_get_drvdata(hdev);
-	unsigned long flags;
 
 	if (!steam || hdev->group == HID_GROUP_STEAM) {
 		hid_hw_stop(hdev);
 		return;
 	}
 
-	hid_hw_close(hdev);
 	hid_destroy_device(steam->client_hdev);
-	spin_lock_irqsave(&steam->lock, flags);
-	steam->client_opened = 0;
-	spin_unlock_irqrestore(&steam->lock, flags);
+	cancel_delayed_work_sync(&steam->mode_switch);
 	cancel_work_sync(&steam->work_connect);
+	cancel_work_sync(&steam->rumble_work);
+	cancel_delayed_work_sync(&steam->coalesce_rumble_work);
+	steam->client_hdev = NULL;
+	steam->client_opened = 0;
 	if (steam->quirks & STEAM_QUIRK_WIRELESS) {
 		hid_info(hdev, "Steam wireless receiver disconnected");
 	}
-	steam_unregister(steam);
-	cancel_work_sync(&steam->rumble_work);
-	cancel_delayed_work_sync(&steam->mode_switch);
-	cancel_delayed_work_sync(&steam->coalesce_rumble_work);
+	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
+	steam_unregister(steam);
 }
 
 static void steam_do_connect_event(struct steam_device *steam, bool connected)
