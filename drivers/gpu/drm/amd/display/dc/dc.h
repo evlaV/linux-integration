@@ -1092,6 +1092,10 @@ struct dc_debug_options {
 	bool allow_sw_cursor_fallback;
 	unsigned int force_subvp_num_ways;
 	unsigned int force_mall_ss_num_ways;
+	/* Floor, in MHz, for the UCLK hard-min DC requests from the SMU.
+	 * 0 leaves the requested frequency alone.
+	 */
+	unsigned int min_uclk_mhz;
 	bool alloc_extra_way_for_cursor;
 	uint32_t subvp_extra_lines;
 	bool disable_force_pstate_allow_on_hw_release;
@@ -1718,6 +1722,10 @@ struct dc {
 	struct dc_cap_funcs cap_funcs;
 	struct dc_config config;
 	struct dc_bounding_box_overrides bb_overrides;
+	/* Last UCLK hard-min, in MHz, that DC actually asked the SMU for.
+	 * 0 until the first clock update that sends one.
+	 */
+	unsigned int uclk_hard_min_mhz_requested;
 	struct dc_bug_wa work_arounds;
 	struct dc_context *ctx;
 	struct dc_phy_addr_space_config vm_pa_config;
@@ -2667,6 +2675,9 @@ bool dc_dmub_is_ips_idle_state(struct dc *dc);
 
 /* set min and max memory clock to lowest and highest DPM level, respectively */
 void dc_unlock_memory_clock_frequency(struct dc *dc);
+
+/* set a floor, in MHz, on the UCLK hard-min DC asks the SMU for; 0 removes it */
+void dc_set_min_uclk_mhz(struct dc *dc, unsigned int mhz);
 
 /* set min memory clock to the min required for current mode, max to maxDPM */
 void dc_lock_memory_clock_frequency(struct dc *dc);
