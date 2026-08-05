@@ -6451,6 +6451,21 @@ void dc_unlock_memory_clock_frequency(struct dc *dc)
 		dc->clk_mgr->funcs->set_hard_max_memclk(dc->clk_mgr);
 }
 
+/* Set a floor, in MHz, on the UCLK hard-min DC asks the SMU for.  This rides
+ * the DAL mailbox rather than the powerplay forced performance level, so it
+ * constrains the memory clock without disturbing workload profile switching.
+ * Applied immediately as well as on subsequent clock updates, because those
+ * only re-send a hard-min when the requested dram clock changes, which can be
+ * a long time on an otherwise idle display.  Pass 0 to remove the floor.
+ */
+void dc_set_min_uclk_mhz(struct dc *dc, unsigned int mhz)
+{
+	dc->debug.min_uclk_mhz = mhz;
+
+	if (dc->clk_mgr && dc->clk_mgr->funcs->set_min_memclk)
+		dc->clk_mgr->funcs->set_min_memclk(dc->clk_mgr, mhz);
+}
+
 /* set min memory clock to the min required for current mode, max to maxDPM */
 void dc_lock_memory_clock_frequency(struct dc *dc)
 {

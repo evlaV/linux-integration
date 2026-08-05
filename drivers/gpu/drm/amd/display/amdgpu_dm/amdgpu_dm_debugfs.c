@@ -4420,6 +4420,60 @@ DEFINE_DEBUGFS_ATTRIBUTE(dp_ignore_cable_id_ops, dp_ignore_cable_id_get,
 			 dp_ignore_cable_id_set, "%llu\n");
 
 /*
+ * Floor, in MHz, for the UCLK hard-min DC asks the SMU for. Holds the memory
+ * clock above a chosen frequency without going through
+ * power_dpm_force_performance_level, so automatic workload profile switching
+ * keeps working. 0 disables the floor.
+ *
+ * Applied immediately, and again on subsequent clock updates. Read
+ * amdgpu_dm_uclk_hard_min_requested_mhz to see what was actually requested,
+ * and pp_dpm_mclk to see whether the SMU honoured it.
+ *
+ * Example usage: echo 675 > /sys/kernel/debug/dri/0/amdgpu_dm_min_uclk_mhz
+ */
+static int min_uclk_mhz_set(void *data, u64 val)
+{
+	struct amdgpu_device *adev = data;
+
+	/* the SMU message carries the frequency in a u16 */
+	if (val > 65535)
+		return -EINVAL;
+
+	mutex_lock(&adev->dm.dc_lock);
+	dc_set_min_uclk_mhz(adev->dm.dc, (unsigned int)val);
+	mutex_unlock(&adev->dm.dc_lock);
+
+	return 0;
+}
+
+static int min_uclk_mhz_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.dc->debug.min_uclk_mhz;
+
+	return 0;
+}
+DEFINE_DEBUGFS_ATTRIBUTE(min_uclk_mhz_ops, min_uclk_mhz_get,
+			 min_uclk_mhz_set, "%llu\n");
+
+/*
+ * Last UCLK hard-min, in MHz, that DC actually asked the SMU for. Reads 0 if
+ * no clock update has sent one yet, which also means any floor written to
+ * amdgpu_dm_min_uclk_mhz has not been applied.
+ */
+static int uclk_hard_min_requested_mhz_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.dc->uclk_hard_min_mhz_requested;
+
+	return 0;
+}
+DEFINE_DEBUGFS_ATTRIBUTE(uclk_hard_min_requested_mhz_ops,
+			 uclk_hard_min_requested_mhz_get, NULL, "%llu\n");
+
+/*
  * Sets the DC visual confirm debug option from the given string.
  * Example usage: echo 1 > /sys/kernel/debug/dri/0/amdgpu_visual_confirm
  */
@@ -4572,6 +4626,10 @@ void dtn_debugfs_init(struct amdgpu_device *adev)
 				&dp_set_mst_en_for_sst_ops);
 	debugfs_create_file("amdgpu_dm_dp_ignore_cable_id", 0644, root, adev,
 				&dp_ignore_cable_id_ops);
+	debugfs_create_file("amdgpu_dm_min_uclk_mhz", 0644, root, adev,
+				&min_uclk_mhz_ops);
+	debugfs_create_file("amdgpu_dm_uclk_hard_min_requested_mhz", 0444, root, adev,
+				&uclk_hard_min_requested_mhz_ops);
 
 	debugfs_create_file_unsafe("amdgpu_dm_visual_confirm", 0644, root, adev,
 				   &visual_confirm_fops);

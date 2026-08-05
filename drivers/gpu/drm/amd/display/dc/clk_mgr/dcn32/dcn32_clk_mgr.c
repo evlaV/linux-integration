@@ -630,6 +630,21 @@ static void dcn32_auto_dpm_test_log(
 	}
 }
 
+/* Apply the debug UCLK floor to a hard-min about to be sent to the SMU, and
+ * record what we ended up asking for. The floor rides the DAL mailbox, so it
+ * constrains the memory clock without going through the powerplay forced
+ * performance level, leaving workload profile switching alone.
+ */
+static unsigned int dcn32_uclk_hard_min(struct dc *dc, unsigned int uclk_mhz)
+{
+	if (uclk_mhz < dc->debug.min_uclk_mhz)
+		uclk_mhz = dc->debug.min_uclk_mhz;
+
+	dc->uclk_hard_min_mhz_requested = uclk_mhz;
+
+	return uclk_mhz;
+}
+
 static void dcn32_update_clocks(struct clk_mgr *clk_mgr_base,
 			struct dc_state *context,
 			bool safe_to_lower)
@@ -724,20 +739,22 @@ static void dcn32_update_clocks(struct clk_mgr *clk_mgr_base,
 
 			/* to disable P-State switching, set UCLK min = max */
 			if (!clk_mgr_base->clks.p_state_change_support) {
+				struct clk_bw_params *bw = dc->clk_mgr->bw_params;
+				unsigned int uclk_mhz = bw->max_memclk_mhz;
+
 				if (dc->clk_mgr->dc_mode_softmax_enabled) {
 					/* On DCN32x we will never have the functional UCLK min above the softmax
 					 * since we calculate mode support based on softmax being the max UCLK
 					 * frequency.
 					 */
-					if (dc->debug.disable_dc_mode_overwrite) {
+					if (dc->debug.disable_dc_mode_overwrite)
 						dcn30_smu_set_hard_max_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)dc->clk_mgr->bw_params->max_memclk_mhz);
-						dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)dc->clk_mgr->bw_params->max_memclk_mhz);
-					} else
-						dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
-								(uint16_t)dc->clk_mgr->bw_params->dc_mode_softmax_memclk);
-				} else {
-					dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)dc->clk_mgr->bw_params->max_memclk_mhz);
+					else
+						uclk_mhz = bw->dc_mode_softmax_memclk;
 				}
+
+				dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
+						dcn32_uclk_hard_min(dc, uclk_mhz));
 			}
 		}
 
@@ -773,7 +790,8 @@ static void dcn32_update_clocks(struct clk_mgr *clk_mgr_base,
 						(uint16_t)max((int)dc->clk_mgr->bw_params->dc_mode_softmax_memclk,
 								khz_to_mhz_ceil(clk_mgr_base->clks.dramclk_khz)));
 
-			dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)khz_to_mhz_ceil(clk_mgr_base->clks.dramclk_khz));
+			dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)dcn32_uclk_hard_min(dc,
+					khz_to_mhz_ceil(clk_mgr_base->clks.dramclk_khz)));
 		}
 
 		if (clk_mgr_base->clks.num_ways != new_clocks->num_ways &&
@@ -1011,21 +1029,23 @@ static void dcn32_notify_wm_ranges(struct clk_mgr *clk_mgr_base)
 static void dcn32_set_hard_min_memclk(struct clk_mgr *clk_mgr_base, bool current_mode)
 {
 	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
+	struct dc *dc = clk_mgr_base->ctx->dc;
+	unsigned int uclk_mhz;
 
 	if (!clk_mgr->smu_present)
 		return;
 
 	if (current_mode) {
 		if (clk_mgr_base->clks.p_state_change_support)
-			dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
-					(uint16_t)khz_to_mhz_ceil(clk_mgr_base->clks.dramclk_khz));
+			uclk_mhz = khz_to_mhz_ceil(clk_mgr_base->clks.dramclk_khz);
 		else
-			dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
-					(uint16_t)clk_mgr_base->bw_params->max_memclk_mhz);
+			uclk_mhz = clk_mgr_base->bw_params->max_memclk_mhz;
 	} else {
-		dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
-				(uint16_t)clk_mgr_base->bw_params->clk_table.entries[0].memclk_mhz);
+		uclk_mhz = clk_mgr_base->bw_params->clk_table.entries[0].memclk_mhz;
 	}
+
+	dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
+			(uint16_t)dcn32_uclk_hard_min(dc, uclk_mhz));
 }
 
 /* Set max memclk to highest DPM value */
@@ -1135,7 +1155,8 @@ static void dcn32_set_min_memclk(struct clk_mgr *clk_mgr_base, unsigned int memc
 	if (!clk_mgr->smu_present)
 		return;
 
-	dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK, (uint16_t)memclk_mhz);
+	dcn32_smu_set_hard_min_by_freq(clk_mgr, PPCLK_UCLK,
+			(uint16_t)dcn32_uclk_hard_min(clk_mgr_base->ctx->dc, memclk_mhz));
 }
 
 static struct clk_mgr_funcs dcn32_funcs = {
