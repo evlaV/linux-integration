@@ -403,12 +403,14 @@ struct steam_device {
 	spinlock_t lock;
 	struct hid_device *hdev, *client_hdev;
 	struct mutex report_mutex;
+	struct mutex registration_mutex;
 	unsigned long client_opened;
 	struct input_dev __rcu *input;
 	struct input_dev __rcu *sensors;
 	unsigned long quirks;
 	struct work_struct work_connect;
 	bool connected;
+	bool registered;
 	char serial_no[STEAM_SERIAL_LEN + 1];
 	struct power_supply_desc battery_desc;
 	struct power_supply __rcu *battery;
@@ -727,6 +729,7 @@ static int steam_get_conn_status(struct steam_device *steam)
 	else
 		report_id = 0;
 
+	guard(mutex)(&steam->report_mutex);
 	ret = steam_send_report_id(steam, cmd, sizeof(cmd), report_id);
 	if (ret < 0)
 		return ret;
@@ -1077,7 +1080,7 @@ static int steam_battery_register(struct steam_device *steam)
 	steam->battery_voltage = 3000;
 	steam->battery_charge = 100;
 	steam->battery_current = 0;
-	steam->battery_temp = 200;
+	steam->battery_temp = 20000;
 	steam->battery_status = POWER_SUPPLY_STATUS_UNKNOWN;
 	spin_unlock_irqrestore(&steam->lock, flags);
 
@@ -1373,20 +1376,22 @@ static int steam_register(struct steam_device *steam)
 {
 	int ret;
 
+	mutex_lock(&steam->registration_mutex);
 	/*
 	 * This function can be called several times in a row with the
 	 * wireless adaptor, without steam_unregister() between them, because
 	 * another client send a get_connection_status command, for example.
-	 * The battery and serial number are set just once per device.
 	 */
-	if (steam->serial_no[0])
+	if (steam->registered) {
+		mutex_unlock(&steam->registration_mutex);
 		return 0;
+	}
 
 	/*
 	 * Unlikely, but getting the serial could fail, and it is not so
 	 * important, so make up a serial number and go on.
 	 */
-	if (steam_get_serial(steam) < 0)
+	if (steam_get_serial(steam) < 0 || !steam->serial_no[0])
 		strscpy(steam->serial_no, "XXXXXXXXXX",
 				sizeof(steam->serial_no));
 
@@ -1412,6 +1417,8 @@ static int steam_register(struct steam_device *steam)
 	if (ret != 0)
 		goto steam_register_sensors_fail;
 
+	steam->registered = true;
+	mutex_unlock(&steam->registration_mutex);
 	mutex_lock(&steam_devices_lock);
 	if (list_empty(&steam->list))
 		list_add(&steam->list, &steam_devices);
@@ -1421,27 +1428,31 @@ static int steam_register(struct steam_device *steam)
 steam_register_sensors_fail:
 	steam_input_unregister(steam);
 steam_register_input_fail:
+	steam_battery_unregister(steam);
+	mutex_unlock(&steam->registration_mutex);
 	return ret;
 }
 
 static void steam_unregister(struct steam_device *steam)
 {
-	if (!steam->serial_no[0])
+	if (!steam->registered)
 		return;
 
 	hid_info(steam->hdev, "Steam %s '%s' disconnected",
 			steam->quirks & STEAM_QUIRK_DECK ? "Deck" : "Controller",
 			steam->serial_no);
+	mutex_lock(&steam->registration_mutex);
+	steam->registered = false;
 	steam_battery_unregister(steam);
 	steam_sensors_unregister(steam);
 	steam_input_unregister(steam);
+	mutex_unlock(&steam->registration_mutex);
 	cancel_work_sync(&steam->rumble_work);
 	cancel_delayed_work_sync(&steam->mode_switch);
 	cancel_delayed_work_sync(&steam->coalesce_rumble_work);
 	mutex_lock(&steam_devices_lock);
 	list_del_init(&steam->list);
 	mutex_unlock(&steam_devices_lock);
-	steam->serial_no[0] = 0;
 }
 
 static void steam_work_connect_cb(struct work_struct *work)
@@ -1454,7 +1465,6 @@ static void steam_work_connect_cb(struct work_struct *work)
 	bool opened;
 	int ret;
 
-	guard(mutex)(&steam->report_mutex);
 	spin_lock_irqsave(&steam->lock, flags);
 	opened = steam->client_opened;
 	connected = steam->connected;
@@ -1488,16 +1498,18 @@ static void steam_mode_switch_cb(struct work_struct *work)
 	client_opened = steam->client_opened;
 	spin_unlock_irqrestore(&steam->lock, flags);
 
-	guard(mutex)(&steam->report_mutex);
 	hid_dbg(steam->hdev, "%s: switching gamepad mode to %i\n", __func__, steam->gamepad_mode);
 	if (gamepad_mode) {
+		guard(mutex)(&steam->report_mutex);
 		steam_set_lizard_mode(steam, false);
 	} else {
 		struct input_dev *input;
 		struct input_dev *sensors;
 
-		if (!client_opened)
+		if (!client_opened) {
+			guard(mutex)(&steam->report_mutex);
 			steam_set_lizard_mode(steam, lizard_mode);
+		}
 
 		/*
 		 * Zero out inputs so it doesn't look like we're holding
@@ -1562,6 +1574,7 @@ static void steam_mode_switch_cb(struct work_struct *work)
 		rcu_read_unlock();
 	}
 
+	guard(mutex)(&steam->report_mutex);
 	steam_haptic_pulse(steam, STEAM_PAD_RIGHT, 0x190, 0, 1, 0);
 	if (gamepad_mode) {
 		steam_haptic_pulse(steam, STEAM_PAD_LEFT, 0x14D, 0x14D, 0x2D, 0);
@@ -1750,6 +1763,7 @@ static int steam_probe(struct hid_device *hdev,
 	hid_set_drvdata(hdev, steam);
 	spin_lock_init(&steam->lock);
 	mutex_init(&steam->report_mutex);
+	mutex_init(&steam->registration_mutex);
 	steam->quirks = id->driver_data;
 	INIT_WORK(&steam->work_connect, steam_work_connect_cb);
 	INIT_DELAYED_WORK(&steam->mode_switch, steam_mode_switch_cb);
@@ -1793,9 +1807,7 @@ static int steam_probe(struct hid_device *hdev,
 			steam->connected = true;
 	}
 	if (steam->connected) {
-		mutex_lock(&steam->report_mutex);
 		ret = steam_register(steam);
-		mutex_unlock(&steam->report_mutex);
 		if (ret) {
 			hid_err(hdev,
 				"%s:steam_register failed with error %d\n",
@@ -1854,7 +1866,6 @@ static void steam_remove(struct hid_device *hdev)
 	if (steam->quirks & STEAM_QUIRK_WIRELESS) {
 		hid_info(hdev, "Steam wireless receiver disconnected");
 	}
-	guard(mutex)(&steam->report_mutex);
 	steam_unregister(steam);
 	hid_hw_stop(hdev);
 }
@@ -2701,7 +2712,7 @@ static int steam_param_set_lizard_mode(const char *val,
 		spin_lock_irqsave(&steam->lock, flags);
 		client_opened = steam->client_opened;
 		spin_unlock_irqrestore(&steam->lock, flags);
-		if (client_opened) {
+		if (!client_opened) {
 			guard(mutex)(&steam->report_mutex);
 			steam_set_lizard_mode(steam, lizard_mode);
 		}
