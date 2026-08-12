@@ -44,8 +44,8 @@ static int amdgpu_vm_sdma_alloc_job(struct amdgpu_vm_update_params *p,
 {
 	enum amdgpu_ib_pool_type pool = p->immediate ? AMDGPU_IB_POOL_IMMEDIATE
 		: AMDGPU_IB_POOL_DELAYED;
-	struct drm_sched_entity *entity = p->immediate ? &p->vm->immediate
-		: &p->vm->delayed;
+	struct drm_sched_entity *entity =
+		p->immediate ? &p->ctx->vm->immediate : &p->ctx->vm->delayed;
 	unsigned int ndw;
 	int r;
 
@@ -55,8 +55,9 @@ static int amdgpu_vm_sdma_alloc_job(struct amdgpu_vm_update_params *p,
 		ndw += count * 2;
 	ndw = min(ndw, AMDGPU_VM_SDMA_MAX_NUM_DW);
 
-	r = amdgpu_job_alloc_with_ib(p->adev, entity, AMDGPU_FENCE_OWNER_VM,
-				     ndw * 4, pool, &p->job, k_job_id);
+	r = amdgpu_job_alloc_with_ib(p->ctx->adev, entity,
+				     AMDGPU_FENCE_OWNER_VM, ndw * 4, pool,
+				     &p->job, k_job_id);
 	if (r)
 		return r;
 
@@ -110,14 +111,14 @@ static int amdgpu_vm_sdma_commit(struct amdgpu_vm_update_params *p,
 	struct amdgpu_ring *ring;
 	struct dma_fence *f;
 
-	ring = container_of(p->vm->delayed.rq->sched, struct amdgpu_ring,
+	ring = container_of(p->ctx->vm->delayed.rq->sched, struct amdgpu_ring,
 			    sched);
 
 	WARN_ON(ib->length_dw == 0);
 	amdgpu_ring_pad_ib(ring, ib);
 
 	if (p->needs_flush)
-		atomic64_inc(&p->vm->tlb_seq);
+		atomic64_inc(&p->ctx->vm->tlb_seq);
 
 	WARN_ON(ib->length_dw > p->num_dw_left);
 	f = amdgpu_job_submit(p->job);
@@ -125,10 +126,10 @@ static int amdgpu_vm_sdma_commit(struct amdgpu_vm_update_params *p,
 	if (p->unlocked) {
 		struct dma_fence *tmp = dma_fence_get(f);
 
-		swap(p->vm->last_unlocked, tmp);
+		swap(p->ctx->vm->last_unlocked, tmp);
 		dma_fence_put(tmp);
 	} else {
-		dma_resv_add_fence(p->vm->root.bo->tbo.base.resv, f,
+		dma_resv_add_fence(p->ctx->vm->root.bo->tbo.base.resv, f,
 				   DMA_RESV_USAGE_BOOKKEEP);
 	}
 
@@ -167,7 +168,7 @@ static void amdgpu_vm_sdma_copy_ptes(struct amdgpu_vm_update_params *p,
 	pe += amdgpu_bo_gpu_offset_no_check(bo);
 	trace_amdgpu_vm_copy_ptes(pe, src, count, p->immediate);
 
-	amdgpu_vm_copy_pte(p->adev, ib, pe, src, count);
+	amdgpu_vm_copy_pte(p->ctx->adev, ib, pe, src, count);
 }
 
 /**
@@ -194,11 +195,11 @@ static void amdgpu_vm_sdma_set_ptes(struct amdgpu_vm_update_params *p,
 	pe += amdgpu_bo_gpu_offset_no_check(bo);
 	trace_amdgpu_vm_set_ptes(pe, addr, count, incr, flags, p->immediate);
 	if (count < 3) {
-		amdgpu_vm_write_pte(p->adev, ib, pe, addr | flags,
-				    count, incr);
+		amdgpu_vm_write_pte(p->ctx->adev, ib, pe, addr | flags, count,
+				    incr);
 	} else {
-		amdgpu_vm_set_pte_pde(p->adev, ib, pe, addr,
-				      count, incr, flags);
+		amdgpu_vm_set_pte_pde(p->ctx->adev, ib, pe, addr, count, incr,
+				      flags);
 	}
 }
 
@@ -258,7 +259,7 @@ static int amdgpu_vm_sdma_update(struct amdgpu_vm_update_params *p,
 
 		if (!p->pages_addr) {
 			if (p->override_pte)
-				amdgpu_gmc_override_vm_pte_flags(p->adev, p->vm, addr, &flags);
+				amdgpu_gmc_override_vm_pte_flags(p->ctx->adev, p->ctx->vm, addr, &flags);
 
 			/* set page commands needed */
 			amdgpu_vm_sdma_set_ptes(p, bo, pe, addr, count,
@@ -267,7 +268,7 @@ static int amdgpu_vm_sdma_update(struct amdgpu_vm_update_params *p,
 		}
 
 		/* copy commands needed */
-		ndw -= p->adev->vm_manager.vm_pte_funcs->copy_pte_num_dw;
+		ndw -= p->ctx->adev->vm_manager.vm_pte_funcs->copy_pte_num_dw;
 
 		/* for padding */
 		ndw -= 7;
@@ -283,7 +284,7 @@ static int amdgpu_vm_sdma_update(struct amdgpu_vm_update_params *p,
 			pte[i] = amdgpu_vm_map_gart(p->pages_addr, addr);
 
 			if (p->override_pte)
-				amdgpu_gmc_override_vm_pte_flags(p->adev, p->vm, pte[i], &oflags);
+				amdgpu_gmc_override_vm_pte_flags(p->ctx->adev, p->ctx->vm, pte[i], &oflags);
 
 			pte[i] |= oflags;
 		}

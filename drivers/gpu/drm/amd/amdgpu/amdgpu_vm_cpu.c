@@ -89,7 +89,7 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 	trace_amdgpu_vm_set_ptes(pe, addr, count, incr, flags, p->immediate);
 
 	if (!p->pages_addr && p->override_pte)
-		amdgpu_gmc_override_vm_pte_flags(p->adev, p->vm, addr, &flags);
+		amdgpu_gmc_override_vm_pte_flags(p->ctx->adev, p->ctx->vm, addr, &flags);
 
 	for (i = 0; i < count; i++) {
 		u64 oflags = flags;
@@ -99,9 +99,9 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 			addr;
 
 		if (p->pages_addr && p->override_pte)
-			amdgpu_gmc_override_vm_pte_flags(p->adev, p->vm, value, &oflags);
+			amdgpu_gmc_override_vm_pte_flags(p->ctx->adev, p->ctx->vm, value, &oflags);
 
-		amdgpu_gmc_set_pte_pde(p->adev, (void *)(uintptr_t)pe,
+		amdgpu_gmc_set_pte_pde(p->ctx->adev, (void *)(uintptr_t)pe,
 				       i, value, oflags);
 		addr += incr;
 	}
@@ -119,10 +119,10 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 static int amdgpu_vm_cpu_commit(struct amdgpu_vm_update_params *p,
 				struct dma_fence **fence)
 {
-	struct amdgpu_device *adev = p->adev;
+	struct amdgpu_device *adev = p->ctx->adev;
 
 	if (p->needs_flush)
-		atomic64_inc(&p->vm->tlb_seq);
+		atomic64_inc(&p->ctx->vm->tlb_seq);
 
 	mb();
 	/* A reset flushed the HDP anyway, so that here can be skipped when a reset is ongoing */
