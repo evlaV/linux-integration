@@ -1261,9 +1261,8 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
  * Returns:
  * 0 for success, negative erro code for failure.
  */
-int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
-			   bool immediate, bool unlocked, bool flush_tlb,
-			   bool allow_override, struct amdgpu_sync *sync,
+int amdgpu_vm_update_range(struct amdgpu_vm_update_ctx *ctx, bool immediate,
+			   bool unlocked, bool flush_tlb, bool allow_override,
 			   uint64_t start, uint64_t last, uint64_t flags,
 			   uint64_t offset, uint64_t vram_base,
 			   struct ttm_resource *res, dma_addr_t *pages_addr,
@@ -1274,7 +1273,7 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	struct amdgpu_res_cursor cursor;
 	int r, idx;
 
-	if (!drm_dev_enter(adev_to_drm(adev), &idx))
+	if (!drm_dev_enter(adev_to_drm(ctx->adev), &idx))
 		return -ENODEV;
 
 	tlb_cb = kmalloc(sizeof(*tlb_cb), GFP_KERNEL);
@@ -1286,17 +1285,19 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	/* Vega20+XGMI where PTEs get inadvertently cached in L2 texture cache,
 	 * heavy-weight flush TLB unconditionally.
 	 */
-	flush_tlb |= adev->gmc.xgmi.num_physical_nodes &&
-		     amdgpu_ip_version(adev, GC_HWIP, 0) == IP_VERSION(9, 4, 0);
+	flush_tlb |= ctx->adev->gmc.xgmi.num_physical_nodes &&
+		     amdgpu_ip_version(ctx->adev, GC_HWIP, 0) ==
+			     IP_VERSION(9, 4, 0);
 
 	/*
 	 * On GFX8 and older any 8 PTE block with a valid bit set enters the TLB
 	 */
-	flush_tlb |= amdgpu_ip_version(adev, GC_HWIP, 0) < IP_VERSION(9, 0, 0);
+	flush_tlb |= amdgpu_ip_version(ctx->adev, GC_HWIP, 0) <
+		     IP_VERSION(9, 0, 0);
 
 	memset(&params, 0, sizeof(params));
-	params.adev = adev;
-	params.vm = vm;
+	params.adev = ctx->adev;
+	params.vm = ctx->vm;
 	params.immediate = immediate;
 	params.pages_addr = pages_addr;
 	params.unlocked = unlocked;
@@ -1304,22 +1305,22 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	params.allow_override = allow_override;
 	INIT_LIST_HEAD(&params.tlb_flush_waitlist);
 
-	amdgpu_vm_eviction_lock(vm);
-	if (vm->evicting) {
+	amdgpu_vm_eviction_lock(ctx->vm);
+	if (ctx->vm->evicting) {
 		r = -EBUSY;
 		goto error_free;
 	}
 
-	if (!unlocked && !dma_fence_is_signaled(vm->last_unlocked)) {
+	if (!unlocked && !dma_fence_is_signaled(ctx->vm->last_unlocked)) {
 		struct dma_fence *tmp = dma_fence_get_stub();
 
-		amdgpu_bo_fence(vm->root.bo, vm->last_unlocked, true);
-		swap(vm->last_unlocked, tmp);
+		amdgpu_bo_fence(ctx->vm->root.bo, ctx->vm->last_unlocked, true);
+		swap(ctx->vm->last_unlocked, tmp);
 		dma_fence_put(tmp);
 	}
 
-	r = vm->update_funcs->prepare(&params, sync,
-				      AMDGPU_KERNEL_JOB_ID_VM_UPDATE_RANGE);
+	r = ctx->vm->update_funcs->prepare(
+		&params, &ctx->sync, AMDGPU_KERNEL_JOB_ID_VM_UPDATE_RANGE);
 	if (r)
 		goto error_free;
 
@@ -1362,7 +1363,8 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 				params.pages_addr = NULL;
 			}
 
-		} else if (flags & (AMDGPU_PTE_VALID | AMDGPU_PTE_PRT_FLAG(adev))) {
+		} else if (flags & (AMDGPU_PTE_VALID |
+				    AMDGPU_PTE_PRT_FLAG(ctx->adev))) {
 			addr = vram_base + cursor.start;
 		} else {
 			addr = 0;
@@ -1377,7 +1379,7 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		start = tmp;
 	}
 
-	r = vm->update_funcs->commit(&params, fence);
+	r = ctx->vm->update_funcs->commit(&params, fence);
 	if (r)
 		goto error_free;
 
@@ -1386,11 +1388,11 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		tlb_cb = NULL;
 	}
 
-	amdgpu_vm_pt_free_list(adev, &params);
+	amdgpu_vm_pt_free_list(ctx->adev, &params);
 
 error_free:
 	kfree(tlb_cb);
-	amdgpu_vm_eviction_unlock(vm);
+	amdgpu_vm_eviction_unlock(ctx->vm);
 	drm_dev_exit(idx);
 	return r;
 }
@@ -1539,12 +1541,11 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 
 		trace_amdgpu_vm_bo_update(mapping);
 
-		r = amdgpu_vm_update_range(ctx->adev, vm, false, false,
-					   flush_tlb, !uncached, &ctx->sync,
-					   mapping->start, mapping->last,
-					   update_flags, mapping->offset,
-					   vram_base, mem, pages_addr,
-					   last_update);
+		r = amdgpu_vm_update_range(ctx, false, false, flush_tlb,
+					   !uncached, mapping->start,
+					   mapping->last, update_flags,
+					   mapping->offset, vram_base, mem,
+					   pages_addr, last_update);
 		if (r)
 			goto error;
 	}
@@ -1752,8 +1753,7 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 					   struct amdgpu_bo_va_mapping, list);
 		list_del(&mapping->list);
 
-		r = amdgpu_vm_update_range(ctx->adev, ctx->vm, false, false,
-					   true, false, &ctx->sync,
+		r = amdgpu_vm_update_range(ctx, false, false, true, false,
 					   mapping->start, mapping->last, 0, 0,
 					   0, NULL, NULL, &f);
 		amdgpu_vm_free_mapping(ctx->adev, ctx->vm, mapping, f);
@@ -3170,6 +3170,7 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 	unsigned long irqflags;
 	uint64_t value, flags;
 	struct amdgpu_vm *vm;
+	struct amdgpu_vm_update_ctx ctx;
 	int r;
 
 	xa_lock_irqsave(&adev->vm_manager.pasids, irqflags);
@@ -3192,6 +3193,8 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 	}
 
 	addr /= AMDGPU_GPU_PAGE_SIZE;
+
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
 
 	r = amdgpu_bo_reserve(root, true);
 	if (r)
@@ -3232,8 +3235,10 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 		goto error_unlock;
 	}
 
-	r = amdgpu_vm_update_range(adev, vm, true, false, false, false,
-				   NULL, addr, addr, flags, value, 0, NULL, NULL, NULL);
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
+
+	r = amdgpu_vm_update_range(&ctx, true, false, false, false, addr, addr,
+				   flags, value, 0, NULL, NULL, NULL);
 	if (r)
 		goto error_unlock;
 
@@ -3243,6 +3248,8 @@ error_unlock:
 	amdgpu_bo_unreserve(root);
 	if (r < 0)
 		dev_err(adev->dev, "Can't handle page fault (%d)\n", r);
+
+	amdgpu_vm_update_ctx_fini(&ctx);
 
 error_unref:
 	amdgpu_bo_unref(&root);
