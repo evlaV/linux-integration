@@ -972,6 +972,7 @@ amdgpu_userq_vm_validate(struct amdgpu_userq_mgr *uq_mgr)
 	struct amdgpu_hmm_range *range;
 	struct amdgpu_vm *vm = &fpriv->vm;
 	unsigned long key, tmp_key;
+	struct amdgpu_vm_update_ctx vmctx;
 	struct amdgpu_bo_va *bo_va;
 	struct amdgpu_usermode_queue *queue;
 	struct amdgpu_bo *bo;
@@ -983,6 +984,8 @@ amdgpu_userq_vm_validate(struct amdgpu_userq_mgr *uq_mgr)
 
 retry_lock:
 	drm_exec_init(&exec, DRM_EXEC_IGNORE_DUPLICATES, 0);
+	amdgpu_vm_update_ctx_init(&vmctx, adev, vm);
+
 	drm_exec_until_all_locked(&exec) {
 		ret = amdgpu_vm_lock_pd(vm, &exec, 1);
 		drm_exec_retry_on_contention(&exec);
@@ -1076,7 +1079,7 @@ retry_lock:
 		goto retry_lock;
 	}
 
-	ret = amdgpu_vm_update_pdes(adev, vm, false);
+	ret = amdgpu_vm_update_pdes(&vmctx, false);
 	if (ret)
 		goto unlock_all;
 
@@ -1112,6 +1115,7 @@ retry_lock:
 		drm_file_err(uq_mgr->file, "Failed to replace eviction fence\n");
 
 unlock_all:
+	amdgpu_vm_update_ctx_fini(&vmctx);
 	drm_exec_fini(&exec);
 free_ranges:
 	xa_for_each(&xa, tmp_key, range) {

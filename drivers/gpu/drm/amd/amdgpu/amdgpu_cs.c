@@ -1226,15 +1226,15 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 			goto err_fini_ctx;
 	}
 
-	amdgpu_vm_update_ctx_fini(&update_ctx);
-
 	r = amdgpu_vm_handle_moved(adev, vm, drm_exec_ticket(&p->exec));
 	if (r)
-		return r;
+		goto err_fini_ctx;
 
-	r = amdgpu_vm_update_pdes(adev, vm, false);
+	r = amdgpu_vm_update_pdes(&update_ctx, false);
 	if (r)
-		return r;
+		goto err_fini_ctx;
+
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 
 	r = amdgpu_sync_fence(&p->sync, vm->last_update, GFP_KERNEL);
 	if (r)

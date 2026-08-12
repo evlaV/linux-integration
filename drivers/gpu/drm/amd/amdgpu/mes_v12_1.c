@@ -2058,7 +2058,7 @@ static int mes_v12_1_map_test_bo(struct amdgpu_device *adev,
 	}
 	amdgpu_sync_fence(&sync, (*bo_va)->last_pt_update, GFP_KERNEL);
 
-	r = amdgpu_vm_update_pdes(adev, vm, false);
+	r = amdgpu_vm_update_pdes(&update_ctx, false);
 	if (r) {
 		dev_err(adev->dev, "failed to update pdes on meta data\n");
 		goto error;

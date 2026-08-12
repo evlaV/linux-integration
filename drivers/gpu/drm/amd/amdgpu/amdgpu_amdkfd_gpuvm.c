@@ -501,9 +501,12 @@ static int vm_update_pds(struct amdgpu_vm *vm, struct amdgpu_sync *sync)
 {
 	struct amdgpu_bo *pd = vm->root.bo;
 	struct amdgpu_device *adev = amdgpu_ttm_adev(pd->tbo.bdev);
+	struct amdgpu_vm_update_ctx ctx;
 	int ret;
 
-	ret = amdgpu_vm_update_pdes(adev, vm, false);
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
+	ret = amdgpu_vm_update_pdes(&ctx, false);
+	amdgpu_vm_update_ctx_fini(&ctx);
 	if (ret)
 		return ret;
 

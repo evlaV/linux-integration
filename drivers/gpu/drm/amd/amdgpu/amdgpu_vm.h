@@ -564,8 +564,7 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		       int (*callback)(void *p, struct amdgpu_bo *bo),
 		       void *param);
 void amdgpu_vm_flush(struct amdgpu_ring *ring, struct amdgpu_job *job, bool need_pipe_sync);
-int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
-			  struct amdgpu_vm *vm, bool immediate);
+int amdgpu_vm_update_pdes(struct amdgpu_vm_update_ctx *ctx, bool immediate);
 int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 			  struct dma_fence **fence);
 int amdgpu_vm_delayed_free(struct amdgpu_device *adev, struct amdgpu_vm *vm);
