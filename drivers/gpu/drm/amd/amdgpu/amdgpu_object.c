@@ -634,7 +634,7 @@ int amdgpu_bo_create(struct amdgpu_device *adev,
 		.no_wait_gpu = bp->no_wait_gpu,
 		/* We opt to avoid OOM on system pages allocations */
 		.gfp_retry_mayfail = true,
-		.allow_res_evict = bp->type != ttm_bo_type_kernel,
+		.allow_res_evict = true,
 		.resv = bp->resv,
 		.exec = bp->exec,
 	};
