@@ -362,7 +362,11 @@ int amdgpu_vm_pt_clear(struct amdgpu_vm_update_ctx *update_ctx,
 		       struct amdgpu_bo_vm *vmbo, bool immediate)
 {
 	unsigned int level = update_ctx->adev->vm_manager.root_level;
-	struct ttm_operation_ctx ctx = { true, false };
+	struct ttm_operation_ctx ctx = {
+		.interruptible = true,
+		.no_wait_gpu = false,
+		.exec = update_ctx->exec,
+	};
 	struct amdgpu_vm_update_params params;
 	struct amdgpu_bo *ancestor = &vmbo->bo;
 	unsigned int entries;
@@ -437,8 +441,8 @@ exit:
  * @vmbo: pointer to the buffer object pointer
  * @xcp_id: GPU partition id
  */
-int amdgpu_vm_pt_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
-			int level, bool immediate, struct amdgpu_bo_vm **vmbo,
+int amdgpu_vm_pt_create(struct amdgpu_vm_update_ctx *ctx, int level,
+			bool immediate, struct amdgpu_bo_vm **vmbo,
 			int32_t xcp_id)
 {
 	struct amdgpu_bo_param bp;
@@ -446,36 +450,38 @@ int amdgpu_vm_pt_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 
 	memset(&bp, 0, sizeof(bp));
 
-	bp.size = amdgpu_vm_pt_size(adev, level);
+	bp.size = amdgpu_vm_pt_size(ctx->adev, level);
 	bp.byte_align = AMDGPU_GPU_PAGE_SIZE;
 
-	if (!adev->gmc.is_app_apu)
+	if (!ctx->adev->gmc.is_app_apu)
 		bp.domain = AMDGPU_GEM_DOMAIN_VRAM;
 	else
 		bp.domain = AMDGPU_GEM_DOMAIN_GTT;
 
-	bp.domain = amdgpu_bo_get_preferred_domain(adev, bp.domain);
+	bp.domain = amdgpu_bo_get_preferred_domain(ctx->adev, bp.domain);
 	bp.flags = AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS |
 		AMDGPU_GEM_CREATE_CPU_GTT_USWC;
 
 	if (level < AMDGPU_VM_PTB)
-		num_entries = amdgpu_vm_pt_num_entries(adev, level);
+		num_entries = amdgpu_vm_pt_num_entries(ctx->adev, level);
 	else
 		num_entries = 0;
 
 	bp.bo_ptr_size = struct_size((*vmbo), entries, num_entries);
 
-	if (vm->use_cpu_for_update)
+	if (ctx->vm->use_cpu_for_update)
 		bp.flags |= AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED;
 
 	bp.type = ttm_bo_type_kernel;
 	bp.no_wait_gpu = immediate;
 	bp.xcp_id_plus1 = xcp_id + 1;
 
-	if (vm->root.bo)
-		bp.resv = vm->root.bo->tbo.base.resv;
+	if (ctx->vm->root.bo)
+		bp.resv = ctx->vm->root.bo->tbo.base.resv;
 
-	return amdgpu_bo_create_vm(adev, &bp, vmbo);
+	bp.exec = ctx->exec;
+
+	return amdgpu_bo_create_vm(ctx->adev, &bp, vmbo);
 }
 
 /**
@@ -505,8 +511,8 @@ static int amdgpu_vm_pt_alloc(struct amdgpu_vm_update_ctx *ctx,
 		return 0;
 
 	amdgpu_vm_eviction_unlock(ctx->vm);
-	r = amdgpu_vm_pt_create(ctx->adev, ctx->vm, cursor->level, immediate,
-				&pt, ctx->vm->root.bo->xcp_id);
+	r = amdgpu_vm_pt_create(ctx, cursor->level, immediate, &pt,
+				ctx->vm->root.bo->xcp_id);
 	amdgpu_vm_eviction_lock(ctx->vm);
 	if (r)
 		return r;
