@@ -256,6 +256,10 @@ struct amdgpu_vm_update_ctx {
 	 * @vm: target VM of the update
 	 */
 	struct amdgpu_vm *vm;
+	/**
+	 * @exec: exec used to acquire locks
+	 */
+	struct drm_exec *exec;
 
 	/**
 	 * @freed: A list of mappings that are freed and pending PT/PD updates during
@@ -646,8 +650,8 @@ void amdgpu_vm_get_memory(struct amdgpu_vm *vm,
 
 int amdgpu_vm_pt_clear(struct amdgpu_vm_update_ctx *ctx,
 		       struct amdgpu_bo_vm *vmbo, bool immediate);
-int amdgpu_vm_pt_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
-			int level, bool immediate, struct amdgpu_bo_vm **vmbo,
+int amdgpu_vm_pt_create(struct amdgpu_vm_update_ctx *ctx, int level,
+			bool immediate, struct amdgpu_bo_vm **vmbo,
 			int32_t xcp_id);
 void amdgpu_vm_pt_free_root(struct amdgpu_device *adev, struct amdgpu_vm *vm);
 

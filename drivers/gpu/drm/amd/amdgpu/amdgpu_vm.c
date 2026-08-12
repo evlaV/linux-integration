@@ -1748,11 +1748,10 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 	while (!list_empty(&ctx->freed)) {
 		mapping = list_first_entry(&ctx->freed,
 					   struct amdgpu_bo_va_mapping, list);
-		list_del(&mapping->list);
-
 		r = amdgpu_vm_update_range(ctx, false, false, true, false,
 					   mapping->start, mapping->last, 0, 0,
 					   0, NULL, NULL, &f);
+		list_del(&mapping->list);
 		amdgpu_vm_free_mapping(ctx->adev, ctx->vm, mapping, f);
 		if (r) {
 			dma_fence_put(f);
@@ -2833,8 +2832,8 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	vm->evicting = false;
 	vm->tlb_fence_context = dma_fence_context_alloc(1);
 
-	r = amdgpu_vm_pt_create(adev, vm, adev->vm_manager.root_level, false,
-				&root, xcp_id);
+	r = amdgpu_vm_pt_create(&ctx, adev->vm_manager.root_level, false, &root,
+				xcp_id);
 	if (r)
 		goto error_free_delayed;
 
