@@ -1702,12 +1702,12 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 		r = amdgpu_vm_update_range(ctx, false, false, true, false,
 					   mapping->start, mapping->last, 0, 0,
 					   0, NULL, NULL, &f);
-		list_del(&mapping->list);
-		amdgpu_vm_free_mapping(ctx->adev, ctx->vm, mapping, f);
 		if (r) {
 			dma_fence_put(f);
 			return r;
 		}
+		list_del(&mapping->list);
+		amdgpu_vm_free_mapping(ctx->adev, ctx->vm, mapping, f);
 	}
 
 	if (fence && f) {
@@ -1734,17 +1734,13 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
  * 0 for success.
  *
  */
-int amdgpu_vm_delayed_free(struct amdgpu_device *adev, struct amdgpu_vm *vm)
+int amdgpu_vm_delayed_free(struct amdgpu_vm_update_ctx *ctx)
 {
-	struct amdgpu_vm_update_ctx ctx;
 	int r;
 
-	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
+	list_splice_init(&ctx->vm->delayed_freed, &ctx->freed);
+	r = amdgpu_vm_clear_freed(ctx, NULL);
 
-	list_splice_init(&vm->delayed_freed, &ctx.freed);
-	r = amdgpu_vm_clear_freed(&ctx, NULL);
-
-	amdgpu_vm_update_ctx_fini(&ctx);
 	return r;
 }
 

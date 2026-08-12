@@ -826,7 +826,7 @@ amdgpu_gem_va_update_vm(struct amdgpu_vm_update_ctx *ctx,
 	return fence;
 
 error:
-	if (r && r != -ERESTARTSYS)
+	if (r && r != -ERESTARTSYS && r != -EDEADLK)
 		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);
 
 	return dma_fence_get(ctx->vm->last_update);
@@ -1007,6 +1007,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 
 			fence = amdgpu_gem_va_update_vm(&update_ctx, bo_va,
 							args->operation);
+			drm_exec_retry_on_contention(&exec);
 
 			if (timeline_syncobj) {
 				if (!args->vm_timeline_point) {

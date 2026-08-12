@@ -566,7 +566,7 @@ void amdgpu_vm_flush(struct amdgpu_ring *ring, struct amdgpu_job *job, bool need
 int amdgpu_vm_update_pdes(struct amdgpu_vm_update_ctx *ctx, bool immediate);
 int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 			  struct dma_fence **fence);
-int amdgpu_vm_delayed_free(struct amdgpu_device *adev, struct amdgpu_vm *vm);
+int amdgpu_vm_delayed_free(struct amdgpu_vm_update_ctx *ctx);
 int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 			   struct amdgpu_vm *vm,
 			   struct ww_acquire_ctx *ticket);

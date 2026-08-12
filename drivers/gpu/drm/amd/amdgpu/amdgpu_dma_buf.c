@@ -468,6 +468,7 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	struct ttm_operation_ctx ctx = { false, false };
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct ttm_placement placement = {};
 	struct amdgpu_vm_bo_base *bo_base;
 	int r;
@@ -507,10 +508,12 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 				continue;
 		}
 
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+
 		/* Reserve fences for two SDMA page table updates */
 		r = dma_resv_reserve_fences(resv, 2);
 		if (!r)
-			r = amdgpu_vm_delayed_free(adev, vm);
+			r = amdgpu_vm_delayed_free(&update_ctx);
 
 		/* Don't pass 'ticket' to amdgpu_vm_handle_moved: we want the clear=true
 		 * path to be used otherwise we might update the PT of another process
@@ -526,6 +529,7 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 				  r);
 
 		dma_resv_unlock(resv);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 	}
 }
 
