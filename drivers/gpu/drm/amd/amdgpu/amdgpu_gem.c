@@ -50,6 +50,7 @@
 
 static int
 amdgpu_gem_add_input_fence(struct drm_file *filp,
+			   struct amdgpu_vm_update_ctx *update_ctx,
 			   uint64_t syncobj_handles_array,
 			   uint32_t num_syncobj_handles)
 {
@@ -76,9 +77,10 @@ amdgpu_gem_add_input_fence(struct drm_file *filp,
 		if (ret)
 			goto free_memdup;
 
-		dma_fence_wait(fence, false);
+		ret = amdgpu_sync_fence(&update_ctx->sync, fence, GFP_KERNEL);
+		if (ret)
+			goto free_memdup;
 
-		/* TODO: optimize async handling */
 		dma_fence_put(fence);
 	}
 
@@ -318,11 +320,14 @@ static void amdgpu_gem_object_close(struct drm_gem_object *obj,
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	struct amdgpu_fpriv *fpriv = file_priv->driver_priv;
 	struct amdgpu_vm *vm = &fpriv->vm;
+	struct amdgpu_vm_update_ctx update_ctx;
 
 	struct dma_fence *fence = NULL;
 	struct amdgpu_bo_va *bo_va;
 	struct drm_exec exec;
 	long r;
+
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 
 	drm_exec_init(&exec, DRM_EXEC_IGNORE_DUPLICATES, 0);
 	drm_exec_until_all_locked(&exec) {
@@ -344,12 +349,12 @@ static void amdgpu_gem_object_close(struct drm_gem_object *obj,
 	if (!bo_va || --bo_va->ref_count)
 		goto out_unlock;
 
-	amdgpu_vm_bo_del(adev, bo_va);
+	amdgpu_vm_bo_del(&update_ctx, bo_va);
 	amdgpu_vm_bo_update_shared(bo);
 	if (!amdgpu_vm_ready(vm))
 		goto out_unlock;
 
-	r = amdgpu_vm_clear_freed(adev, vm, &fence);
+	r = amdgpu_vm_clear_freed(&update_ctx, &fence);
 	if (unlikely(r < 0) && !drm_dev_is_unplugged(adev_to_drm(adev)))
 		dev_err(adev->dev, "failed to clear page "
 			"tables on GEM object close (%ld)\n", r);
@@ -360,6 +365,7 @@ static void amdgpu_gem_object_close(struct drm_gem_object *obj,
 	dma_fence_put(fence);
 
 out_unlock:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	if (r && !drm_dev_is_unplugged(adev_to_drm(adev)))
 		dev_err(adev->dev, "leaking bo va (%ld)\n", r);
 	drm_exec_fini(&exec);
@@ -760,8 +766,7 @@ out:
  * otherwise stub fence in case of error.
  */
 static struct dma_fence *
-amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
-			struct amdgpu_vm *vm,
+amdgpu_gem_va_update_vm(struct amdgpu_vm_update_ctx *ctx,
 			struct amdgpu_bo_va *bo_va,
 			uint32_t operation)
 {
@@ -769,7 +774,7 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
 	int r = 0;
 
 	/* If the VM is not ready return only a stub. */
-	if (!amdgpu_vm_ready(vm))
+	if (!amdgpu_vm_ready(ctx->vm))
 		return dma_fence_get_stub();
 
 
@@ -780,42 +785,42 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
 	 * schedules GPU work. If nothing needs clearing, @fence can remain as
 	 * the original vm->last_update.
 	 */
-	r = amdgpu_vm_clear_freed(adev, vm, &vm->last_update);
+	r = amdgpu_vm_clear_freed(ctx, &ctx->vm->last_update);
 	if (r)
 		goto error;
 
 	/* For MAP/REPLACE we also need to update the BO mappings. */
 	if (operation == AMDGPU_VA_OP_MAP ||
 	    operation == AMDGPU_VA_OP_REPLACE) {
-		r = amdgpu_vm_bo_update(adev, bo_va, false);
+		r = amdgpu_vm_bo_update(ctx, bo_va, false);
 		if (r)
 			goto error;
 	}
 
 	/* Always update PDEs after we touched the mappings. */
-	r = amdgpu_vm_update_pdes(adev, vm, false);
+	r = amdgpu_vm_update_pdes(ctx->adev, ctx->vm, false);
 	if (r)
 		goto error;
 
 	if ((operation == AMDGPU_VA_OP_MAP ||
 	     operation == AMDGPU_VA_OP_REPLACE) &&
-	    !amdgpu_vm_is_bo_always_valid(vm, bo_va->base.bo)) {
+	    !amdgpu_vm_is_bo_always_valid(ctx->vm, bo_va->base.bo)) {
 
 		/*
 		 * For MAP/REPLACE of non per-VM BOs we need to sync to both the
 		 * bo_va->last_pt_update and vm->last_update or otherwise we
 		 * potentially miss the PDE updates.
 		 */
-		fence = dma_fence_unwrap_merge(vm->last_update,
+		fence = dma_fence_unwrap_merge(ctx->vm->last_update,
 					       bo_va->last_pt_update);
 		if (!fence) {
 			/* As fallback in OOM situations */
-			dma_fence_wait(vm->last_update, false);
+			dma_fence_wait(ctx->vm->last_update, false);
 			dma_fence_wait(bo_va->last_pt_update, false);
 			fence = dma_fence_get_stub();
 		}
 	} else {
-		fence = dma_fence_get(vm->last_update);
+		fence = dma_fence_get(ctx->vm->last_update);
 	}
 
 	return fence;
@@ -824,7 +829,7 @@ error:
 	if (r && r != -ERESTARTSYS)
 		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);
 
-	return dma_fence_get(vm->last_update);
+	return dma_fence_get(ctx->vm->last_update);
 }
 
 int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
@@ -845,6 +850,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 	struct amdgpu_bo_va *bo_va;
 	struct drm_syncobj *timeline_syncobj = NULL;
 	struct dma_fence_chain *timeline_chain = NULL;
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct drm_exec exec;
 	uint64_t vm_size, tmp;
 	int r = 0;
@@ -911,8 +917,10 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 		abo = NULL;
 	}
 
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, &fpriv->vm);
+
 	/* Add input syncobj fences (if any) for synchronization. */
-	r = amdgpu_gem_add_input_fence(filp,
+	r = amdgpu_gem_add_input_fence(filp, &update_ctx,
 				       args->input_fence_syncobj_handles,
 				       args->num_syncobj_handles);
 	if (r)
@@ -962,21 +970,21 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 
 	switch (args->operation) {
 	case AMDGPU_VA_OP_MAP:
-		r = amdgpu_vm_bo_map(adev, bo_va, args->va_address,
+		r = amdgpu_vm_bo_map(&update_ctx, bo_va, args->va_address,
 				     args->offset_in_bo, args->map_size,
 				     args->flags);
 		break;
 	case AMDGPU_VA_OP_UNMAP:
-		r = amdgpu_vm_bo_unmap(adev, bo_va, args->va_address);
+		r = amdgpu_vm_bo_unmap(&update_ctx, bo_va, args->va_address);
 		break;
 
 	case AMDGPU_VA_OP_CLEAR:
-		r = amdgpu_vm_bo_clear_mappings(adev, &fpriv->vm,
-						args->va_address,
+		r = amdgpu_vm_bo_clear_mappings(&update_ctx, args->va_address,
 						args->map_size);
 		break;
 	case AMDGPU_VA_OP_REPLACE:
-		r = amdgpu_vm_bo_replace_map(adev, bo_va, args->va_address,
+		r = amdgpu_vm_bo_replace_map(&update_ctx, bo_va,
+					     args->va_address,
 					     args->offset_in_bo, args->map_size,
 					     args->flags);
 		break;
@@ -993,7 +1001,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 	    (!adev->debug_vm || timeline_syncobj)) {
 		struct dma_fence *fence;
 
-		fence = amdgpu_gem_va_update_vm(adev, &fpriv->vm, bo_va,
+		fence = amdgpu_gem_va_update_vm(&update_ctx, bo_va,
 						args->operation);
 		if (timeline_syncobj) {
 			if (!args->vm_timeline_point) {
@@ -1017,6 +1025,7 @@ error:
 	dma_fence_chain_free(timeline_chain);
 	if (timeline_syncobj)
 		drm_syncobj_put(timeline_syncobj);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	drm_exec_fini(&exec);
 error_put_gobj:
 	drm_gem_object_put(gobj);

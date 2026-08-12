@@ -2041,6 +2041,7 @@ static int mes_v12_1_map_test_bo(struct amdgpu_device *adev,
 				 struct amdgpu_bo *bo, struct amdgpu_vm *vm,
 				 struct amdgpu_bo_va **bo_va, u64 va, int size)
 {
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_sync sync;
 	int r;
 
@@ -2048,9 +2049,9 @@ static int mes_v12_1_map_test_bo(struct amdgpu_device *adev,
 	if (r)
 		return r;
 
-	amdgpu_sync_create(&sync);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 
-	r = amdgpu_vm_bo_update(adev, *bo_va, false);
+	r = amdgpu_vm_bo_update(&update_ctx, *bo_va, false);
 	if (r) {
 		dev_err(adev->dev, "failed to do vm_bo_update on meta data\n");
 		goto error;
@@ -2064,6 +2065,7 @@ static int mes_v12_1_map_test_bo(struct amdgpu_device *adev,
 	}
 	amdgpu_sync_fence(&sync, vm->last_update, GFP_KERNEL);
 	amdgpu_sync_wait(&sync, false);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 
 error:
 	amdgpu_sync_free(&sync);

@@ -925,6 +925,7 @@ amdgpu_userq_bo_validate(struct amdgpu_device *adev, struct drm_exec *exec,
 			 struct amdgpu_vm *vm)
 {
 	struct ttm_operation_ctx ctx = { false, false };
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct amdgpu_bo_va *bo_va;
 	struct amdgpu_bo *bo;
 	int ret;
@@ -946,8 +947,10 @@ amdgpu_userq_bo_validate(struct amdgpu_device *adev, struct drm_exec *exec,
 		if (ret)
 			return ret;
 
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 		/* This moves the bo_va to the idle list */
-		ret = amdgpu_vm_bo_update(adev, bo_va, false);
+		ret = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		if (ret)
 			return ret;
 

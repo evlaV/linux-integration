@@ -876,6 +876,7 @@ static int kfd_mem_attach(struct amdgpu_device *adev, struct kgd_mem *mem,
 	uint64_t va = mem->va;
 	struct kfd_mem_attachment *attachment[2] = {NULL, NULL};
 	struct amdgpu_bo *bo[2] = {NULL, NULL};
+	struct amdgpu_vm_update_ctx ctx;
 	struct amdgpu_bo_va *bo_va;
 	bool same_hive = false;
 	struct drm_exec exec;
@@ -1000,8 +1001,11 @@ unwind:
 			continue;
 		if (attachment[i]->bo_va) {
 			(void)amdgpu_bo_reserve(bo[i], true);
+			amdgpu_vm_update_ctx_init(
+				&ctx, adev, attachment[i]->bo_va->base.vm);
 			if (--attachment[i]->bo_va->ref_count == 0)
-				amdgpu_vm_bo_del(adev, attachment[i]->bo_va);
+				amdgpu_vm_bo_del(&ctx, attachment[i]->bo_va);
+			amdgpu_vm_update_ctx_fini(&ctx);
 			amdgpu_bo_unreserve(bo[i]);
 			list_del(&attachment[i]->list);
 		}
@@ -1014,12 +1018,16 @@ unwind:
 
 static void kfd_mem_detach(struct kfd_mem_attachment *attachment)
 {
+	struct amdgpu_vm_update_ctx ctx;
 	struct amdgpu_bo *bo = attachment->bo_va->base.bo;
 
 	pr_debug("\t remove VA 0x%llx in entry %p\n",
 			attachment->va, attachment);
+	amdgpu_vm_update_ctx_init(&ctx, attachment->adev,
+				  attachment->bo_va->base.vm);
 	if (--attachment->bo_va->ref_count == 0)
-		amdgpu_vm_bo_del(attachment->adev, attachment->bo_va);
+		amdgpu_vm_bo_del(&ctx, attachment->bo_va);
+	amdgpu_vm_update_ctx_fini(&ctx);
 	drm_gem_object_put(&bo->tbo.base);
 	list_del(&attachment->list);
 	kfree(attachment);
@@ -1273,22 +1281,27 @@ static int unmap_bo_from_gpuvm(struct kgd_mem *mem,
 	struct amdgpu_bo_va *bo_va = entry->bo_va;
 	struct amdgpu_device *adev = entry->adev;
 	struct amdgpu_vm *vm = bo_va->base.vm;
+	struct amdgpu_vm_update_ctx update_ctx;
 
 	if (bo_va->queue_refcount) {
 		pr_debug("bo_va->queue_refcount %d\n", bo_va->queue_refcount);
 		return -EBUSY;
 	}
 
-	(void)amdgpu_vm_bo_unmap(adev, bo_va, entry->va);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+
+	(void)amdgpu_vm_bo_unmap(&update_ctx, bo_va, entry->va);
 
 	/* VM entity stopped if process killed, don't clear freed pt bo */
 	if (!amdgpu_vm_ready(vm))
-		return 0;
+		goto out;
 
-	(void)amdgpu_vm_clear_freed(adev, vm, &bo_va->last_pt_update);
+	(void)amdgpu_vm_clear_freed(&update_ctx, &bo_va->last_pt_update);
 
 	(void)amdgpu_sync_fence(sync, bo_va->last_pt_update, GFP_KERNEL);
 
+out:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	return 0;
 }
 
@@ -1298,6 +1311,7 @@ static int update_gpuvm_pte(struct kgd_mem *mem,
 {
 	struct amdgpu_bo_va *bo_va = entry->bo_va;
 	struct amdgpu_device *adev = entry->adev;
+	struct amdgpu_vm_update_ctx update_ctx;
 	int ret;
 
 	ret = kfd_mem_dmamap_attachment(mem, entry);
@@ -1305,7 +1319,10 @@ static int update_gpuvm_pte(struct kgd_mem *mem,
 		return ret;
 
 	/* Update the page tables  */
-	ret = amdgpu_vm_bo_update(adev, bo_va, false);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, bo_va->base.vm);
+	ret = amdgpu_vm_bo_update(&update_ctx, bo_va, false);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
+
 	if (ret) {
 		pr_err("amdgpu_vm_bo_update failed\n");
 		return ret;
@@ -1319,12 +1336,17 @@ static int map_bo_to_gpuvm(struct kgd_mem *mem,
 			   struct amdgpu_sync *sync,
 			   bool no_update_pte)
 {
+	struct amdgpu_bo_va *bo_va = entry->bo_va;
+	struct amdgpu_device *adev = entry->adev;
+	struct amdgpu_vm_update_ctx update_ctx;
 	int ret;
 
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, bo_va->base.vm);
 	/* Set virtual address for the allocation */
-	ret = amdgpu_vm_bo_map(entry->adev, entry->bo_va, entry->va, 0,
+	ret = amdgpu_vm_bo_map(&update_ctx, bo_va, entry->va, 0,
 			       amdgpu_bo_size(entry->bo_va->base.bo),
 			       entry->pte_flags);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	if (ret) {
 		pr_err("Failed to map VA 0x%llx in vm. ret %d\n",
 				entry->va, ret);
@@ -2925,6 +2947,7 @@ int amdgpu_amdkfd_gpuvm_restore_process_bos(void *info, struct dma_fence __rcu *
 	struct amdgpu_sync sync_obj;
 	unsigned long failed_size = 0;
 	unsigned long total_size = 0;
+	struct amdgpu_vm_update_ctx update_ctx;
 	struct drm_exec exec;
 	int ret;
 
@@ -3034,7 +3057,10 @@ int amdgpu_amdkfd_gpuvm_restore_process_bos(void *info, struct dma_fence __rcu *
 		struct amdgpu_fpriv *fpriv =
 			container_of(peer_vm, struct amdgpu_fpriv, vm);
 
-		ret = amdgpu_vm_bo_update(adev, fpriv->prt_va, false);
+		amdgpu_vm_update_ctx_init(&update_ctx, adev, peer_vm);
+		ret = amdgpu_vm_bo_update(&update_ctx, fpriv->prt_va, false);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
+
 		if (ret) {
 			dev_dbg(adev->dev,
 				"Memory eviction: handle PRT moved failed, pid %8d. Try again.\n",
