@@ -881,19 +881,10 @@ retry:
 	return r;
 }
 
-static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
-				union drm_amdgpu_cs *cs)
+static int amdgpu_cs_parser_init_bo_list(struct amdgpu_cs_parser *p,
+					 union drm_amdgpu_cs *cs)
 {
 	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
-	struct ttm_operation_ctx ctx = {
-		.interruptible =true,
-		.exec = &p->exec
-	};
-	struct amdgpu_vm *vm = &fpriv->vm;
-	struct amdgpu_bo_list_entry *e;
-	struct drm_gem_object *obj;
-	u64 us_since_eviction_throttle;
-	unsigned int i;
 	int r;
 
 	/* p->bo_list could already be assigned if AMDGPU_CHUNK_ID_BO_HANDLES is present */
@@ -912,8 +903,21 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 		if (r)
 			return r;
 	}
+	return 0;
+}
 
-	mutex_lock(&p->bo_list->bo_list_mutex);
+static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
+				union drm_amdgpu_cs *cs)
+{
+	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
+	struct ttm_operation_ctx ctx = { .interruptible = true,
+					 .exec = &p->exec };
+	struct amdgpu_vm *vm = &fpriv->vm;
+	struct amdgpu_bo_list_entry *e;
+	struct drm_gem_object *obj;
+	u64 us_since_eviction_throttle;
+	unsigned int i;
+	int r;
 
 	/* Get userptr backing pages. If pages are updated after registered
 	 * in amdgpu_gem_userptr_ioctl(), amdgpu_cs_list_validate() will do
@@ -936,86 +940,80 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 		e->user_invalidated = userpage_invalidated;
 	}
 
-	drm_exec_until_all_locked(&p->exec) {
-		r = amdgpu_vm_lock_pd(&fpriv->vm, &p->exec, 1 + p->gang_size);
-		drm_exec_retry_on_contention(&p->exec);
+	r = amdgpu_vm_lock_pd(&fpriv->vm, &p->exec, 1 + p->gang_size);
+	if (unlikely(r))
+		goto out_free_user_pages;
+
+	us_since_eviction_throttle =
+		ktime_to_us(ktime_get()) -
+		READ_ONCE(fpriv->vm.last_evict_throttle_start_us);
+	p->vm_eviction_throttle_soft = us_since_eviction_throttle <=
+				       VM_EVICT_THROTTLE_SOFT_TIMEOUT;
+	p->vm_eviction_throttle_hard = us_since_eviction_throttle <=
+				       VM_EVICT_THROTTLE_HARD_TIMEOUT;
+
+	amdgpu_bo_list_for_each_entry(e, p->bo_list)
+	{
+		/* One fence for TTM and one for each CS job */
+		r = drm_exec_prepare_obj(&p->exec, &e->bo->tbo.base,
+					 1 + p->gang_size);
 		if (unlikely(r))
 			goto out_free_user_pages;
 
-		us_since_eviction_throttle =
-			ktime_to_us(ktime_get()) -
-			READ_ONCE(fpriv->vm.last_evict_throttle_start_us);
-		p->vm_eviction_throttle_soft = us_since_eviction_throttle <=
-					       VM_EVICT_THROTTLE_SOFT_TIMEOUT;
-		p->vm_eviction_throttle_hard = us_since_eviction_throttle <=
-					       VM_EVICT_THROTTLE_HARD_TIMEOUT;
+		e->bo_va = amdgpu_vm_bo_find(vm, e->bo);
+	}
 
-		amdgpu_bo_list_for_each_entry(e, p->bo_list) {
-			/* One fence for TTM and one for each CS job */
-			r = drm_exec_prepare_obj(&p->exec, &e->bo->tbo.base,
-						 1 + p->gang_size);
-			drm_exec_retry_on_contention(&p->exec);
-			if (unlikely(r))
-				goto out_free_user_pages;
+	if (p->uf_bo) {
+		r = drm_exec_prepare_obj(&p->exec, &p->uf_bo->tbo.base,
+					 1 + p->gang_size);
+		if (unlikely(r))
+			goto out_free_user_pages;
+	}
 
-			e->bo_va = amdgpu_vm_bo_find(vm, e->bo);
-		}
+	amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list)
+	{
+		struct mm_struct *usermm;
 
-		if (p->uf_bo) {
-			r = drm_exec_prepare_obj(&p->exec, &p->uf_bo->tbo.base,
-						 1 + p->gang_size);
-			drm_exec_retry_on_contention(&p->exec);
-			if (unlikely(r))
-				goto out_free_user_pages;
-		}
-
-		amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list) {
-			struct mm_struct *usermm;
-
-			usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
-			if (usermm && usermm != current->mm) {
-				r = -EPERM;
-				goto out_free_user_pages;
-			}
-
-			if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
-			    e->user_invalidated) {
-				amdgpu_bo_placement_from_domain(e->bo,
-								AMDGPU_GEM_DOMAIN_CPU);
-				r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
-						    &ctx);
-				drm_exec_retry_on_contention(&p->exec);
-				if (r)
-					goto out_free_user_pages;
-
-				amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm,
-							     e->range);
-			}
-		}
-
-		amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
-						  &p->bytes_moved_vis_threshold);
-		p->bytes_moved = 0;
-		p->bytes_moved_vis = 0;
-
-		r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL,
-				       amdgpu_cs_bo_validate, p);
-		drm_exec_retry_on_contention(&p->exec);
-		if (r) {
-			drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
+		usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
+		if (usermm && usermm != current->mm) {
+			r = -EPERM;
 			goto out_free_user_pages;
 		}
 
-		drm_exec_for_each_locked_object(&p->exec, obj) {
-			r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
-			drm_exec_retry_on_contention(&p->exec);
-			if (unlikely(r))
+		if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
+		    e->user_invalidated) {
+			amdgpu_bo_placement_from_domain(e->bo,
+							AMDGPU_GEM_DOMAIN_CPU);
+			r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
+					    &ctx);
+			if (r)
 				goto out_free_user_pages;
-		}
 
-		amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
-					     p->bytes_moved_vis);
+			amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm, e->range);
+		}
 	}
+
+	amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
+					  &p->bytes_moved_vis_threshold);
+	p->bytes_moved = 0;
+	p->bytes_moved_vis = 0;
+
+	r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL, amdgpu_cs_bo_validate,
+			       p);
+	if (r) {
+		if (r != -EDEADLK)
+			drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
+		goto out_free_user_pages;
+	}
+
+	drm_exec_for_each_locked_object(&p->exec, obj) {
+		r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
+		if (unlikely(r))
+			goto out_free_user_pages;
+	}
+
+	amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
+				     p->bytes_moved_vis);
 
 	if (p->uf_bo) {
 		r = amdgpu_ttm_alloc_gart(&p->uf_bo->tbo);
@@ -1038,7 +1036,6 @@ out_free_user_pages:
 		amdgpu_ttm_tt_get_user_pages_done(bo->tbo.ttm, e->range);
 		e->range = NULL;
 	}
-	mutex_unlock(&p->bo_list->bo_list_mutex);
 	return r;
 }
 
@@ -1160,11 +1157,12 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 	if (!amdgpu_vm_ready(vm))
 		return -EINVAL;
 
-	r = amdgpu_vm_delayed_free(adev, vm);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+	update_ctx.exec = &p->exec;
+
+	r = amdgpu_vm_delayed_free(&update_ctx);
 	if (r)
 		return r;
-
-	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 
 	r = amdgpu_vm_bo_update(&update_ctx, fpriv->prt_va, false);
 	if (r)
@@ -1498,22 +1496,36 @@ int amdgpu_cs_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 	if (r)
 		goto error_fini;
 
-	r = amdgpu_cs_parser_bos(&parser, data);
-	if (r) {
-		if (r == -ENOMEM)
-			drm_err(dev, "Not enough memory for command submission!\n");
-		else if (r != -ERESTARTSYS && r != -EAGAIN)
-			drm_dbg(dev, "Failed to process the buffer list %d!\n", r);
+	r = amdgpu_cs_parser_init_bo_list(&parser, data);
+	if (r)
 		goto error_fini;
+
+	mutex_lock(&parser.bo_list->bo_list_mutex);
+
+	drm_exec_until_all_locked(&parser.exec)
+	{
+		r = amdgpu_cs_parser_bos(&parser, data);
+		drm_exec_retry_on_contention(&parser.exec);
+		if (r) {
+			if (r == -ENOMEM)
+				drm_err(dev,
+					"Not enough memory for command submission!\n");
+			else if (r != -ERESTARTSYS && r != -EAGAIN)
+				drm_dbg(dev,
+					"Failed to process the buffer list %d!\n",
+					r);
+			goto error_backoff;
+		}
+
+		r = amdgpu_cs_patch_jobs(&parser);
+		if (r)
+			goto error_backoff;
+
+		r = amdgpu_cs_vm_handling(&parser);
+		drm_exec_retry_on_contention(&parser.exec);
+		if (r)
+			goto error_backoff;
 	}
-
-	r = amdgpu_cs_patch_jobs(&parser);
-	if (r)
-		goto error_backoff;
-
-	r = amdgpu_cs_vm_handling(&parser);
-	if (r)
-		goto error_backoff;
 
 	r = amdgpu_cs_sync_rings(&parser);
 	if (r)
