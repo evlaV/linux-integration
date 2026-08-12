@@ -1359,6 +1359,8 @@ svm_range_unmap_from_gpu(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 {
 	uint64_t init_pte_value = adev->gmc.init_pte_flags;
 	uint64_t gpu_start, gpu_end;
+	struct amdgpu_vm_update_ctx ctx;
+	int ret;
 
 	/* Convert CPU page range to GPU page range */
 	gpu_start = start * AMDGPU_GPU_PAGES_IN_CPU_PAGE;
@@ -1372,9 +1374,12 @@ svm_range_unmap_from_gpu(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		return -EINVAL;
 	}
 
-	return amdgpu_vm_update_range(adev, vm, false, true, true, false, NULL, gpu_start,
-				      gpu_end, init_pte_value, 0, 0, NULL, NULL,
-				      fence);
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
+	ret = amdgpu_vm_update_range(&ctx, false, true, true, false, gpu_start,
+				     gpu_end, init_pte_value, 0, 0, NULL, NULL,
+				     fence);
+	amdgpu_vm_update_ctx_fini(&ctx);
+	return ret;
 }
 
 static int
@@ -1438,6 +1443,7 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 {
 	struct amdgpu_device *adev = pdd->dev->adev;
 	struct amdgpu_vm *vm = drm_priv_to_vm(pdd->drm_priv);
+	struct amdgpu_vm_update_ctx ctx;
 	uint64_t pte_flags;
 	unsigned long last_start;
 	int last_domain;
@@ -1445,6 +1451,8 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 	int64_t i, j;
 
 	last_start = prange->start + offset;
+
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
 
 	pr_debug("svms 0x%p [0x%lx 0x%lx] readonly %d\n", prange->svms,
 		 last_start, last_start + npages - 1, readonly);
@@ -1489,8 +1497,8 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 			 (last_domain == SVM_RANGE_VRAM_DOMAIN) ? 1 : 0,
 			 pte_flags);
 
-		r = amdgpu_vm_update_range(adev, vm, false, false, flush_tlb, true,
-					   NULL, gpu_start, gpu_end,
+		r = amdgpu_vm_update_range(&ctx, false, false, flush_tlb, true,
+					   gpu_start, gpu_end,
 					   pte_flags,
 					   (last_start - prange->start) << PAGE_SHIFT,
 					   bo_adev ? bo_adev->vm_manager.vram_base_offset : 0,
@@ -1517,6 +1525,7 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 		*fence = dma_fence_get(vm->last_update);
 
 out:
+	amdgpu_vm_update_ctx_fini(&ctx);
 	return r;
 }
 
