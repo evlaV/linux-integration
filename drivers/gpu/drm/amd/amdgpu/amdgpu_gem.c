@@ -754,7 +754,7 @@ amdgpu_gem_va_update_vm(struct amdgpu_vm_update_ctx *ctx,
 	}
 
 	/* Always update PDEs after we touched the mappings. */
-	r = amdgpu_vm_update_pdes(ctx->adev, ctx->vm, false);
+	r = amdgpu_vm_update_pdes(ctx, false);
 	if (r)
 		goto error;
 
