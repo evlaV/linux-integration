@@ -1820,6 +1820,7 @@ int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 
 	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 
+retry:
 	spin_lock(&vm->status_lock);
 	while (!list_empty(&vm->moved)) {
 		bo_va = list_first_entry(&vm->moved, struct amdgpu_bo_va,
@@ -1875,6 +1876,15 @@ int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 		spin_lock(&vm->status_lock);
 	}
 	spin_unlock(&vm->status_lock);
+
+	/*
+	 * If something new got added to the moved/invalidated lists while we
+	 * were handling updates for the existing entries, retry. This can happen
+	 * if PT allocation ends up evicting one of the buffers included in command
+	 * submissions.
+	 */
+	if (!list_empty(&vm->moved) || !list_empty(&vm->invalidated))
+		goto retry;
 
 error:
 	amdgpu_vm_update_ctx_fini(&update_ctx);
