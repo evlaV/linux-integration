@@ -57,6 +57,7 @@ struct amdgpu_bo_param {
 	enum ttm_bo_type		type;
 	bool				no_wait_gpu;
 	struct dma_resv			*resv;
+	struct drm_exec *exec;
 	void				(*destroy)(struct ttm_buffer_object *bo);
 	/* xcp partition number plus 1, 0 means any partition */
 	int8_t				xcp_id_plus1;
