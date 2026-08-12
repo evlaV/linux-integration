@@ -357,10 +357,10 @@ static void amdgpu_vm_pt_next_dfs(struct amdgpu_device *adev,
  * Returns:
  * 0 on success, errno otherwise.
  */
-int amdgpu_vm_pt_clear(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+int amdgpu_vm_pt_clear(struct amdgpu_vm_update_ctx *update_ctx,
 		       struct amdgpu_bo_vm *vmbo, bool immediate)
 {
-	unsigned int level = adev->vm_manager.root_level;
+	unsigned int level = update_ctx->adev->vm_manager.root_level;
 	struct ttm_operation_ctx ctx = { true, false };
 	struct amdgpu_vm_update_params params;
 	struct amdgpu_bo *ancestor = &vmbo->bo;
@@ -384,44 +384,43 @@ int amdgpu_vm_pt_clear(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (r)
 		return r;
 
-	if (!drm_dev_enter(adev_to_drm(adev), &idx))
+	if (!drm_dev_enter(adev_to_drm(update_ctx->adev), &idx))
 		return -ENODEV;
 
-	r = vm->update_funcs->map_table(vmbo);
+	r = update_ctx->vm->update_funcs->map_table(vmbo);
 	if (r)
 		goto exit;
 
 	memset(&params, 0, sizeof(params));
-	params.adev = adev;
-	params.vm = vm;
+	params.ctx = update_ctx;
 	params.immediate = immediate;
 
-	r = vm->update_funcs->prepare(&params, NULL,
-				      AMDGPU_KERNEL_JOB_ID_VM_PT_CLEAR);
+	r = update_ctx->vm->update_funcs->prepare(
+		&params, NULL, AMDGPU_KERNEL_JOB_ID_VM_PT_CLEAR);
 	if (r)
 		goto exit;
 
 	addr = 0;
 
 	uint64_t value = 0, flags = 0;
-	if (adev->asic_type >= CHIP_VEGA10) {
+	if (update_ctx->adev->asic_type >= CHIP_VEGA10) {
 		if (level != AMDGPU_VM_PTB) {
 			/* Handle leaf PDEs as PTEs */
-			flags |= AMDGPU_PDE_PTE_FLAG(adev);
-			amdgpu_gmc_get_vm_pde(adev, level,
-					      &value, &flags);
+			flags |= AMDGPU_PDE_PTE_FLAG(update_ctx->adev);
+			amdgpu_gmc_get_vm_pde(update_ctx->adev, level, &value,
+					      &flags);
 		} else {
 			/* Workaround for fault priority problem on GMC9 */
 			flags = AMDGPU_PTE_EXECUTABLE;
 		}
 	}
 
-	r = vm->update_funcs->update(&params, vmbo, addr, 0, entries,
-				     value, flags);
+	r = update_ctx->vm->update_funcs->update(&params, vmbo, addr, 0,
+						 entries, value, flags);
 	if (r)
 		goto exit;
 
-	r = vm->update_funcs->commit(&params, NULL);
+	r = update_ctx->vm->update_funcs->commit(&params, NULL);
 exit:
 	drm_dev_exit(idx);
 	return r;
@@ -492,8 +491,7 @@ int amdgpu_vm_pt_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
  * 1 if page table needed to be allocated, 0 if page table was already
  * allocated, negative errno if an error occurred.
  */
-static int amdgpu_vm_pt_alloc(struct amdgpu_device *adev,
-			      struct amdgpu_vm *vm,
+static int amdgpu_vm_pt_alloc(struct amdgpu_vm_update_ctx *ctx,
 			      struct amdgpu_vm_pt_cursor *cursor,
 			      bool immediate)
 {
@@ -505,10 +503,10 @@ static int amdgpu_vm_pt_alloc(struct amdgpu_device *adev,
 	if (entry->bo)
 		return 0;
 
-	amdgpu_vm_eviction_unlock(vm);
-	r = amdgpu_vm_pt_create(adev, vm, cursor->level, immediate, &pt,
-				vm->root.bo->xcp_id);
-	amdgpu_vm_eviction_lock(vm);
+	amdgpu_vm_eviction_unlock(ctx->vm);
+	r = amdgpu_vm_pt_create(ctx->adev, ctx->vm, cursor->level, immediate,
+				&pt, ctx->vm->root.bo->xcp_id);
+	amdgpu_vm_eviction_lock(ctx->vm);
 	if (r)
 		return r;
 
@@ -517,8 +515,8 @@ static int amdgpu_vm_pt_alloc(struct amdgpu_device *adev,
 	 */
 	pt_bo = &pt->bo;
 	pt_bo->parent = amdgpu_bo_ref(cursor->parent->bo);
-	amdgpu_vm_bo_base_init(adev, entry, vm, pt_bo);
-	r = amdgpu_vm_pt_clear(adev, vm, pt, immediate);
+	amdgpu_vm_bo_base_init(ctx->adev, entry, ctx->vm, pt_bo);
+	r = amdgpu_vm_pt_clear(ctx, pt, immediate);
 	if (r)
 		goto error_free_pt;
 
@@ -589,15 +587,17 @@ static void amdgpu_vm_pt_add_list(struct amdgpu_vm_update_params *params,
 	struct amdgpu_vm_pt_cursor seek;
 	struct amdgpu_vm_bo_base *entry;
 
-	spin_lock(&params->vm->status_lock);
-	for_each_amdgpu_vm_pt_dfs_safe(params->adev, params->vm, cursor, seek, entry) {
+	spin_lock(&params->ctx->vm->status_lock);
+	for_each_amdgpu_vm_pt_dfs_safe(params->ctx->adev, params->ctx->vm,
+				       cursor, seek, entry)
+	{
 		if (entry && entry->bo)
 			list_move(&entry->vm_status, &params->tlb_flush_waitlist);
 	}
 
 	/* enter start node now */
 	list_move(&cursor->entry->vm_status, &params->tlb_flush_waitlist);
-	spin_unlock(&params->vm->status_lock);
+	spin_unlock(&params->ctx->vm->status_lock);
 }
 
 /**
@@ -631,7 +631,7 @@ int amdgpu_vm_pde_update(struct amdgpu_vm_update_params *params,
 {
 	struct amdgpu_vm_bo_base *parent = amdgpu_vm_pt_parent(entry);
 	struct amdgpu_bo *bo, *pbo;
-	struct amdgpu_vm *vm = params->vm;
+	struct amdgpu_vm *vm = params->ctx->vm;
 	uint64_t pde, pt, flags;
 	unsigned int level;
 
@@ -642,7 +642,7 @@ int amdgpu_vm_pde_update(struct amdgpu_vm_update_params *params,
 	for (level = 0, pbo = bo->parent; pbo; ++level)
 		pbo = pbo->parent;
 
-	level += params->adev->vm_manager.root_level;
+	level += params->ctx->adev->vm_manager.root_level;
 	amdgpu_gmc_get_pde_for_bo(entry->bo, level, &pt, &flags);
 	pde = (entry - to_amdgpu_bo_vm(parent->bo)->entries) * 8;
 	return vm->update_funcs->update(params, to_amdgpu_bo_vm(bo), pde, pt,
@@ -682,16 +682,15 @@ static void amdgpu_vm_pte_update_flags(struct amdgpu_vm_update_params *params,
 				       unsigned int count, uint32_t incr,
 				       uint64_t flags)
 {
-	struct amdgpu_device *adev = params->adev;
+	struct amdgpu_device *adev = params->ctx->adev;
 
 	if (level != AMDGPU_VM_PTB) {
-		flags |= AMDGPU_PDE_PTE_FLAG(params->adev);
+		flags |= AMDGPU_PDE_PTE_FLAG(params->ctx->adev);
 		amdgpu_gmc_get_vm_pde(adev, level, &addr, &flags);
 
 	} else if (adev->asic_type >= CHIP_VEGA10 &&
 		   !(flags & AMDGPU_PTE_VALID) &&
-		   !(flags & AMDGPU_PTE_PRT_FLAG(params->adev))) {
-
+		   !(flags & AMDGPU_PTE_PRT_FLAG(params->ctx->adev))) {
 		/* Workaround for fault priority problem on GMC9 */
 		flags |= AMDGPU_PTE_EXECUTABLE;
 	}
@@ -713,10 +712,11 @@ static void amdgpu_vm_pte_update_flags(struct amdgpu_vm_update_params *params,
 	if ((flags & AMDGPU_PTE_SYSTEM) && (adev->flags & AMD_IS_APU) &&
 	    adev->gmc.gmc_funcs->override_vm_pte_flags &&
 	    num_possible_nodes() > 1 && !params->pages_addr && params->allow_override)
-		amdgpu_gmc_override_vm_pte_flags(adev, params->vm, addr, &flags);
+		amdgpu_gmc_override_vm_pte_flags(adev, params->ctx->vm, addr,
+						 &flags);
 
-	params->vm->update_funcs->update(params, pt, pe, addr, count, incr,
-					 flags);
+	params->ctx->vm->update_funcs->update(params, pt, pe, addr, count, incr,
+					      flags);
 }
 
 /**
@@ -758,8 +758,8 @@ static void amdgpu_vm_pte_fragment(struct amdgpu_vm_update_params *params,
 	 */
 	unsigned int max_frag;
 
-	if (params->adev->asic_type < CHIP_VEGA10)
-		max_frag = params->adev->vm_manager.fragment_size;
+	if (params->ctx->adev->asic_type < CHIP_VEGA10)
+		max_frag = params->ctx->adev->vm_manager.fragment_size;
 	else
 		max_frag = 31;
 
@@ -798,7 +798,7 @@ int amdgpu_vm_ptes_update(struct amdgpu_vm_update_params *params,
 			  uint64_t start, uint64_t end,
 			  uint64_t dst, uint64_t flags)
 {
-	struct amdgpu_device *adev = params->adev;
+	struct amdgpu_device *adev = params->ctx->adev;
 	struct amdgpu_vm_pt_cursor cursor;
 	uint64_t frag_start = start, frag_end;
 	unsigned int frag;
@@ -809,7 +809,7 @@ int amdgpu_vm_ptes_update(struct amdgpu_vm_update_params *params,
 			       &frag_end);
 
 	/* walk over the address space and update the PTs */
-	amdgpu_vm_pt_start(adev, params->vm, start, &cursor);
+	amdgpu_vm_pt_start(adev, params->ctx->vm, start, &cursor);
 	while (cursor.pfn < end) {
 		unsigned int shift, parent_shift, mask;
 		uint64_t incr, entry_end, pe_start;
@@ -819,8 +819,8 @@ int amdgpu_vm_ptes_update(struct amdgpu_vm_update_params *params,
 			/* make sure that the page tables covering the
 			 * address range are actually allocated
 			 */
-			r = amdgpu_vm_pt_alloc(params->adev, params->vm,
-					       &cursor, params->immediate);
+			r = amdgpu_vm_pt_alloc(params->ctx, &cursor,
+					       params->immediate);
 			if (r)
 				return r;
 		}
@@ -890,7 +890,7 @@ int amdgpu_vm_ptes_update(struct amdgpu_vm_update_params *params,
 		entry_end = min(entry_end, end);
 
 		do {
-			struct amdgpu_vm *vm = params->vm;
+			struct amdgpu_vm *vm = params->ctx->vm;
 			uint64_t upd_end = min(entry_end, frag_end);
 			unsigned int nptes = (upd_end - frag_start) >> shift;
 			uint64_t upd_flags = flags | AMDGPU_PTE_FRAG(frag);

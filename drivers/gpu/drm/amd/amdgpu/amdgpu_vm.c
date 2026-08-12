@@ -1140,8 +1140,7 @@ int amdgpu_vm_update_pdes(struct amdgpu_vm_update_ctx *ctx, bool immediate)
 		return -ENODEV;
 
 	memset(&params, 0, sizeof(params));
-	params.adev = ctx->adev;
-	params.vm = ctx->vm;
+	params.ctx = ctx;
 	params.immediate = immediate;
 
 	r = ctx->vm->update_funcs->prepare(&params, NULL,
@@ -1207,7 +1206,7 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
 		    struct dma_fence **fence,
 		    struct amdgpu_vm_tlb_seq_struct *tlb_cb)
 {
-	struct amdgpu_vm *vm = params->vm;
+	struct amdgpu_vm *vm = params->ctx->vm;
 
 	tlb_cb->vm = vm;
 	if (!fence || !*fence) {
@@ -1228,7 +1227,7 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
 	 * sort out the issues with KIQ/MES TLB invalidation timeouts.
 	 */
 	if (!params->unlocked && vm->need_tlb_fence) {
-		amdgpu_vm_tlb_fence_create(params->adev, vm, fence);
+		amdgpu_vm_tlb_fence_create(params->ctx->adev, vm, fence);
 
 		/* Makes sure no PD/PT is freed before the flush */
 		dma_resv_add_fence(vm->root.bo->tbo.base.resv, *fence,
@@ -1295,8 +1294,7 @@ int amdgpu_vm_update_range(struct amdgpu_vm_update_ctx *ctx, bool immediate,
 		     IP_VERSION(9, 0, 0);
 
 	memset(&params, 0, sizeof(params));
-	params.adev = ctx->adev;
-	params.vm = ctx->vm;
+	params.ctx = ctx;
 	params.immediate = immediate;
 	params.pages_addr = pages_addr;
 	params.unlocked = unlocked;
@@ -2780,6 +2778,7 @@ void amdgpu_vm_set_task_info(struct amdgpu_vm *vm)
 int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		   int32_t xcp_id, uint32_t pasid)
 {
+	struct amdgpu_vm_update_ctx ctx;
 	struct amdgpu_bo *root_bo;
 	struct amdgpu_bo_vm *root;
 	int r, i;
@@ -2803,6 +2802,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (r)
 		return r;
 
+	amdgpu_vm_update_ctx_init(&ctx, adev, vm);
 	ttm_lru_bulk_move_init(&vm->lru_bulk_move, true);
 
 	vm->is_compute_context = false;
@@ -2833,8 +2833,8 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	vm->evicting = false;
 	vm->tlb_fence_context = dma_fence_context_alloc(1);
 
-	r = amdgpu_vm_pt_create(adev, vm, adev->vm_manager.root_level,
-				false, &root, xcp_id);
+	r = amdgpu_vm_pt_create(adev, vm, adev->vm_manager.root_level, false,
+				&root, xcp_id);
 	if (r)
 		goto error_free_delayed;
 
@@ -2850,7 +2850,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (r)
 		goto error_free_root;
 
-	r = amdgpu_vm_pt_clear(adev, vm, root, false);
+	r = amdgpu_vm_pt_clear(&ctx, root, false);
 	if (r)
 		goto error_free_root;
 
@@ -2869,6 +2869,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 
 	amdgpu_bo_unreserve(vm->root.bo);
 	amdgpu_bo_unref(&root_bo);
+	amdgpu_vm_update_ctx_fini(&ctx);
 
 	return 0;
 
@@ -2886,6 +2887,7 @@ error_free_delayed:
 	dma_fence_put(vm->last_tlb_flush);
 	dma_fence_put(vm->last_unlocked);
 	ttm_lru_bulk_move_fini(&adev->mman.bdev, &vm->lru_bulk_move);
+	amdgpu_vm_update_ctx_fini(&ctx);
 	amdgpu_vm_fini_entities(vm);
 
 	return r;

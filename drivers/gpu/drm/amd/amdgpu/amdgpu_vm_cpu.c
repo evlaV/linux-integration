@@ -92,8 +92,8 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 		value = p->pages_addr ?
 			amdgpu_vm_map_gart(p->pages_addr, addr) :
 			addr;
-		amdgpu_gmc_set_pte_pde(p->adev, (void *)(uintptr_t)pe,
-				       i, value, flags);
+		amdgpu_gmc_set_pte_pde(p->ctx->adev, (void *)(uintptr_t)pe, i,
+				       value, flags);
 		addr += incr;
 	}
 	return 0;
@@ -110,10 +110,10 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 static int amdgpu_vm_cpu_commit(struct amdgpu_vm_update_params *p,
 				struct dma_fence **fence)
 {
-	struct amdgpu_device *adev = p->adev;
+	struct amdgpu_device *adev = p->ctx->adev;
 
 	if (p->needs_flush)
-		atomic64_inc(&p->vm->tlb_seq);
+		atomic64_inc(&p->ctx->vm->tlb_seq);
 
 	mb();
 	/* A reset flushed the HDP anyway, so that here can be skipped when a reset is ongoing */

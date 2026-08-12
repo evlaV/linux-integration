@@ -289,12 +289,7 @@ struct amdgpu_vm_update_params {
 	/**
 	 * @adev: amdgpu device we do this update for
 	 */
-	struct amdgpu_device *adev;
-
-	/**
-	 * @vm: optional amdgpu_vm we do this update for
-	 */
-	struct amdgpu_vm *vm;
+	struct amdgpu_vm_update_ctx *ctx;
 
 	/**
 	 * @immediate: if changes should be made immediately
@@ -649,7 +644,7 @@ void amdgpu_vm_move_to_lru_tail(struct amdgpu_device *adev,
 void amdgpu_vm_get_memory(struct amdgpu_vm *vm,
 			  struct amdgpu_mem_stats stats[__AMDGPU_PL_NUM]);
 
-int amdgpu_vm_pt_clear(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+int amdgpu_vm_pt_clear(struct amdgpu_vm_update_ctx *ctx,
 		       struct amdgpu_bo_vm *vmbo, bool immediate);
 int amdgpu_vm_pt_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			int level, bool immediate, struct amdgpu_bo_vm **vmbo,
