@@ -896,6 +896,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 
 	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT |
 		      DRM_EXEC_IGNORE_DUPLICATES, 0);
+	update_ctx.exec = &exec;
 	drm_exec_until_all_locked(&exec) {
 		if (gobj) {
 			r = drm_exec_lock_obj(&exec, gobj, false);
@@ -908,82 +909,84 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(r))
 			goto error;
-	}
 
-	/* Resolve the BO-VA mapping for this VM/BO combination. */
-	if (abo) {
-		bo_va = amdgpu_vm_bo_find(&fpriv->vm, abo);
-		if (!bo_va) {
-			r = -ENOENT;
-			goto error;
+		/* Resolve the BO-VA mapping for this VM/BO combination. */
+		if (abo) {
+			bo_va = amdgpu_vm_bo_find(&fpriv->vm, abo);
+			if (!bo_va) {
+				r = -ENOENT;
+				goto error;
+			}
+		} else if (args->operation != AMDGPU_VA_OP_CLEAR) {
+			bo_va = fpriv->prt_va;
+		} else {
+			bo_va = NULL;
 		}
-	} else if (args->operation != AMDGPU_VA_OP_CLEAR) {
-		bo_va = fpriv->prt_va;
-	} else {
-		bo_va = NULL;
-	}
 
-	/*
-	 * Prepare the timeline syncobj node if the user requested a VM
-	 * timeline update. This only allocates/looks up the syncobj and
-	 * chain node; the actual fence is attached later.
-	 */
-	r = amdgpu_gem_update_timeline_node(filp,
-					    args->vm_timeline_syncobj_out,
-					    args->vm_timeline_point,
-					    &timeline_syncobj,
-					    &timeline_chain);
-	if (r)
-		goto error;
+		/*
+		 * Prepare the timeline syncobj node if the user requested a VM
+		 * timeline update. This only allocates/looks up the syncobj and
+		 * chain node; the actual fence is attached later.
+		 */
+		r = amdgpu_gem_update_timeline_node(
+			filp, args->vm_timeline_syncobj_out,
+			args->vm_timeline_point, &timeline_syncobj,
+			&timeline_chain);
+		if (r)
+			goto error;
 
-	switch (args->operation) {
-	case AMDGPU_VA_OP_MAP:
-		r = amdgpu_vm_bo_map(&update_ctx, bo_va, args->va_address,
-				     args->offset_in_bo, args->map_size,
-				     args->flags);
-		break;
-	case AMDGPU_VA_OP_UNMAP:
-		r = amdgpu_vm_bo_unmap(&update_ctx, bo_va, args->va_address);
-		break;
-
-	case AMDGPU_VA_OP_CLEAR:
-		r = amdgpu_vm_bo_clear_mappings(&update_ctx, args->va_address,
-						args->map_size);
-		break;
-	case AMDGPU_VA_OP_REPLACE:
-		r = amdgpu_vm_bo_replace_map(&update_ctx, bo_va,
+		switch (args->operation) {
+		case AMDGPU_VA_OP_MAP:
+			r = amdgpu_vm_bo_map(&update_ctx, bo_va,
 					     args->va_address,
 					     args->offset_in_bo, args->map_size,
 					     args->flags);
-		break;
-	default:
-		break;
-	}
+			break;
+		case AMDGPU_VA_OP_UNMAP:
+			r = amdgpu_vm_bo_unmap(&update_ctx, bo_va,
+					       args->va_address);
+			break;
 
-	/*
-	 * Once the VA operation is done, update the VM and obtain the fence
-	 * that represents the last relevant update for this mapping. This
-	 * fence can then be exported to the user-visible VM timeline.
-	 */
-	if (!r && !(args->flags & AMDGPU_VM_DELAY_UPDATE) && !adev->debug_vm) {
-		fence = amdgpu_gem_va_update_vm(&update_ctx, bo_va,
-						args->operation);
-
-		if (timeline_syncobj && fence) {
-			if (!args->vm_timeline_point) {
-				/* Replace the existing fence when no point is given. */
-				drm_syncobj_replace_fence(timeline_syncobj,
-							  fence);
-			} else {
-				/* Attach the last-update fence at a specific point. */
-				drm_syncobj_add_point(timeline_syncobj,
-						      timeline_chain,
-						      fence,
-						      args->vm_timeline_point);
-			}
+		case AMDGPU_VA_OP_CLEAR:
+			r = amdgpu_vm_bo_clear_mappings(
+				&update_ctx, args->va_address, args->map_size);
+			break;
+		case AMDGPU_VA_OP_REPLACE:
+			r = amdgpu_vm_bo_replace_map(&update_ctx, bo_va,
+						     args->va_address,
+						     args->offset_in_bo,
+						     args->map_size,
+						     args->flags);
+			break;
+		default:
+			break;
 		}
-		dma_fence_put(fence);
 
+		/*
+		 * Once the VA operation is done, update the VM and obtain the fence
+		 * that represents the last relevant update for this mapping. This
+		 * fence can then be exported to the user-visible VM timeline.
+		 */
+		if (!r && !(args->flags & AMDGPU_VM_DELAY_UPDATE) &&
+		    !adev->debug_vm) {
+			fence = amdgpu_gem_va_update_vm(&update_ctx, bo_va,
+							args->operation);
+
+			if (timeline_syncobj && fence) {
+				if (!args->vm_timeline_point) {
+					/* Replace the existing fence when no point is given. */
+					drm_syncobj_replace_fence(
+						timeline_syncobj, fence);
+				} else {
+					/* Attach the last-update fence at a specific point. */
+					drm_syncobj_add_point(
+						timeline_syncobj,
+						timeline_chain, fence,
+						args->vm_timeline_point);
+				}
+			}
+			dma_fence_put(fence);
+		}
 	}
 
 error:
