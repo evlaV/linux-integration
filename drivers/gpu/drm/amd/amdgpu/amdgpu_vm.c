@@ -1119,8 +1119,7 @@ uint64_t amdgpu_vm_map_gart(const dma_addr_t *pages_addr, uint64_t addr)
  * Returns:
  * 0 for success, error for failure.
  */
-int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
-			  struct amdgpu_vm *vm, bool immediate)
+int amdgpu_vm_update_pdes(struct amdgpu_vm_update_ctx *ctx, bool immediate)
 {
 	struct amdgpu_vm_update_params params;
 	struct amdgpu_vm_bo_base *entry;
@@ -1128,25 +1127,25 @@ int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
 	LIST_HEAD(relocated);
 	int r, idx;
 
-	amdgpu_vm_assert_locked(vm);
+	amdgpu_vm_assert_locked(ctx->vm);
 
-	spin_lock(&vm->status_lock);
-	list_splice_init(&vm->relocated, &relocated);
-	spin_unlock(&vm->status_lock);
+	spin_lock(&ctx->vm->status_lock);
+	list_splice_init(&ctx->vm->relocated, &relocated);
+	spin_unlock(&ctx->vm->status_lock);
 
 	if (list_empty(&relocated))
 		return 0;
 
-	if (!drm_dev_enter(adev_to_drm(adev), &idx))
+	if (!drm_dev_enter(adev_to_drm(ctx->adev), &idx))
 		return -ENODEV;
 
 	memset(&params, 0, sizeof(params));
-	params.adev = adev;
-	params.vm = vm;
+	params.adev = ctx->adev;
+	params.vm = ctx->vm;
 	params.immediate = immediate;
 
-	r = vm->update_funcs->prepare(&params, NULL,
-				      AMDGPU_KERNEL_JOB_ID_VM_UPDATE_PDES);
+	r = ctx->vm->update_funcs->prepare(&params, NULL,
+					   AMDGPU_KERNEL_JOB_ID_VM_UPDATE_PDES);
 	if (r)
 		goto error;
 
@@ -1159,12 +1158,12 @@ int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
 			goto error;
 	}
 
-	r = vm->update_funcs->commit(&params, &vm->last_update);
+	r = ctx->vm->update_funcs->commit(&params, &ctx->vm->last_update);
 	if (r)
 		goto error;
 
 	if (flush_tlb_needed)
-		atomic64_inc(&vm->tlb_seq);
+		atomic64_inc(&ctx->vm->tlb_seq);
 
 	while (!list_empty(&relocated)) {
 		entry = list_first_entry(&relocated, struct amdgpu_vm_bo_base,
@@ -3242,7 +3241,7 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 	if (r)
 		goto error_unlock;
 
-	r = amdgpu_vm_update_pdes(adev, vm, true);
+	r = amdgpu_vm_update_pdes(&ctx, true);
 
 error_unlock:
 	amdgpu_bo_unreserve(root);
