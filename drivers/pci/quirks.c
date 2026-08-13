@@ -6564,31 +6564,4 @@ static void quirk_msi_claw8_sdexpress_aspm_l1(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_CLASS_FINAL(PCI_ANY_ID, PCI_ANY_ID,
 			      PCI_CLASS_STORAGE_EXPRESS, 0,
 			      quirk_msi_claw8_sdexpress_aspm_l1);
-
-/*
- * The MSI Claw A8 firmware advertises native PCIe hotplug support for
- * this root bridge, but native hotplug handling causes resume failures.
- * Prevent the PCIe port driver from claiming native hotplug ownership.
- */
-static void quirk_claw_a8_no_native_hotplug(struct pci_dev *pdev)
-{
-	struct pci_host_bridge *bridge;
-
-	if (!dmi_match(DMI_BOARD_NAME, "MS-1T8K"))
-		return;
-
-	if (pdev->bus->number != 0 ||
-	    PCI_SLOT(pdev->devfn) != 2 ||
-	    PCI_FUNC(pdev->devfn) != 2)
-		return;
-
-	bridge = pci_find_host_bridge(pdev->bus);
-	if (!bridge)
-		return;
-	dev_info(&pdev->dev, "disabling native PCIe hotplug\n");
-	bridge->native_pcie_hotplug = false;
-}
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_AMD, 0x150b,
-			 quirk_claw_a8_no_native_hotplug);
-
 #endif
