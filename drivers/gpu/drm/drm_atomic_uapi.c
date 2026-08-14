@@ -790,6 +790,11 @@ static int drm_atomic_colorop_set_property(struct drm_colorop *colorop,
 		return drm_atomic_color_set_data_property(colorop, state,
 							  property, val,
 							  replaced);
+	} else if (property == colorop->fixed_matrix_type_property) {
+		if (state->fixed_matrix_type != val) {
+			state->fixed_matrix_type = val;
+			*replaced = true;
+		}
 	} else {
 		drm_dbg_atomic(colorop->dev,
 			       "[COLOROP:%d:%d] unknown property [PROP:%d:%s]\n",
@@ -822,6 +827,8 @@ drm_atomic_colorop_get_property(struct drm_colorop *colorop,
 		*val = state->lut3d_interpolation;
 	else if (property == colorop->data_property)
 		*val = (state->data) ? state->data->base.id : 0;
+	else if (property == colorop->fixed_matrix_type_property)
+		*val = state->fixed_matrix_type;
 	else
 		return -EINVAL;
 
