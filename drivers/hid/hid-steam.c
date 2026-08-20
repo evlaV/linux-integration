@@ -403,7 +403,6 @@ struct steam_device {
 	spinlock_t lock;
 	struct hid_device *hdev, *client_hdev;
 	struct mutex report_mutex;
-	struct mutex registration_mutex;
 	unsigned long client_opened;
 	struct input_dev __rcu *input;
 	struct input_dev __rcu *sensors;
@@ -634,6 +633,7 @@ static int steam_exchange_report(struct steam_device *steam, u8 *cmd, int csize,
 	unsigned int retries = 5;
 	int ret;
 
+	guard(mutex)(&steam->report_mutex);
 	do {
 		ret = steam_send_report(steam, cmd, csize);
 		if (ret < 0)
@@ -787,6 +787,7 @@ static inline int steam_haptic_pulse(struct steam_device *steam, u8 pad,
 		report[8] = count >> 8;
 		report[9] = gain;
 
+		guard(mutex)(&steam->report_mutex);
 		ret = steam_send_report(steam, report, 10);
 	}
 
@@ -828,6 +829,7 @@ static inline int steam_haptic_rumble(struct steam_device *steam,
 		report[9] = left_gain;
 		report[10] = right_gain;
 
+		guard(mutex)(&steam->report_mutex);
 		ret = steam_send_report(steam, report, sizeof(report));
 	}
 	return ret;
@@ -838,10 +840,8 @@ static void steam_haptic_rumble_cb(struct work_struct *work)
 	struct steam_device *steam = container_of(work, struct steam_device,
 							rumble_work);
 
-	mutex_lock(&steam->report_mutex);
 	steam_haptic_rumble(steam, 0, steam->rumble_left,
 		steam->rumble_right, 2, 0);
-	mutex_unlock(&steam->report_mutex);
 }
 
 static void steam_coalesce_rumble_cb(struct work_struct *work)
@@ -850,10 +850,8 @@ static void steam_coalesce_rumble_cb(struct work_struct *work)
 							struct steam_device,
 							coalesce_rumble_work);
 
-	mutex_lock(&steam->report_mutex);
 	steam_haptic_rumble(steam, 0, steam->rumble_left,
 		steam->rumble_right, 2, 0);
-	mutex_unlock(&steam->report_mutex);
 
 	if (steam->rumble_left || steam->rumble_right)
 		schedule_delayed_work(&steam->coalesce_rumble_work, HZ / 20);
@@ -885,6 +883,7 @@ static void steam_set_lizard_mode(struct steam_device *steam, bool enable)
 	if (steam->gamepad_mode)
 		enable = false;
 
+	mutex_lock(&steam->report_mutex);
 	if (enable) {
 		/* enable esc, enter, cursors */
 		steam_send_report_byte(steam, ID_SET_DEFAULT_DIGITAL_MAPPINGS);
@@ -907,13 +906,14 @@ static void steam_set_lizard_mode(struct steam_device *steam, bool enable)
 				SETTING_RIGHT_TRACKPAD_MODE, TRACKPAD_NONE, /* disable mouse */
 				0);
 	}
+	mutex_unlock(&steam->report_mutex);
 }
 
 static int steam_input_open(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
 	unsigned long flags;
-	bool client_opened;
+	bool set_lizard_mode;
 
 	/*
 	 * Disabling lizard mode automatically is only done on the Steam
@@ -922,10 +922,9 @@ static int steam_input_open(struct input_dev *dev)
 	 */
 	if (!(steam->quirks & (STEAM_QUIRK_DECK | STEAM_QUIRK_IBEX))) {
 		spin_lock_irqsave(&steam->lock, flags);
-		client_opened = steam->client_opened;
+		set_lizard_mode = !steam->client_opened && lizard_mode;
 		spin_unlock_irqrestore(&steam->lock, flags);
-		guard(mutex)(&steam->report_mutex);
-		if (!client_opened && lizard_mode)
+		if (set_lizard_mode)
 			steam_set_lizard_mode(steam, false);
 	}
 
@@ -936,14 +935,13 @@ static void steam_input_close(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
 	unsigned long flags;
-	bool client_opened;
+	bool set_lizard_mode;
 
 	if (!(steam->quirks & (STEAM_QUIRK_DECK | STEAM_QUIRK_IBEX))) {
 		spin_lock_irqsave(&steam->lock, flags);
-		client_opened = steam->client_opened;
+		set_lizard_mode = !steam->client_opened && lizard_mode;
 		spin_unlock_irqrestore(&steam->lock, flags);
-		guard(mutex)(&steam->report_mutex);
-		if (!client_opened && lizard_mode)
+		if (set_lizard_mode)
 			steam_set_lizard_mode(steam, true);
 	}
 }
@@ -951,11 +949,14 @@ static void steam_input_close(struct input_dev *dev)
 static int steam_sensor_open(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
+	unsigned long flags;
+	bool client_opened;
 
-	scoped_guard(spinlock_irqsave, &steam->lock) {
-		if (steam->client_opened)
-			return 0;
-	}
+	spin_lock_irqsave(&steam->lock, flags);
+	client_opened = steam->client_opened;
+	spin_unlock_irqrestore(&steam->lock, flags);
+	if (client_opened)
+		return 0;
 
 	guard(mutex)(&steam->report_mutex);
 	steam_write_settings(steam, SETTING_IMU_MODE,
@@ -968,11 +969,14 @@ static int steam_sensor_open(struct input_dev *dev)
 static void steam_sensor_close(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
+	unsigned long flags;
+	bool client_opened;
 
-	scoped_guard(spinlock_irqsave, &steam->lock) {
-		if (steam->client_opened)
-			return;
-	}
+	spin_lock_irqsave(&steam->lock, flags);
+	client_opened = steam->client_opened;
+	spin_unlock_irqrestore(&steam->lock, flags);
+	if (client_opened)
+		return;
 
 	guard(mutex)(&steam->report_mutex);
 	steam_write_settings(steam, SETTING_IMU_MODE, 0, 0);
@@ -1376,16 +1380,13 @@ static int steam_register(struct steam_device *steam)
 {
 	int ret;
 
-	mutex_lock(&steam->registration_mutex);
 	/*
 	 * This function can be called several times in a row with the
 	 * wireless adaptor, without steam_unregister() between them, because
 	 * another client send a get_connection_status command, for example.
 	 */
-	if (steam->registered) {
-		mutex_unlock(&steam->registration_mutex);
+	if (steam->registered)
 		return 0;
-	}
 
 	/*
 	 * Unlikely, but getting the serial could fail, and it is not so
@@ -1418,7 +1419,6 @@ static int steam_register(struct steam_device *steam)
 		goto steam_register_sensors_fail;
 
 	steam->registered = true;
-	mutex_unlock(&steam->registration_mutex);
 	mutex_lock(&steam_devices_lock);
 	if (list_empty(&steam->list))
 		list_add(&steam->list, &steam_devices);
@@ -1429,7 +1429,6 @@ steam_register_sensors_fail:
 	steam_input_unregister(steam);
 steam_register_input_fail:
 	steam_battery_unregister(steam);
-	mutex_unlock(&steam->registration_mutex);
 	return ret;
 }
 
@@ -1441,12 +1440,10 @@ static void steam_unregister(struct steam_device *steam)
 	hid_info(steam->hdev, "Steam %s '%s' disconnected",
 			steam->quirks & STEAM_QUIRK_DECK ? "Deck" : "Controller",
 			steam->serial_no);
-	mutex_lock(&steam->registration_mutex);
 	steam->registered = false;
 	steam_battery_unregister(steam);
 	steam_sensors_unregister(steam);
 	steam_input_unregister(steam);
-	mutex_unlock(&steam->registration_mutex);
 	cancel_work_sync(&steam->rumble_work);
 	cancel_delayed_work_sync(&steam->mode_switch);
 	cancel_delayed_work_sync(&steam->coalesce_rumble_work);
@@ -1487,26 +1484,23 @@ static void steam_mode_switch_cb(struct work_struct *work)
 							struct steam_device, mode_switch);
 	unsigned long flags;
 	bool client_opened;
-	bool gamepad_mode;
-
 	if (!lizard_mode)
 		return;
 
-	spin_lock_irqsave(&steam->lock, flags);
 	steam->gamepad_mode = !steam->gamepad_mode;
-	gamepad_mode = steam->gamepad_mode;
-	client_opened = steam->client_opened;
-	spin_unlock_irqrestore(&steam->lock, flags);
-
-	guard(mutex)(&steam->report_mutex);
 	hid_dbg(steam->hdev, "%s: switching gamepad mode to %i\n", __func__, steam->gamepad_mode);
-	if (gamepad_mode)
+	if (steam->gamepad_mode)
 		steam_set_lizard_mode(steam, false);
-	else if (!client_opened)
-		steam_set_lizard_mode(steam, lizard_mode);
+	else {
+		spin_lock_irqsave(&steam->lock, flags);
+		client_opened = steam->client_opened;
+		spin_unlock_irqrestore(&steam->lock, flags);
+		if (!client_opened)
+			steam_set_lizard_mode(steam, lizard_mode);
+	}
 
 	steam_haptic_pulse(steam, STEAM_PAD_RIGHT, 0x190, 0, 1, 0);
-	if (gamepad_mode) {
+	if (steam->gamepad_mode) {
 		steam_haptic_pulse(steam, STEAM_PAD_LEFT, 0x14D, 0x14D, 0x2D, 0);
 	} else {
 		steam_haptic_pulse(steam, STEAM_PAD_LEFT, 0x1F4, 0x1F4, 0x1E, 0);
@@ -1693,7 +1687,6 @@ static int steam_probe(struct hid_device *hdev,
 	hid_set_drvdata(hdev, steam);
 	spin_lock_init(&steam->lock);
 	mutex_init(&steam->report_mutex);
-	mutex_init(&steam->registration_mutex);
 	steam->quirks = id->driver_data;
 	INIT_WORK(&steam->work_connect, steam_work_connect_cb);
 	INIT_DELAYED_WORK(&steam->mode_switch, steam_mode_switch_cb);
@@ -1802,10 +1795,13 @@ static void steam_remove(struct hid_device *hdev)
 
 static void steam_do_connect_event(struct steam_device *steam, bool connected)
 {
+	unsigned long flags;
 	bool changed;
 
+	spin_lock_irqsave(&steam->lock, flags);
 	changed = steam->connected != connected;
 	steam->connected = connected;
+	spin_unlock_irqrestore(&steam->lock, flags);
 
 	if (changed && schedule_work(&steam->work_connect) == 0)
 		dbg_hid("%s: connected=%d event already queued\n",
@@ -2234,6 +2230,8 @@ static void steam_do_deck_sensors_event(struct steam_device *steam,
 static void steam_do_battery_event(struct steam_device *steam,
 		struct power_supply *battery, u8 *data)
 {
+	unsigned long flags;
+
 	s16 volts = steam_le16(data + 12);
 	u8 batt = data[14];
 
@@ -2241,8 +2239,10 @@ static void steam_do_battery_event(struct steam_device *steam,
 	rcu_read_lock();
 	battery = rcu_dereference(steam->battery);
 	if (likely(battery)) {
+		spin_lock_irqsave(&steam->lock, flags);
 		steam->battery_voltage = volts;
 		steam->battery_charge = batt;
+		spin_unlock_irqrestore(&steam->lock, flags);
 		power_supply_changed(battery);
 	}
 	rcu_read_unlock();
@@ -2427,12 +2427,15 @@ static void steam_do_ibex_battery_event(struct steam_device *steam,
 		struct power_supply *battery,
 		const struct steam_ibex_battery_status *data)
 {
+	unsigned long flags;
+
 	/* Creating the battery may have failed */
 	guard(rcu)();
 	battery = rcu_dereference(steam->battery);
 	if (!likely(battery))
 		return;
 
+	spin_lock_irqsave(&steam->lock, flags);
 	steam->battery_voltage = get_unaligned_le16(&data->battery_voltage);
 	steam->battery_current = get_unaligned_le16(&data->battery_current);
 	steam->battery_temp = get_unaligned_le16(&data->temperature);
@@ -2451,6 +2454,7 @@ static void steam_do_ibex_battery_event(struct steam_device *steam,
 		steam->battery_status = POWER_SUPPLY_STATUS_UNKNOWN;
 		break;
 	}
+	spin_unlock_irqrestore(&steam->lock, flags);
 	power_supply_changed(battery);
 }
 
@@ -2466,7 +2470,6 @@ static int steam_raw_event(struct hid_device *hdev,
 	if (!steam)
 		return 0;
 
-	guard(spinlock_irqsave)(&steam->lock);
 	if (steam->client_opened)
 		hid_input_report(steam->client_hdev, report->type, data, size, 0);
 
@@ -2630,8 +2633,6 @@ static int steam_param_set_lizard_mode(const char *val,
 {
 	struct steam_device *steam;
 	int ret;
-	bool client_opened;
-	unsigned long flags;
 
 	ret = param_set_bool(val, kp);
 	if (ret)
@@ -2639,13 +2640,8 @@ static int steam_param_set_lizard_mode(const char *val,
 
 	mutex_lock(&steam_devices_lock);
 	list_for_each_entry(steam, &steam_devices, list) {
-		spin_lock_irqsave(&steam->lock, flags);
-		client_opened = steam->client_opened;
-		spin_unlock_irqrestore(&steam->lock, flags);
-		if (!client_opened) {
-			guard(mutex)(&steam->report_mutex);
+		if (!steam->client_opened)
 			steam_set_lizard_mode(steam, lizard_mode);
-		}
 	}
 	mutex_unlock(&steam_devices_lock);
 	return 0;
