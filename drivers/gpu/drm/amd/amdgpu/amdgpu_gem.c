@@ -1020,6 +1020,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 						timeline_syncobj,
 						timeline_chain, fence,
 						args->vm_timeline_point);
+					timeline_chain = NULL;
 				}
 			}
 			dma_fence_put(fence);
