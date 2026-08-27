@@ -70,6 +70,7 @@ MODULE_DEVICE_TABLE(acpi, battery_device_ids);
 enum {
 	ACPI_BATTERY_ALARM_PRESENT,
 	ACPI_BATTERY_XINFO_PRESENT,
+	ACPI_BATTERY_BCT_PRESENT,
 	ACPI_BATTERY_QUIRK_PERCENTAGE_CAPACITY,
 	/* On Lenovo Thinkpad models from 2010 and 2011, the power unit
 	 * switches between mWh and mAh depending on whether the system
@@ -695,13 +696,13 @@ static int acpi_battery_get_state(struct acpi_battery *battery)
 	 * Read _BCT (Battery charge time) to determine if we are really
 	 * charging.
 	 */
-	status = acpi_evaluate_integer(battery->device->handle, "_BCT",
-				      &args, &battery->charge_time);
-
-	if (ACPI_FAILURE(status)) {
-		acpi_handle_info(battery->device->handle,
-				 "_BCT evaluation failed: %s",
-				 acpi_format_exception(status));
+	if (test_bit(ACPI_BATTERY_BCT_PRESENT, &battery->flags)) {
+		status = acpi_evaluate_integer(battery->device->handle, "_BCT",
+					       &args, &battery->charge_time);
+		if (ACPI_FAILURE(status))
+			acpi_handle_info(battery->device->handle,
+					 "_BCT evaluation failed: %s",
+					 acpi_format_exception(status));
 	}
 	/* For buggy DSDTs that report negative 16-bit values for either
 	 * charging or discharging current and/or report 0 as 65536
@@ -1184,6 +1185,8 @@ static int acpi_battery_update(struct acpi_battery *battery, bool resume)
 		if (result)
 			return result;
 		acpi_battery_init_alarm(battery);
+		if (acpi_has_method(battery->device->handle, "_BCT"))
+			set_bit(ACPI_BATTERY_BCT_PRESENT, &battery->flags);
 	}
 
 	result = acpi_battery_get_state(battery);
