@@ -1467,6 +1467,7 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 {
 	struct amdgpu_device *adev = pdd->dev->adev;
 	struct amdgpu_vm *vm = drm_priv_to_vm(pdd->drm_priv);
+	struct amdgpu_vm_update_ctx update_ctx;
 	uint64_t pte_flags;
 	unsigned long last_start;
 	int last_domain;
@@ -1482,6 +1483,8 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 		pr_debug("VM not ready, canceling map\n");
 		return -EINVAL;
 	}
+
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 
 	for (i = offset; i < offset + npages; i++) {
 		uint64_t gpu_start;
@@ -1535,7 +1538,7 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 		last_start = prange->start + i + 1;
 	}
 
-	r = amdgpu_vm_update_pdes(adev, vm, false);
+	r = amdgpu_vm_update_pdes(&update_ctx, false);
 	if (r) {
 		pr_debug("failed %d to update directories 0x%lx\n", r,
 			 prange->start);
@@ -1546,6 +1549,7 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 		*fence = dma_fence_get(vm->last_update);
 
 out:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	return r;
 }
 
