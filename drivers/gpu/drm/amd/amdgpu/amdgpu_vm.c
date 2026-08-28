@@ -1187,6 +1187,133 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
 	}
 }
 
+int amdgpu_vm_begin_prepare_update(struct amdgpu_vm_update_ctx *ctx,
+				   bool immediate, bool unlocked)
+{
+	bool flush_tlb;
+	int r;
+
+	ctx->update_params = kmalloc_obj(*(ctx->update_params));
+	if (!ctx->update_params)
+		return -ENOMEM;
+
+	ctx->tlb_cb = kmalloc_obj(*(ctx->tlb_cb));
+	if (!ctx->tlb_cb) {
+		r = -ENOMEM;
+		goto out_free_params;
+	}
+
+	if (!drm_dev_enter(adev_to_drm(ctx->adev), &ctx->dev_enter_idx)) {
+		r = -ENODEV;
+		goto out_free_tlb;
+	}
+
+	/* Vega20+XGMI where PTEs get inadvertently cached in L2 texture cache,
+	 * heavy-weight flush TLB unconditionally.
+	 */
+	flush_tlb = ctx->adev->gmc.xgmi.num_physical_nodes &&
+		    amdgpu_ip_version(ctx->adev, GC_HWIP, 0) ==
+			    IP_VERSION(9, 4, 0);
+
+	/*
+	 * On GFX8 and older any 8 PTE block with a valid bit set enters the TLB
+	 */
+	flush_tlb |= amdgpu_ip_version(ctx->adev, GC_HWIP, 0) <
+		     IP_VERSION(9, 0, 0);
+
+	memset(ctx->update_params, 0, sizeof(*(ctx->update_params)));
+	ctx->update_params->adev = ctx->adev;
+	ctx->update_params->vm = ctx->vm;
+	ctx->update_params->immediate = immediate;
+	ctx->update_params->unlocked = unlocked;
+	ctx->update_params->needs_flush = flush_tlb;
+	INIT_LIST_HEAD(&ctx->update_params->tlb_flush_waitlist);
+
+	return 0;
+
+out_free_tlb:
+	kfree(ctx->tlb_cb);
+out_free_params:
+	kfree(ctx->update_params);
+	return r;
+}
+
+/**
+ * amdgpu_vm_dma_range_entries - get the number of PT entries for range of DMA pages
+ *
+ * @start: GART offset of the range start
+ * @gpu_pages: Size of the range in GPU pages
+ * @pages_addr: DMA addresses to be mapped
+ * @out_contiguous: Optional pointer to a boolean denoting whether the range is contiguous
+ */
+static uint64_t amdgpu_vm_dma_range_entries(uint64_t start, uint64_t gpu_pages,
+					    dma_addr_t *pages_addr,
+					    bool *out_contiguous)
+{
+	bool contiguous = true;
+	uint64_t tmp;
+
+	if (gpu_pages > AMDGPU_GPU_PAGES_IN_CPU_PAGE) {
+		uint64_t pfn = start >> PAGE_SHIFT;
+		uint64_t count;
+
+		contiguous = pages_addr[pfn + 1] == pages_addr[pfn] + PAGE_SIZE;
+
+		tmp = gpu_pages / AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+		for (count = 2; count < tmp; ++count) {
+			uint64_t idx = pfn + count;
+
+			if (contiguous != (pages_addr[idx] ==
+					   pages_addr[idx - 1] + PAGE_SIZE))
+				break;
+		}
+		if (!contiguous)
+			count--;
+		gpu_pages = count * AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+	}
+
+	if (out_contiguous)
+		*out_contiguous = contiguous;
+
+	return gpu_pages;
+}
+
+int amdgpu_vm_finish_prepare_update(struct amdgpu_vm_update_ctx *ctx)
+{
+	int r;
+
+	if (!ctx->needs_ib)
+		return 0;
+
+	amdgpu_vm_eviction_lock(ctx->vm);
+	if (ctx->vm->evicting) {
+		r = -EBUSY;
+		return r;
+	}
+
+	if (!ctx->update_params->unlocked &&
+	    !dma_fence_is_signaled(ctx->vm->last_unlocked)) {
+		struct dma_fence *tmp = dma_fence_get_stub();
+
+		amdgpu_bo_fence(ctx->vm->root.bo, ctx->vm->last_unlocked, true);
+		swap(ctx->vm->last_unlocked, tmp);
+		dma_fence_put(tmp);
+	}
+
+	r = ctx->vm->update_funcs->prepare(ctx->update_params, &ctx->sync,
+				      AMDGPU_KERNEL_JOB_ID_VM_UPDATE_RANGE);
+	if (r)
+		goto error_unlock;
+
+	ctx->in_critical = true;
+
+	return 0;
+
+error_unlock:
+	amdgpu_vm_eviction_unlock(ctx->vm);
+	return r;
+}
+
 /**
  * amdgpu_vm_update_range - update a range in the vm page table
  *
@@ -1211,67 +1338,20 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
  * Returns:
  * 0 for success, negative erro code for failure.
  */
-int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
-			   bool immediate, bool unlocked, bool flush_tlb,
-			   bool allow_override, struct amdgpu_sync *sync,
-			   uint64_t start, uint64_t last, uint64_t flags,
-			   uint64_t offset, uint64_t vram_base,
-			   struct ttm_resource *res, dma_addr_t *pages_addr,
-			   struct dma_fence **fence)
+int amdgpu_vm_update_range(struct amdgpu_vm_update_ctx *ctx, bool flush_tlb,
+			   bool allow_override, uint64_t start, uint64_t last,
+			   uint64_t flags, uint64_t offset, uint64_t vram_base,
+			   struct ttm_resource *res, dma_addr_t *pages_addr)
 {
-	struct amdgpu_vm_tlb_seq_struct *tlb_cb;
-	struct amdgpu_vm_update_params params;
+	int r;
 	struct amdgpu_res_cursor cursor;
-	int r, idx;
 
-	if (!drm_dev_enter(adev_to_drm(adev), &idx))
-		return -ENODEV;
+	ctx->update_params->override_pte = allow_override &&
+					   ctx->adev->gmc.override_pte;
+	ctx->update_params->needs_flush |= flush_tlb;
+	ctx->update_params->pages_addr = pages_addr;
 
-	tlb_cb = kmalloc_obj(*tlb_cb);
-	if (!tlb_cb) {
-		drm_dev_exit(idx);
-		return -ENOMEM;
-	}
-
-	/* Vega20+XGMI where PTEs get inadvertently cached in L2 texture cache,
-	 * heavy-weight flush TLB unconditionally.
-	 */
-	flush_tlb |= adev->gmc.xgmi.num_physical_nodes &&
-		     amdgpu_ip_version(adev, GC_HWIP, 0) == IP_VERSION(9, 4, 0);
-
-	/*
-	 * On GFX8 and older any 8 PTE block with a valid bit set enters the TLB
-	 */
-	flush_tlb |= amdgpu_ip_version(adev, GC_HWIP, 0) < IP_VERSION(9, 0, 0);
-
-	memset(&params, 0, sizeof(params));
-	params.adev = adev;
-	params.vm = vm;
-	params.immediate = immediate;
-	params.pages_addr = pages_addr;
-	params.unlocked = unlocked;
-	params.needs_flush = flush_tlb;
-	params.override_pte = allow_override && adev->gmc.override_pte;
-	INIT_LIST_HEAD(&params.tlb_flush_waitlist);
-
-	amdgpu_vm_eviction_lock(vm);
-	if (vm->evicting) {
-		r = -EBUSY;
-		goto error_free;
-	}
-
-	if (!unlocked && !dma_fence_is_signaled(vm->last_unlocked)) {
-		struct dma_fence *tmp = dma_fence_get_stub();
-
-		amdgpu_bo_fence(vm->root.bo, vm->last_unlocked, true);
-		swap(vm->last_unlocked, tmp);
-		dma_fence_put(tmp);
-	}
-
-	r = vm->update_funcs->prepare(&params, sync,
-				      AMDGPU_KERNEL_JOB_ID_VM_UPDATE_RANGE);
-	if (r)
-		goto error_free;
+	amdgpu_vm_assert_locked(ctx->vm);
 
 	amdgpu_res_first(pages_addr ? NULL : res, offset,
 			 (last - start + 1) * AMDGPU_GPU_PAGE_SIZE, &cursor);
@@ -1280,69 +1360,71 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 
 		num_entries = cursor.size >> AMDGPU_GPU_PAGE_SHIFT;
 		if (pages_addr) {
-			bool contiguous = true;
+			bool contiguous;
 
-			if (num_entries > AMDGPU_GPU_PAGES_IN_CPU_PAGE) {
-				uint64_t pfn = cursor.start >> PAGE_SHIFT;
-				uint64_t count;
-
-				contiguous = pages_addr[pfn + 1] ==
-					pages_addr[pfn] + PAGE_SIZE;
-
-				tmp = num_entries /
-					AMDGPU_GPU_PAGES_IN_CPU_PAGE;
-				for (count = 2; count < tmp; ++count) {
-					uint64_t idx = pfn + count;
-
-					if (contiguous != (pages_addr[idx] ==
-					    pages_addr[idx - 1] + PAGE_SIZE))
-						break;
-				}
-				if (!contiguous)
-					count--;
-				num_entries = count *
-					AMDGPU_GPU_PAGES_IN_CPU_PAGE;
-			}
+			num_entries = amdgpu_vm_dma_range_entries(cursor.start,
+								  num_entries,
+								  pages_addr,
+								  &contiguous);
 
 			if (!contiguous) {
 				addr = cursor.start;
-				params.pages_addr = pages_addr;
+				ctx->update_params->pages_addr = pages_addr;
 			} else {
 				addr = pages_addr[cursor.start >> PAGE_SHIFT];
-				params.pages_addr = NULL;
+				ctx->update_params->pages_addr = NULL;
 			}
 
-		} else if (flags & (AMDGPU_PTE_VALID | AMDGPU_PTE_PRT_FLAG(adev))) {
+		} else if (flags & (AMDGPU_PTE_VALID |
+				    AMDGPU_PTE_PRT_FLAG(ctx->adev))) {
 			addr = vram_base + cursor.start;
 		} else {
 			addr = 0;
 		}
 
 		tmp = start + num_entries;
-		r = amdgpu_vm_ptes_update(&params, start, tmp, addr, flags);
-		if (r)
-			goto error_free;
+		r = amdgpu_vm_ptes_update(ctx->update_params, start, tmp, addr,
+					  flags);
+		if (r) {
+			return r;
+		}
 
 		amdgpu_res_next(&cursor, num_entries * AMDGPU_GPU_PAGE_SIZE);
 		start = tmp;
 	}
 
-	r = vm->update_funcs->commit(&params, fence);
-	if (r)
-		goto error_free;
+	return 0;
+}
 
-	if (params.needs_flush) {
-		amdgpu_vm_tlb_flush(&params, fence, tlb_cb);
-		tlb_cb = NULL;
+int amdgpu_vm_commit_update(struct amdgpu_vm_update_ctx *ctx,
+			    struct dma_fence **fence)
+{
+	int r;
+
+	if (ctx->needs_ib) {
+		r = ctx->vm->update_funcs->commit(ctx->update_params, fence);
+		if (r)
+			return r;
+		ctx->needs_ib = false;
 	}
 
-	amdgpu_vm_pt_free_list(adev, &params);
+	if (ctx->update_params->needs_flush) {
+		amdgpu_vm_tlb_flush(ctx->update_params, fence, ctx->tlb_cb);
+		ctx->tlb_cb = NULL;
+	}
 
-error_free:
-	kfree(tlb_cb);
-	amdgpu_vm_eviction_unlock(vm);
-	drm_dev_exit(idx);
-	return r;
+	amdgpu_vm_pt_free_list(ctx->adev, ctx->update_params);
+
+	if (ctx->in_critical) {
+		amdgpu_vm_eviction_unlock(ctx->vm);
+		ctx->in_critical = false;
+	}
+	drm_dev_exit(ctx->dev_enter_idx);
+	kfree(ctx->tlb_cb);
+	kfree(ctx->update_params);
+	ctx->update_params = NULL;
+
+	return 0;
 }
 
 void amdgpu_vm_get_memory(struct amdgpu_vm *vm,
@@ -1451,6 +1533,16 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 		list_splice_init(&bo_va->valids, &bo_va->invalids);
 	}
 
+	r = amdgpu_vm_begin_prepare_update(ctx, false, false);
+	if (r)
+		goto error;
+
+	ctx->needs_ib = !list_empty(&bo_va->invalids);
+
+	r = amdgpu_vm_finish_prepare_update(ctx);
+	if (r)
+		goto error;
+
 	list_for_each_entry(mapping, &bo_va->invalids, list) {
 		uint64_t update_flags = flags;
 
@@ -1468,14 +1560,17 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 
 		trace_amdgpu_vm_bo_update(mapping);
 
-		r = amdgpu_vm_update_range(ctx->adev, vm, false, false, flush_tlb,
-					   !uncached, &ctx->sync, mapping->start,
-					   mapping->last, update_flags,
-					   mapping->offset, vram_base, mem,
-					   pages_addr, last_update);
+		r = amdgpu_vm_update_range(ctx, flush_tlb, !uncached,
+					   mapping->start, mapping->last,
+					   update_flags, mapping->offset,
+					   vram_base, mem, pages_addr);
 		if (r)
 			goto error;
 	}
+
+	r = amdgpu_vm_commit_update(ctx, last_update);
+	if (r)
+		goto error;
 
 	/* If the BO is not in its preferred location add it back to
 	 * the evicted list so that it gets validated again on the
@@ -1934,6 +2029,14 @@ void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 	struct interval_tree_node *node, *next_node;
 	struct amdgpu_bo_va *bo_va, *next_bo_va;
 
+	if (ctx->update_params) {
+		if (ctx->in_critical)
+			amdgpu_vm_eviction_unlock(ctx->vm);
+		drm_dev_exit(ctx->dev_enter_idx);
+		kfree(ctx->tlb_cb);
+		kfree(ctx->update_params);
+	}
+
 	list_splice(&ctx->freed, &ctx->vm->delayed_freed);
 	amdgpu_sync_free(&ctx->sync);
 
@@ -1973,7 +2076,7 @@ void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 			  struct dma_fence **fence)
 {
-	struct amdgpu_bo_va_mapping *mapping;
+	struct amdgpu_bo_va_mapping *mapping, *next;
 	struct dma_fence *f = NULL;
 	int r;
 
@@ -1984,14 +2087,20 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 	if (r)
 		return r;
 
-	while (!list_empty(&ctx->freed)) {
-		mapping = list_first_entry(&ctx->freed,
-					   struct amdgpu_bo_va_mapping, list);
-		list_del(&mapping->list);
+	r = amdgpu_vm_begin_prepare_update(ctx, false, false);
+	if (r)
+		return r;
 
-		r = amdgpu_vm_update_range(ctx->adev, ctx->vm, false, false, true, false,
-					   &ctx->sync, mapping->start, mapping->last,
-					   0, 0, 0, NULL, NULL, &f);
+	ctx->needs_ib = !list_empty(&ctx->freed);
+
+	r = amdgpu_vm_finish_prepare_update(ctx);
+	if (r)
+		return r;
+
+	list_for_each_entry_safe(mapping, next, &ctx->freed, list) {
+		r = amdgpu_vm_update_range(ctx, true, false, mapping->start,
+					   mapping->last, 0, 0, 0, NULL, NULL);
+		list_del(&mapping->list);
 		amdgpu_vm_free_mapping(ctx->adev, ctx->vm, mapping, f);
 		if (r) {
 			dma_fence_put(f);
@@ -1999,7 +2108,9 @@ int amdgpu_vm_clear_freed(struct amdgpu_vm_update_ctx *ctx,
 		}
 	}
 
-	if (fence && f) {
+	r = amdgpu_vm_commit_update(ctx, &f);
+
+	if (!r && fence && f) {
 		dma_fence_put(*fence);
 		*fence = f;
 	} else {
@@ -3407,8 +3518,22 @@ bool amdgpu_vm_handle_fault(struct amdgpu_device *adev, u32 pasid,
 		goto error_unlock;
 	}
 
-	r = amdgpu_vm_update_range(adev, vm, true, false, false, false,
-				   NULL, addr, addr, flags, value, 0, NULL, NULL, NULL);
+	r = amdgpu_vm_begin_prepare_update(&update_ctx, true, false);
+	if (r)
+		goto error_unlock;
+
+	update_ctx.needs_ib = true;
+
+	r = amdgpu_vm_finish_prepare_update(&update_ctx);
+	if (r)
+		goto error_unlock;
+
+	r = amdgpu_vm_update_range(&update_ctx, false, false, addr, addr, flags,
+				   value, 0, NULL, NULL);
+	if (r)
+		goto error_unlock;
+
+	r = amdgpu_vm_commit_update(&update_ctx, NULL);
 	if (r)
 		goto error_unlock;
 

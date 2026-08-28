@@ -326,6 +326,36 @@ struct amdgpu_vm_update_ctx {
 	struct amdgpu_sync sync;
 
 	/**
+	 * @update_params: Temporary storage for PT update parameters. NULL if no PT update is
+	 * in progress.
+	 */
+	struct amdgpu_vm_update_params *update_params;
+
+	/**
+	 * @tlb_cb: TLB flush callback tracker. NULL if no PT update is in progress, or the PT
+	 * update doesn't need to flush TLBs.
+	 */
+	struct amdgpu_vm_tlb_seq_struct *tlb_cb;
+
+	/**
+	 * @dev_enter_idx: sRCU index given by drm_dev_enter to be passed to drm_dev_exit
+	 * on cleanup.
+	 */
+	int dev_enter_idx;
+
+	/**
+	 * @needs_ib: True if we need to allocate an IB for PT updates. This is false when
+	 * the update is a no-op.
+	 */
+	bool needs_ib;
+
+	/**
+	 * @in_critical: Whether the VM critical section has been entered and needs to be
+	 * ended on cleanup.
+	 */
+	bool in_critical;
+
+	/**
 	 * @unmap_synced: Whether the sync is strong enough to guarantee a safe unmap,
 	 * i.e. all previous submissions in the VM are waited on.
 	 */
@@ -613,13 +643,15 @@ int amdgpu_vm_flush_compute_tlb(struct amdgpu_device *adev,
 void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
 			    struct amdgpu_vm_bo_base *base,
 			    struct amdgpu_vm *vm, struct amdgpu_bo *bo);
-int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
-			   bool immediate, bool unlocked, bool flush_tlb,
-			   bool allow_override, struct amdgpu_sync *sync,
-			   uint64_t start, uint64_t last, uint64_t flags,
-			   uint64_t offset, uint64_t vram_base,
-			   struct ttm_resource *res, dma_addr_t *pages_addr,
-			   struct dma_fence **fence);
+int amdgpu_vm_begin_prepare_update(struct amdgpu_vm_update_ctx *ctx,
+				   bool immediate, bool unlocked);
+int amdgpu_vm_finish_prepare_update(struct amdgpu_vm_update_ctx *ctx);
+int amdgpu_vm_update_range(struct amdgpu_vm_update_ctx *ctx, bool flush_tlb,
+			   bool allow_override, uint64_t start, uint64_t last,
+			   uint64_t flags, uint64_t offset, uint64_t vram_base,
+			   struct ttm_resource *res, dma_addr_t *pages_addr);
+int amdgpu_vm_commit_update(struct amdgpu_vm_update_ctx *ctx,
+			    struct dma_fence **fence);
 int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 			struct amdgpu_bo_va *bo_va,
 			bool clear);

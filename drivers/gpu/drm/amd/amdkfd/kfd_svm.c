@@ -1392,7 +1392,9 @@ svm_range_unmap_from_gpu(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			 struct dma_fence **fence)
 {
 	uint64_t init_pte_value = adev->gmc.init_pte_flags;
+	struct amdgpu_vm_update_ctx update_ctx;
 	uint64_t gpu_start, gpu_end;
+	int r;
 
 	/* Convert CPU page range to GPU page range */
 	gpu_start = start * AMDGPU_GPU_PAGES_IN_CPU_PAGE;
@@ -1406,9 +1408,23 @@ svm_range_unmap_from_gpu(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		return -EINVAL;
 	}
 
-	return amdgpu_vm_update_range(adev, vm, false, true, true, false, NULL, gpu_start,
-				      gpu_end, init_pte_value, 0, 0, NULL, NULL,
-				      fence);
+	r = amdgpu_vm_begin_prepare_update(&update_ctx, false, true);
+
+	r = amdgpu_vm_update_range(&update_ctx, true, false, gpu_start, gpu_end,
+				   init_pte_value, 0, 0, NULL, NULL);
+	if (r) {
+		pr_debug("failed %d to unmap from gpu 0x%llx\n", r, gpu_start);
+		goto out;
+	}
+
+	r = amdgpu_vm_commit_update(&update_ctx, fence);
+	if (r) {
+		pr_debug("failed %d to commit unmap to gpu 0x%llx\n", r, gpu_start);
+		goto out;
+	}
+out:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
+	return r;
 }
 
 static int
@@ -1485,6 +1501,9 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 	}
 
 	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
+	r = amdgpu_vm_begin_prepare_update(&update_ctx, false, false);
+	if (r)
+		return r;
 
 	for (i = offset; i < offset + npages; i++) {
 		uint64_t gpu_start;
@@ -1521,12 +1540,11 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 			 (last_domain == SVM_RANGE_VRAM_DOMAIN) ? 1 : 0,
 			 pte_flags);
 
-		r = amdgpu_vm_update_range(adev, vm, false, false, flush_tlb, true,
-					   NULL, gpu_start, gpu_end,
-					   pte_flags,
-					   (last_start - prange->start) << PAGE_SHIFT,
-					   bo_adev ? bo_adev->vm_manager.vram_base_offset : 0,
-					   NULL, dma_addr, &vm->last_update);
+		r = amdgpu_vm_update_range(
+			&update_ctx, flush_tlb, true, gpu_start, gpu_end,
+			pte_flags, (last_start - prange->start) << PAGE_SHIFT,
+			bo_adev ? bo_adev->vm_manager.vram_base_offset : 0,
+			NULL, dma_addr);
 
 		for (j = last_start - prange->start; j <= i; j++)
 			dma_addr[j] |= last_domain;
@@ -1536,6 +1554,12 @@ svm_range_map_to_gpu(struct kfd_process_device *pdd, struct svm_range *prange,
 			goto out;
 		}
 		last_start = prange->start + i + 1;
+	}
+
+	r = amdgpu_vm_commit_update(&update_ctx, &vm->last_update);
+	if (r) {
+		pr_debug("failed %d to commit map to gpu 0x%lx\n", r, prange->start);
+		goto out;
 	}
 
 	r = amdgpu_vm_update_pdes(&update_ctx, false);
