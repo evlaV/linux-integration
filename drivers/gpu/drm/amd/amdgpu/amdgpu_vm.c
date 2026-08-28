@@ -1435,51 +1435,59 @@ void amdgpu_vm_get_memory(struct amdgpu_vm *vm,
 	spin_unlock(&vm->stats_lock);
 }
 
-/**
- * amdgpu_vm_bo_update - update all BO mappings in the vm page table
- *
- * @adev: amdgpu_device pointer
- * @bo_va: requested BO and VM object
- * @clear: if true clear the entries
- *
- * Fill in the page table entries for @bo_va.
- *
- * Returns:
- * 0 for success, -EINVAL for failure.
- */
-int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
-			struct amdgpu_bo_va *bo_va, bool clear)
+int amdgpu_vm_bo_sync_mapping(struct amdgpu_vm_update_ctx *ctx,
+			      struct amdgpu_bo_va *bo_va, bool clear)
 {
 	struct amdgpu_bo *bo = bo_va->base.bo;
-	struct amdgpu_vm *vm = ctx->vm;
-	struct amdgpu_bo_va_mapping *mapping;
-	struct dma_fence **last_update;
-	dma_addr_t *pages_addr = NULL;
-	struct ttm_resource *mem;
-	uint32_t current_domain;
-	bool flush_tlb = clear;
-	uint64_t vram_base;
-	uint64_t flags;
-	bool uncached;
 	int r;
 
 	if (clear) {
-		mem = NULL;
-
 		r = amdgpu_vm_update_ctx_ensure_unmap_synced(ctx);
 		if (r)
-			goto error;
+			return r;
 		if (bo) {
 			r = amdgpu_sync_kfd(&ctx->sync, bo->tbo.base.resv);
 			if (r)
-				goto error;
+				return r;
 		}
-	} else if (!bo) {
-		mem = NULL;
+	} else if (bo) {
+		/*
+		 * Implicitly sync to moving fences before mapping anything,
+		 * except for PRT maps (bo == NULL), where nothing needs to sync.
+		 */
+		r = amdgpu_sync_resv(ctx->adev, &ctx->sync, bo->tbo.base.resv,
+				     AMDGPU_SYNC_EXPLICIT, ctx->vm);
+		if (r)
+			return r;
+	}
 
-		/* PRT map operations don't need to sync to anything. */
+	return 0;
+}
 
-	} else {
+void amdgpu_vm_bo_prepare_ranges(struct amdgpu_vm_update_ctx *ctx,
+				 struct amdgpu_bo_va *bo_va, bool clear)
+{
+	if (!clear && bo_va->base.moved)
+		list_splice_init(&bo_va->valids, &bo_va->invalids);
+	else if (bo_va->cleared != clear)
+		list_splice_init(&bo_va->valids, &bo_va->invalids);
+
+	ctx->needs_ib |= !list_empty(&bo_va->invalids);
+}
+
+int amdgpu_vm_bo_map_ranges(struct amdgpu_vm_update_ctx *ctx,
+			     struct amdgpu_bo_va *bo_va, bool clear)
+{
+	struct amdgpu_bo_va_mapping *mapping;
+	struct amdgpu_vm *vm = ctx->vm;
+	bool uncached, flush_tlb = clear || bo_va->base.moved;
+	uint64_t flags, vram_base;
+	struct ttm_resource *mem;
+	dma_addr_t *pages_addr = NULL;
+	struct amdgpu_bo *bo = bo_va->base.bo;
+	int r;
+
+	if (bo && !clear) {
 		struct drm_gem_object *obj = &bo->tbo.base;
 
 		if (drm_gem_is_imported(obj) && bo_va->is_xgmi) {
@@ -1495,12 +1503,6 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 		if (mem && (mem->mem_type == TTM_PL_TT ||
 			    mem->mem_type == AMDGPU_PL_PREEMPT))
 			pages_addr = bo->tbo.ttm->dma_address;
-
-		/* Implicitly sync to moving fences before mapping anything */
-		r = amdgpu_sync_resv(ctx->adev, &ctx->sync, bo->tbo.base.resv,
-				     AMDGPU_SYNC_EXPLICIT, vm);
-		if (r)
-			goto error;
 	}
 
 	if (bo) {
@@ -1519,29 +1521,6 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 		vram_base = 0;
 		uncached = false;
 	}
-
-	if (clear || amdgpu_vm_is_bo_always_valid(vm, bo))
-		last_update = &vm->last_update;
-	else
-		last_update = &bo_va->last_pt_update;
-
-	if (!clear && bo_va->base.moved) {
-		flush_tlb = true;
-		list_splice_init(&bo_va->valids, &bo_va->invalids);
-
-	} else if (bo_va->cleared != clear) {
-		list_splice_init(&bo_va->valids, &bo_va->invalids);
-	}
-
-	r = amdgpu_vm_begin_prepare_update(ctx, false, false);
-	if (r)
-		goto error;
-
-	ctx->needs_ib = !list_empty(&bo_va->invalids);
-
-	r = amdgpu_vm_finish_prepare_update(ctx);
-	if (r)
-		goto error;
 
 	list_for_each_entry(mapping, &bo_va->invalids, list) {
 		uint64_t update_flags = flags;
@@ -1565,12 +1544,19 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 					   update_flags, mapping->offset,
 					   vram_base, mem, pages_addr);
 		if (r)
-			goto error;
+			return r;
 	}
 
-	r = amdgpu_vm_commit_update(ctx, last_update);
-	if (r)
-		goto error;
+	return 0;
+}
+
+void amdgpu_vm_bo_finish_update(struct amdgpu_vm_update_ctx *ctx,
+				struct amdgpu_bo_va *bo_va, bool clear)
+{
+	struct amdgpu_bo_va_mapping *mapping;
+	struct amdgpu_bo *bo = bo_va->base.bo;
+	struct amdgpu_vm *vm = ctx->vm;
+	uint32_t current_domain;
 
 	/* If the BO is not in its preferred location add it back to
 	 * the evicted list so that it gets validated again on the
@@ -1603,6 +1589,56 @@ int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 		list_for_each_entry(mapping, &bo_va->valids, list)
 			trace_amdgpu_vm_bo_mapping(mapping);
 	}
+}
+
+/**
+ * amdgpu_vm_bo_update - update all BO mappings in the vm page table
+ *
+ * @adev: amdgpu_device pointer
+ * @bo_va: requested BO and VM object
+ * @clear: if true clear the entries
+ *
+ * Fill in the page table entries for @bo_va.
+ *
+ * Returns:
+ * 0 for success, -EINVAL for failure.
+ */
+int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
+			struct amdgpu_bo_va *bo_va, bool clear)
+{
+	struct amdgpu_bo *bo = bo_va->base.bo;
+	struct amdgpu_vm *vm = ctx->vm;
+	struct dma_fence **last_update;
+	int r;
+
+	r = amdgpu_vm_bo_sync_mapping(ctx, bo_va, clear);
+	if (r)
+		goto error;
+
+	r = amdgpu_vm_begin_prepare_update(ctx, false, false);
+	if (r)
+		goto error;
+
+	amdgpu_vm_bo_prepare_ranges(ctx, bo_va, clear);
+
+	r = amdgpu_vm_finish_prepare_update(ctx);
+	if (r)
+		goto error;
+
+	r = amdgpu_vm_bo_map_ranges(ctx, bo_va, clear);
+	if (r)
+		goto error;
+
+	if (clear || amdgpu_vm_is_bo_always_valid(vm, bo))
+		last_update = &vm->last_update;
+	else
+		last_update = &bo_va->last_pt_update;
+
+	r = amdgpu_vm_commit_update(ctx, last_update);
+	if (r)
+		goto error;
+
+	amdgpu_vm_bo_finish_update(ctx, bo_va, clear);
 
 error:
 	return r;
