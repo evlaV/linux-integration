@@ -1120,9 +1120,10 @@ retry_lock:
 	 */
 	amdgpu_vm_update_ctx_init(&update_ctx, adev, vm);
 	ret = amdgpu_vm_bo_update(&update_ctx, fpriv->prt_va, false);
-	amdgpu_vm_update_ctx_fini(&update_ctx);
-	if (ret)
+	if (ret) {
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		goto unlock_all;
+	}
 
 	key = 0;
 	/* Validate User Ptr BOs */
@@ -1145,6 +1146,7 @@ retry_lock:
 			range = amdgpu_hmm_range_alloc(bo);
 			if (!range) {
 				ret = -ENOMEM;
+				amdgpu_vm_update_ctx_fini(&update_ctx);
 				goto unlock_all;
 			}
 
@@ -1161,8 +1163,10 @@ retry_lock:
 				continue;
 			bo = range->bo;
 			ret = amdgpu_ttm_tt_get_user_pages(bo, range);
-			if (ret)
+			if (ret) {
+				amdgpu_vm_update_ctx_fini(&update_ctx);
 				goto free_ranges;
+			}
 		}
 
 		invalidated = true;
@@ -1170,7 +1174,8 @@ retry_lock:
 		goto retry_lock;
 	}
 
-	ret = amdgpu_vm_update_pdes(adev, vm, false);
+	ret = amdgpu_vm_update_pdes(&update_ctx, false);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 	if (ret)
 		goto unlock_all;
 
