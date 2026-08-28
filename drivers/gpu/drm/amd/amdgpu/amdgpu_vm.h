@@ -652,6 +652,16 @@ int amdgpu_vm_update_range(struct amdgpu_vm_update_ctx *ctx, bool flush_tlb,
 			   struct ttm_resource *res, dma_addr_t *pages_addr);
 int amdgpu_vm_commit_update(struct amdgpu_vm_update_ctx *ctx,
 			    struct dma_fence **fence);
+int amdgpu_vm_commit_map_range(struct amdgpu_vm_update_ctx *ctx,
+			       struct dma_fence **fence);
+int amdgpu_vm_bo_sync_mapping(struct amdgpu_vm_update_ctx *ctx,
+			      struct amdgpu_bo_va *bo_va, bool clear);
+void amdgpu_vm_bo_prepare_ranges(struct amdgpu_vm_update_ctx *ctx,
+				 struct amdgpu_bo_va *bo_va, bool clear);
+int amdgpu_vm_bo_map_ranges(struct amdgpu_vm_update_ctx *ctx,
+			     struct amdgpu_bo_va *bo_va, bool clear);
+void amdgpu_vm_bo_finish_update(struct amdgpu_vm_update_ctx *ctx,
+				struct amdgpu_bo_va *bo_va, bool clear);
 int amdgpu_vm_bo_update(struct amdgpu_vm_update_ctx *ctx,
 			struct amdgpu_bo_va *bo_va,
 			bool clear);
