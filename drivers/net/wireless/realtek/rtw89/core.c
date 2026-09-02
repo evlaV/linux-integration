@@ -5511,6 +5511,9 @@ static void rtw89_track_ps_work(struct wiphy *wiphy, struct wiphy_work *work)
 	if (rtwdev->scanning)
 		return;
 
+	if (rtw89_chanctx_paused(rtwdev))
+		return;
+
 	if (rtwdev->lps_enabled && !rtwdev->btc.btc_ctrl_lps)
 		rtw89_enter_lps_track(rtwdev, RTW89_TFC_INTERVAL_100MS);
 }
@@ -5534,6 +5537,9 @@ static void rtw89_track_work(struct wiphy *wiphy, struct wiphy_work *work)
 
 	tfc_changed = rtw89_traffic_stats_track(rtwdev);
 	if (rtwdev->scanning)
+		return;
+
+	if (rtw89_chanctx_paused(rtwdev))
 		return;
 
 	rtw89_leave_lps(rtwdev);
