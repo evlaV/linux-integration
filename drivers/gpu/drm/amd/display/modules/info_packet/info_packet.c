@@ -48,12 +48,8 @@ enum vsc_packet_revision {
 	vsc_packet_rev7 = 7,
 };
 
-#define HDMI_INFOFRAME_TYPE_EMP    0x7F
 #define HDMI_INFOFRAME_TYPE_VENDOR 0x81
-#define HDMI_INFOFRAME_LENGTH_MASK 0x1F
-#define HF_VSIF_VERSION  1
-#define HF_VSIF_3D_BIT   0
-#define HF_VSIF_ALLM_BIT 1
+#define HF_VSIF_VERSION 1
 
 // VTEM Byte Offset
 #define VTEM_PB0		0
@@ -64,50 +60,64 @@ enum vsc_packet_revision {
 #define VTEM_PB5		5
 #define VTEM_PB6		6
 
-#define VTEM_ORG_ID          1
-#define VTEM_DATA_SET_TAG    1
-#define VTEM_DATA_SET_LENGTH 4
+#define VTEM_MD0		7
+#define VTEM_MD1		8
+#define VTEM_MD2		9
+#define VTEM_MD3		10
 
-#define VTEM_M_CONST    0
-#define VTEM_FVA_FACTOR 0
 
-#define VTEM_BRR_MASK_UPPER 0x03
-#define VTEM_BRR_MASK_LOWER 0xFF
+// VTEM Byte Masks
+//PB0
+#define MASK_VTEM_PB0__RESERVED0  0x01
+#define MASK_VTEM_PB0__SYNC       0x02
+#define MASK_VTEM_PB0__VFR        0x04
+#define MASK_VTEM_PB0__AFR        0x08
+#define MASK_VTEM_PB0__DS_TYPE    0x30
+	//0: Periodic pseudo-static EM Data Set
+	//1: Periodic dynamic EM Data Set
+	//2: Unique EM Data Set
+	//3: Reserved
+#define MASK_VTEM_PB0__END        0x40
+#define MASK_VTEM_PB0__NEW        0x80
 
-/* VTEM Byte Offset */
-#define VTEM_PB0 0
-#define VTEM_PB1 1
-#define VTEM_PB2 2
-#define VTEM_PB3 3
-#define VTEM_PB4 4
-#define VTEM_PB5 5
-#define VTEM_PB6 6
+//PB1
+#define MASK_VTEM_PB1__RESERVED1 0xFF
 
-#define VTEM_MD0 7
-#define VTEM_MD1 8
-#define VTEM_MD2 9
-#define VTEM_MD3 10
+//PB2
+#define MASK_VTEM_PB2__ORGANIZATION_ID 0xFF
+	//0: This is a Vendor Specific EM Data Set
+	//1: This EM Data Set is defined by This Specification (HDMI 2.1 r102.clean)
+	//2: This EM Data Set is defined by CTA-861-G
+	//3: This EM Data Set is defined by VESA
+//PB3
+#define MASK_VTEM_PB3__DATA_SET_TAG_MSB    0xFF
+//PB4
+#define MASK_VTEM_PB4__DATA_SET_TAG_LSB    0xFF
+//PB5
+#define MASK_VTEM_PB5__DATA_SET_LENGTH_MSB 0xFF
+//PB6
+#define MASK_VTEM_PB6__DATA_SET_LENGTH_LSB 0xFF
 
-/* Extended Metadata Packet */
-/* Header */
-#define EMP_LAST_BIT  6
-#define EMP_FIRST_BIT 7
-/* PB0 */
-#define EMP_SNC_BIT 1
-#define EMP_VFR_BIT 2
-#define EMP_AFR_BIT 3
-#define EMP_DST_BIT 4
-#define EMP_END_BIT 6
-#define EMP_NEW_BIT 7
-/* PB7 = MD0 */
-#define VTEM_VRR_BIT     0
-#define VTEM_M_CONST_BIT 1
-#define VTEM_FVA_BIT     4
-/* MD1 Base_Vfront */
-/* MD2 */
-#define VTEM_BRR_UPPER_BIT 0
-#define VTEM_RB_BIT        2
-/* MD3 BRR Lower */
+
+
+//PB7-27 (20 bytes):
+//PB7 = MD0
+#define MASK_VTEM_MD0__VRR_EN         0x01
+#define MASK_VTEM_MD0__M_CONST        0x02
+#define MASK_VTEM_MD0__QMS_EN         0x04
+#define MASK_VTEM_MD0__RESERVED2      0x08
+#define MASK_VTEM_MD0__FVA_FACTOR_M1  0xF0
+
+//MD1
+#define MASK_VTEM_MD1__BASE_VFRONT    0xFF
+
+//MD2
+#define MASK_VTEM_MD2__BASE_REFRESH_RATE_98  0x03
+#define MASK_VTEM_MD2__RB                    0x04
+#define MASK_VTEM_MD2__NEXT_TFR              0xF8
+
+//MD3
+#define MASK_VTEM_MD3__BASE_REFRESH_RATE_07  0xFF
 
 enum ColorimetryRGBDP {
 	ColorimetryRGB_DP_sRGB               = 0,
@@ -501,25 +511,6 @@ void mod_build_vsc_infopacket(const struct dc_stream_state *stream,
 	}
 }
 
-static bool is_hdmi_vic_mode(const struct dc_stream_state *stream)
-{
-	if (stream->timing.hdmi_vic == 0)
-		return false;
-
-	if (stream->timing.h_total < 3840 ||
-	    stream->timing.v_total < 2160)
-		return false;
-
-	/* 3D/ALLM forces HDMI VIC -> CTA VIC translation */
-	if (stream->view_format != VIEW_3D_FORMAT_NONE)
-		return false;
-
-	if (stream->hdmi_allm_active)
-		return false;
-
-	return true;
-}
-
 /**
  *  mod_build_hf_vsif_infopacket - Prepare HDMI Vendor Specific info frame.
  *                                 Follows HDMI Spec to build up Vendor Specific info frame
@@ -776,7 +767,7 @@ void mod_build_adaptive_sync_infopacket(const struct dc_stream_state *stream,
 		if (stream != NULL)
 			mod_build_adaptive_sync_infopacket_v2(stream, param, info_packet);
 		break;
-	case ADAPTIVE_SYNC_TYPE_PCON_ALLOWED:
+	case FREESYNC_TYPE_PCON_IN_WHITELIST:
 	case ADAPTIVE_SYNC_TYPE_EDP:
 		if (stream && stream->link->replay_settings.config.replay_supported &&
 			stream->link->replay_settings.config.replay_version == DC_VESA_PANEL_REPLAY)
@@ -785,8 +776,7 @@ void mod_build_adaptive_sync_infopacket(const struct dc_stream_state *stream,
 			mod_build_adaptive_sync_infopacket_v1(info_packet);
 		break;
 	case ADAPTIVE_SYNC_TYPE_NONE:
-	case ADAPTIVE_SYNC_TYPE_PCON_NOT_ALLOWED:
-	case ADAPTIVE_SYNC_TYPE_HDMI:
+	case FREESYNC_TYPE_PCON_NOT_IN_WHITELIST:
 	default:
 		break;
 	}
