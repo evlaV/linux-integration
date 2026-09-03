@@ -185,64 +185,6 @@ struct dm_freesync_mccs_ddc_work {
 	bool freesync_enabled;
 };
 
-static void dm_freesync_mccs_ddc_worker(struct work_struct *work)
-{
-	struct dm_freesync_mccs_ddc_work *w = container_of(work,
-			struct dm_freesync_mccs_ddc_work, work);
-	struct amdgpu_dm_connector *aconn = w->aconn;
-	struct amdgpu_i2c_adapter *i2c_adap = NULL;
-	struct i2c_adapter *adap;
-	int ret = 0;
-
-	if (!aconn || !aconn->dc_link || !aconn->dc_link->ddc)
-		goto out_free;
-
-	/* For DisplayPort AUX2I2C (PCON) path */
-	if (aconn->dc_link->aux_mode) {
-		adap = &aconn->dm_dp_aux.aux.ddc;
-	} else {
-		/* Reuse cached adapter if present; else skip instead of creating a temporary one */
-		if (aconn->i2c)
-			i2c_adap = aconn->i2c;
-		else
-			DRM_ERROR("Cached i2c adapter not present\n");
-
-		if (!i2c_adap)
-			goto out_free;
-
-		adap = &i2c_adap->base;
-	}
-
-	/*
-	 * This simply exercises the DDC/CI path at 0x37.  Proper MCCS framing
-	 * requires byte count & checksum;
-	 * There are HDMI display devices require FreeSync MCCS VCP Code 230 (0xE6) from
-	 * AMD GPU to enable / disable FreeSync handling when FreeSync VRR is On / Off. Otherwise
-	 * those HDMI display devices will have issues like no video or flashing artifacts.
-	 */
-	{
-		static const u8 freesync_on[7]  =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x01, 0x5E };
-		static const u8 freesync_off[7] =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x00, 0x5E };
-
-		u8 wr[7];
-
-		memcpy(wr, w->freesync_enabled ? freesync_on : freesync_off, sizeof(wr));
-
-		u8 rd[64] = { 0 };
-		struct i2c_msg msgs[8] = {
-		    { .addr = MCCS_SLAVE_ADDR, .flags = 0,        .len = sizeof(wr), .buf = wr },
-		    { .addr = MCCS_SLAVE_ADDR, .flags = I2C_M_RD, .len = sizeof(rd), .buf = rd }
-		};
-
-		ret = i2c_transfer(adap, msgs, 1);
-		DRM_DEBUG_KMS("FreeSync MCCS DDC poke on %s: ret=%d freesync_enabled=%d\n",
-			      aconn->base.name, ret, w->freesync_enabled);
-	}
-
-out_free:
-	kfree(w);
-}
-
 /**
  * DOC: overview
  *
@@ -11745,7 +11687,6 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		struct dc_info_packet hdr_packet;
 		struct dc_stream_status *status = NULL;
 		bool abm_changed, hdr_changed, scaling_changed, output_color_space_changed = false;
-		bool allm_changed = false;
 
 		memset(&stream_update, 0, sizeof(stream_update));
 
@@ -11774,9 +11715,6 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 
 		hdr_changed =
 			!drm_connector_atomic_hdr_metadata_equal(old_con_state, new_con_state);
-
-		allm_changed = dm_conn->hdmi_allm_capable &&
-			       (new_con_state->allm_mode != old_con_state->allm_mode);
 
 		if (!scaling_changed && !abm_changed && !hdr_changed &&
 		    !output_color_space_changed && !allm_changed)
@@ -11807,17 +11745,6 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		if (hdr_changed) {
 			fill_hdr_info_packet(new_con_state, &hdr_packet);
 			stream_update.hdr_static_metadata = &hdr_packet;
-		}
-
-		if (allm_changed) {
-			update_allm_state_on_crtc_stream(dm_new_crtc_state, new_con_state);
-			mod_build_hf_vsif_infopacket(dm_new_crtc_state->stream,
-				&dm_new_crtc_state->stream->hfvsif_infopacket);
-
-			stream_update.hdmi_allm_active =
-				&dm_new_crtc_state->stream->hdmi_allm_active;
-			stream_update.hfvsif_infopacket =
-				&dm_new_crtc_state->stream->hfvsif_infopacket;
 		}
 
 		status = dc_stream_get_status(dm_new_crtc_state->stream);
