@@ -183,10 +183,12 @@ struct dc_panel_patch {
 	unsigned int force_frl;
 	unsigned int vsdb_rcc_wa;
 	unsigned int delay_hdmi_link_training;
+	unsigned int skip_frl_pre_training;
 	unsigned int skip_avmute;
 	unsigned int skip_audio_sab_check;
 	unsigned int mst_start_top_delay;
 	unsigned int remove_sink_ext_caps;
+	bool disable_second_tile;
 	unsigned int disable_colorimetry;
 	uint8_t blankstream_before_otg_off;
 	bool oled_optimize_display_on;

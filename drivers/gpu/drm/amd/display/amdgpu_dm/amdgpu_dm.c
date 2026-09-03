@@ -11613,31 +11613,6 @@ static int amdgpu_dm_atomic_setup_commit(struct drm_atomic_commit *state)
 	return 0;
 }
 
-static void update_allm_state_on_crtc_stream(struct dm_crtc_state *new_crtc_state,
-					     const struct drm_connector_state *new_conn)
-{
-	struct mod_freesync_config *config = &new_crtc_state->freesync_config;
-	struct dc_stream_state *new_stream = new_crtc_state->stream;
-	bool allm_active = false;
-
-	switch (new_conn->allm_mode) {
-	case DRM_ALLM_MODE_ENABLED_DYNAMIC:
-		allm_active = config->state == VRR_STATE_ACTIVE_VARIABLE ||
-			      new_stream->content_type == DISPLAY_CONTENT_TYPE_GAME;
-		break;
-
-	case DRM_ALLM_MODE_ENABLED_FORCED:
-		allm_active = true;
-		break;
-
-	case DRM_ALLM_MODE_DISABLED:
-	default:
-		allm_active = false;
-	}
-
-	new_stream->hdmi_allm_active = allm_active;
-}
-
 /**
  * amdgpu_dm_atomic_commit_tail() - AMDgpu DM's commit tail implementation.
  * @state: The atomic state to commit
@@ -11716,8 +11691,7 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		hdr_changed =
 			!drm_connector_atomic_hdr_metadata_equal(old_con_state, new_con_state);
 
-		if (!scaling_changed && !abm_changed && !hdr_changed &&
-		    !output_color_space_changed && !allm_changed)
+		if (!scaling_changed && !abm_changed && !hdr_changed && !output_color_space_changed)
 			continue;
 
 		stream_update.stream = dm_new_crtc_state->stream;
