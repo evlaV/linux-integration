@@ -243,21 +243,6 @@ out_free:
 	kfree(w);
 }
 
-static void dm_schedule_freesync_mccs_ddc_poke(struct amdgpu_dm_connector *aconn,
-					       bool freesync_enabled)
-{
-	struct dm_freesync_mccs_ddc_work *w;
-
-	w = kzalloc(sizeof(*w), GFP_ATOMIC);
-	if (!w)
-		return;
-
-	INIT_WORK(&w->work, dm_freesync_mccs_ddc_worker);
-	w->aconn = aconn;
-	w->freesync_enabled = freesync_enabled;
-	schedule_work(&w->work);
-}
-
 /**
  * DOC: overview
  *
@@ -7913,7 +7898,7 @@ create_stream_for_sink(struct drm_connector *connector,
 
 	if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A ||
 	    stream->signal == SIGNAL_TYPE_HDMI_FRL)
-		mod_build_hf_vsif_infopacket(stream, &stream->hfvsif_infopacket);
+		mod_build_hf_vsif_infopacket(stream, &stream->vsp_infopacket, false, false);
 
 	if (stream->signal == SIGNAL_TYPE_DISPLAY_PORT ||
 	    stream->signal == SIGNAL_TYPE_DISPLAY_PORT_MST ||
@@ -14110,13 +14095,13 @@ static int get_amd_vsdb(struct amdgpu_dm_connector *aconnector,
 	return connector->display_info.amd_vsdb.version != 0;
 }
 
-static bool parse_amd_vsdb_cea(struct amdgpu_dm_connector *aconnector,
+static int parse_hdmi_amd_vsdb(struct amdgpu_dm_connector *aconnector,
 			       const struct edid *edid,
 			       struct amdgpu_hdmi_vsdb_info *vsdb_info)
 {
-	struct amdgpu_hdmi_vsdb_info vsdb_local = {0};
 	u8 *edid_ext = NULL;
 	int i;
+	bool valid_vsdb_found = false;
 
 	/*----- drm_find_cea_extension() -----*/
 	/* No EDID or EDID extensions */
@@ -14137,99 +14122,9 @@ static bool parse_amd_vsdb_cea(struct amdgpu_dm_connector *aconnector,
 	if (edid_ext[0] != CEA_EXT)
 		return -ENODEV;
 
-	if (!parse_edid_cea(aconnector, edid_ext, EDID_LENGTH, &vsdb_local))
-		return -ENODEV;
+	valid_vsdb_found = parse_edid_cea(aconnector, edid_ext, EDID_LENGTH, vsdb_info);
 
-	*vsdb_info = vsdb_local;
-	return false;
-}
-
-static bool is_monitor_range_invalid(const struct drm_connector *conn)
-{
-	return conn->display_info.monitor_range.min_vfreq == 0 ||
-	       conn->display_info.monitor_range.max_vfreq == 0;
-}
-
-/*
- * Returns true if (max_vfreq - min_vfreq) > 10
- */
-static bool is_freesync_capable(const struct drm_monitor_range_info *range)
-{
-	return (range->max_vfreq - range->min_vfreq) > 10;
-}
-
-static void monitor_range_from_vsdb(struct drm_display_info *display,
-				    const struct amdgpu_hdmi_vsdb_info *vsdb)
-{
-	display->monitor_range.min_vfreq = vsdb->min_refresh_rate_hz;
-	display->monitor_range.max_vfreq = vsdb->max_refresh_rate_hz;
-}
-
-/**
- * Get VRR range from HDMI VRR info in EDID. If VRRmax == 0,
- * try getting upper bound from AMD vsdb.
- *
- * @conn: drm_connector with HDMI VRR info
- * @vsdb: AMD vsdb from CAE
- */
-static void monitor_range_from_hdmi(struct drm_display_info *display,
-				    const struct amdgpu_hdmi_vsdb_info *vsdb)
-{
-	u16 vrr_max = display->hdmi.vrr_cap.vrr_max;
-
-	/* Try getting upper vrr bound from AMD vsdb */
-	if (vrr_max == 0)
-		vrr_max = vsdb->max_refresh_rate_hz;
-
-	/* Use max possible BRR value as a last resort */
-	if (vrr_max == 0)
-		vrr_max = VTEM_BRR_MAX;
-
-	display->monitor_range.min_vfreq = display->hdmi.vrr_cap.vrr_min;
-	display->monitor_range.max_vfreq = vrr_max;
-}
-
-/*
- * Returns true if connector is capable of freesync
- * Optionally, can fetch the range from AMD vsdb
- */
-static bool copy_range_to_amdgpu_connector(struct drm_connector *conn)
-{
-	struct amdgpu_dm_connector *aconn = to_amdgpu_dm_connector(conn);
-	struct drm_monitor_range_info *range = &conn->display_info.monitor_range;
-
-	aconn->min_vfreq = range->min_vfreq;
-	aconn->max_vfreq = range->max_vfreq;
-
-	return is_freesync_capable(range);
-}
-
-static void extend_range_from_vsdb(struct drm_display_info *display,
-				   const struct amdgpu_hdmi_vsdb_info *vsdb)
-{
-	u16 vrr_min = display->monitor_range.min_vfreq;
-	u16 vrr_max = display->monitor_range.max_vfreq;
-
-	/* Always extend upper limit */
-	if (vsdb->max_refresh_rate_hz > vrr_max)
-		vrr_max = vsdb->max_refresh_rate_hz;
-
-	/*
-	 * Only extend lower limit if current one disables LFC.
-
-	 * During widespread testing, we found that some manufacturers probably
-	 * had issues with their monitors' lower VRR boundaries and adjusted
-	 * them up (Gigabyte X34GS with official range 48 - 180, AMD vsdb 48 -
-	 * 180 yet Monitor Ranges 55 - 180). After setting the lower boundary
-	 * from AMD vsdb, such monitors start having blanking issues.
-	 *
-	 * Work around that by not touching VRR min if it still supports LFC.
-	 */
-	if (vsdb->min_refresh_rate_hz < vrr_min && (vrr_min * 2 >= vrr_max))
-		vrr_min = vsdb->min_refresh_rate_hz;
-
-	display->monitor_range.min_vfreq = vrr_min;
-	display->monitor_range.max_vfreq = vrr_max;
+	return valid_vsdb_found ? i : -ENODEV;
 }
 
 /**
@@ -14376,7 +14271,7 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 				 */
 				if (!amdgpu_dm_connector->max_vfreq) {
 					struct drm_display_mode *brr_mode =
-						amdgpu_dm_get_highest_refresh_rate_mode(amdgpu_dm_connector, true);
+						get_highest_refresh_rate_mode(amdgpu_dm_connector, true);
 
 					if (brr_mode)
 						amdgpu_dm_connector->max_vfreq =
