@@ -6457,7 +6457,8 @@ static int gfx_v10_0_cp_gfx_start(struct amdgpu_device *adev)
 
 	gfx_v10_0_cp_gfx_enable(adev, true);
 
-	if (!adev->csib_initialized)
+	/* Only use the CSIB workaround on APUs. dGPUs need it after reset. */
+	if (!(adev->flags & AMD_IS_APU) || !adev->csib_initialized)
 		gfx_v10_csib_submit(adev);
 
 	return 0;
