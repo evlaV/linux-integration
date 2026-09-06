@@ -1804,6 +1804,7 @@ struct dc_scratch_space {
 	enum edp_revision edp_revision;
 	union dpcd_sink_ext_caps dpcd_sink_ext_caps;
 
+	struct backlight_settings backlight_settings;
 	struct psr_settings psr_settings;
 	struct replay_settings replay_settings;
 
@@ -2622,6 +2623,20 @@ void dc_link_edp_panel_backlight_power_on(struct dc_link *link,
  */
 bool dc_link_set_backlight_level(const struct dc_link *dc_link,
 		struct set_backlight_level_params *backlight_level_params);
+
+/* Whether DC preserves the live brightness target of this OLED AUX panel. */
+bool dc_link_can_preserve_backlight(const struct dc_link *link);
+
+/* Save the live AUX target before backlight, receiver, or panel power-off.
+ * Repeated calls retain the snapshot until it has been restored.
+ */
+void dc_link_save_backlight(struct dc_link *link);
+
+/* Retry a pending AUX restore with the link powered and accessible.
+ * Returns false on failure, leaving the saved target pending for a retry.
+ * Does nothing if no restore is pending or preservation is unsupported.
+ */
+bool dc_link_restore_backlight(struct dc_link *link);
 
 /* Set/get nits-based backlight level of an embedded panel (eDP, LVDS). */
 bool dc_link_set_backlight_level_nits(struct dc_link *link,

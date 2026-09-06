@@ -856,6 +856,9 @@ void dce110_edp_power_control(
 						ctx,
 						current_ts,
 						ctx->dc->link_srv->dp_trace_get_edp_poweron_timestamp(link)), 1000000);
+		if (!power_up)
+			dc_link_save_backlight(link);
+
 		DC_LOG_HW_RESUME_S3(
 				"%s: transition: power_up=%d current_ts=%llu edp_poweroff=%llu edp_poweron=%llu time_since_edp_poweroff_ms=%llu time_since_edp_poweron_ms=%llu",
 				__func__,
@@ -1021,6 +1024,9 @@ void dce110_edp_backlight_control(
 			return;
 		}
 	}
+
+	if (!enable)
+		dc_link_save_backlight(link);
 
 	/* Send VBIOS command to control eDP panel backlight */
 

@@ -209,6 +209,9 @@ static void construct_link_service_edp_panel_control(struct link_service *link_s
 	link_srv->edp_get_backlight_level_nits = edp_get_backlight_level_nits;
 	link_srv->edp_set_backlight_level = edp_set_backlight_level;
 	link_srv->edp_set_backlight_level_nits = edp_set_backlight_level_nits;
+	link_srv->edp_can_preserve_backlight = edp_can_preserve_backlight;
+	link_srv->edp_save_backlight = edp_save_backlight;
+	link_srv->edp_restore_backlight = edp_restore_backlight;
 	link_srv->edp_get_target_backlight_pwm = edp_get_target_backlight_pwm;
 	link_srv->edp_get_psr_state = edp_get_psr_state;
 	link_srv->edp_set_psr_allow_active = edp_set_psr_allow_active;
