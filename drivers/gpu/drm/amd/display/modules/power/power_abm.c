@@ -716,6 +716,11 @@ void mod_power_update_backlight_on_mode_change(
 {
     struct set_backlight_level_params backlight_level_params = { 0 };
 
+	if (dc_link_can_preserve_backlight(link)) {
+		dc_link_restore_backlight(link);
+		return;
+	}
+
 		if (link->dpcd_sink_ext_caps.bits.hdr_aux_backlight_control == 1 ||
 			link->dpcd_sink_ext_caps.bits.sdr_aux_backlight_control == 1)
 			dc_link_set_backlight_level_nits(link, core_power->bl_state[panel_inst].isHDR,
