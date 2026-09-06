@@ -40,6 +40,7 @@
 #include "abm.h"
 #include "resource.h"
 #include "link_dp_panel_replay.h"
+#include <linux/unaligned.h>
 #define DC_LOGGER \
 	link->ctx->logger
 #define DC_LOGGER_INIT(logger)
@@ -148,6 +149,49 @@ enum dp_panel_mode dp_get_panel_mode(struct dc_link *link)
 	return DP_PANEL_MODE_DEFAULT;
 }
 
+bool edp_can_preserve_backlight(const struct dc_link *link)
+{
+	return link->connector_signal == SIGNAL_TYPE_EDP &&
+		link->dpcd_sink_ext_caps.bits.oled && !link->is_dds &&
+		link->backlight_control_type == BACKLIGHT_CONTROL_AMD_AUX;
+}
+
+void edp_save_backlight(struct dc_link *link)
+{
+	struct backlight_settings *settings = &link->backlight_settings;
+	u8 target[sizeof(u32)];
+	u32 millinits;
+
+	if (!edp_can_preserve_backlight(link) || settings->restore_pending)
+		return;
+
+	/* Freeze the snapshot before the first destructive power transition. */
+	settings->restore_pending = true;
+	if (link->aux_access_disabled ||
+	    core_link_read_dpcd(link, DP_SOURCE_BACKLIGHT_LEVEL,
+				target, sizeof(target)) != DC_OK)
+		return;
+
+	millinits = get_unaligned_le32(target);
+	if (millinits > 5000000)
+		return;
+
+	settings->backlight_millinits = millinits;
+	settings->valid = true;
+}
+
+bool edp_restore_backlight(struct dc_link *link)
+{
+	struct backlight_settings *settings = &link->backlight_settings;
+
+	if (!edp_can_preserve_backlight(link) || !settings->restore_pending)
+		return true;
+	if (!settings->valid || link->aux_access_disabled)
+		return false;
+
+	return edp_set_backlight_level_nits(link, true, settings->backlight_millinits, 0);
+}
+
 bool edp_set_backlight_level_nits(struct dc_link *link,
 		bool isHDR,
 		uint32_t backlight_millinits,
@@ -155,6 +199,9 @@ bool edp_set_backlight_level_nits(struct dc_link *link,
 {
 	if (!link || (link->connector_signal != SIGNAL_TYPE_EDP &&
 			link->connector_signal != SIGNAL_TYPE_DISPLAY_PORT))
+		return false;
+
+	if (edp_can_preserve_backlight(link) && link->aux_access_disabled)
 		return false;
 
 	if (link->is_dds && !link->dpcd_caps.panel_luminance_control)
@@ -225,6 +272,12 @@ bool edp_set_backlight_level_nits(struct dc_link *link,
 		if (core_link_write_dpcd(link, DP_SOURCE_BACKLIGHT_CONTROL,
 			&backlight_control, 1) != DC_OK)
 			return false;
+
+		if (edp_can_preserve_backlight(link)) {
+			link->backlight_settings.backlight_millinits = backlight_millinits;
+			link->backlight_settings.valid = true;
+			link->backlight_settings.restore_pending = false;
+		}
 	}
 
 	return true;
@@ -272,6 +325,11 @@ bool edp_backlight_enable_aux(struct dc_link *link, bool enable)
 
 	if (link->is_dds)
 		return true;
+	if (enable)
+		edp_restore_backlight(link);
+	else
+		edp_save_backlight(link);
+
 	if (core_link_write_dpcd(link, DP_SOURCE_BACKLIGHT_ENABLE,
 		&backlight_enable, 1) != DC_OK)
 		return false;
@@ -310,11 +368,25 @@ bool set_default_brightness_aux(struct dc_link *link)
 	uint32_t default_backlight;
 
 	if (link && link->dpcd_sink_ext_caps.bits.oled == 1) {
+		if (edp_can_preserve_backlight(link) && link->aux_access_disabled) {
+			link->backlight_settings.restore_pending = true;
+			return false;
+		}
+		if (edp_can_preserve_backlight(link) && link->backlight_settings.valid)
+			return edp_restore_backlight(link);
+
 		if (!read_default_bl_aux(link, &default_backlight))
 			default_backlight = 150000;
 		// if > 5000, it might be wrong readback. 0 nits is a valid default value for OLED panel.
 		if (default_backlight < 1000 || default_backlight > 5000000)
 			default_backlight = 150000;
+
+		if (edp_can_preserve_backlight(link)) {
+			link->backlight_settings.backlight_millinits = default_backlight;
+			link->backlight_settings.valid = true;
+			link->backlight_settings.restore_pending = true;
+			return edp_restore_backlight(link);
+		}
 
 		return edp_set_backlight_level_nits(link, true,
 				default_backlight, 0);

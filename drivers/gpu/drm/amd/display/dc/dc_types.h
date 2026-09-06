@@ -1116,6 +1116,13 @@ struct link_mst_stream_allocation_table {
 	struct link_mst_stream_allocation stream_allocations[MAX_CONTROLLER_NUM];
 };
 
+struct backlight_settings {
+	/* Live OLED target saved before power-off, with the last write as fallback. */
+	u32 backlight_millinits;
+	bool valid;
+	bool restore_pending;
+};
+
 /* PSR feature flags */
 struct psr_settings {
 	bool psr_feature_enabled;		// PSR is supported by sink
