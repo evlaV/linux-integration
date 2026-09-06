@@ -654,9 +654,24 @@ struct amdgpu_display_manager {
 	/**
 	 * @actual_brightness:
 	 *
-	 * last successfully applied backlight values.
+	 * Last successfully applied sysfs backlight level for each eDP panel.
 	 */
 	u32 actual_brightness[AMDGPU_DM_MAX_NUM_EDP];
+	/**
+	 * @backlight_update_pending:
+	 *
+	 * A sysfs request still needs programming, including brightness zero.
+	 * Also set on power loss for panels whose brightness DC cannot preserve.
+	 * Protected by dc_lock along with backlight writes and restore checks.
+	 */
+	bool backlight_update_pending[AMDGPU_DM_MAX_NUM_EDP];
+	/**
+	 * @backlight_state:
+	 *
+	 * Last backlight-core state flags, used to distinguish blanking and PM
+	 * notifications from brightness requests. Protected by dc_lock.
+	 */
+	unsigned int backlight_state[AMDGPU_DM_MAX_NUM_EDP];
 
 	/**
 	 * @aux_hpd_discon_quirk:

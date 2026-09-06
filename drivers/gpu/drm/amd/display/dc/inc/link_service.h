@@ -263,6 +263,9 @@ struct link_service {
 			bool isHDR,
 			uint32_t backlight_millinits,
 			uint32_t transition_time_in_ms);
+	bool (*edp_can_preserve_backlight)(const struct dc_link *link);
+	void (*edp_save_backlight)(struct dc_link *link);
+	bool (*edp_restore_backlight)(struct dc_link *link);
 	int (*edp_get_target_backlight_pwm)(const struct dc_link *link);
 	bool (*edp_get_psr_state)(
 			const struct dc_link *link, enum dc_psr_state *state);

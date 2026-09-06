@@ -472,6 +472,21 @@ bool dc_link_set_backlight_level(const struct dc_link *link,
 			backlight_level_params);
 }
 
+bool dc_link_can_preserve_backlight(const struct dc_link *link)
+{
+	return link->dc->link_srv->edp_can_preserve_backlight(link);
+}
+
+void dc_link_save_backlight(struct dc_link *link)
+{
+	link->dc->link_srv->edp_save_backlight(link);
+}
+
+bool dc_link_restore_backlight(struct dc_link *link)
+{
+	return link->dc->link_srv->edp_restore_backlight(link);
+}
+
 bool dc_link_set_backlight_level_nits(struct dc_link *link,
 		bool isHDR,
 		uint32_t backlight_millinits,
