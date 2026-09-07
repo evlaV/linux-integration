@@ -853,12 +853,15 @@ static void verify_link_capability_destructive(struct dc_link *link,
 				link, &known_limit_link_setting,
 				LINK_TRAINING_MAX_VERIFY_RETRY);
 	} else if (dc_is_hdmi_signal(link->local_sink->sink_signal)) {
+		LINK_INFO("[peihsiny] dc_is_hdmi_signal()=true\n");
 		if (!is_hdmi_frl_in_use(link)) {
+			LINK_INFO("[peihsiny] !is_hdmi_frl_in_use()\n");
 			link_set_all_streams_dpms_off_for_link(link);
 			hdmi_frl_verify_link_cap(link, &link->frl_reported_link_cap);
 			link->local_sink->sink_signal = (link->frl_verified_link_cap.frl_link_rate != HDMI_FRL_LINK_RATE_DISABLE)
 												? SIGNAL_TYPE_HDMI_FRL : SIGNAL_TYPE_HDMI_TYPE_A;
 		} else {
+			LINK_INFO("[peihsiny] is_hdmi_frl_in_use()\n");
 			link->local_sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
 			link->frl_verified_link_cap.frl_link_rate = HDMI_FRL_LINK_RATE_DISABLE;
 		}
