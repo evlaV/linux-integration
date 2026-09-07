@@ -887,10 +887,15 @@ static void verify_link_capability_non_destructive(struct dc_link *link)
 	} else if (dc_is_hdmi_signal(link->local_sink->sink_signal)) {
 		link->verified_link_cap = link->reported_link_cap;
 
+		LINK_INFO("[peihsiny] %s dc_is_hdmi_signal()=true\n", __func__);
 		if (is_hdmi_frl_in_use(link)) {
+			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=true\n", __func__);
 			link->local_sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
 			link->frl_verified_link_cap.frl_link_rate = HDMI_FRL_LINK_RATE_DISABLE;
 		}
+		else
+			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=false\n", __func__);
+
 	}
 }
 
