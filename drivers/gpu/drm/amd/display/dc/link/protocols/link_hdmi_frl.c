@@ -792,9 +792,11 @@ void hdmi_frl_verify_link_cap(struct dc_link *link,
 	link->frl_flags.apply_vsdb_rcc_wa =
 			link->ctx->dc->debug.apply_vsdb_rcc_wa;
 
+	FRL_INFO("%s()-1\n", __func__);
 	if (link->frl_flags.force_frl_rate == 0xF)
 		return;
 
+	FRL_INFO("%s()-2\n", __func__);
 	if (link->local_sink &&
 		link->local_sink->edid_caps.panel_patch.force_frl)
 			link->frl_flags.force_frl_always = true;
@@ -820,30 +822,37 @@ void hdmi_frl_verify_link_cap(struct dc_link *link,
 
 	cur_link_setting = *known_limit_link_setting;
 
+	FRL_INFO("%s()-3\n", __func__);
 	if (link->frl_flags.force_frl_rate != 0) {
 		cur->frl_link_rate = (cur_link_setting.frl_link_rate <
 				link->frl_flags.force_frl_rate) ?
 						cur_link_setting.frl_link_rate :
 						link->frl_flags.force_frl_rate;
 		link->frl_verified_link_cap = *cur;
+		FRL_INFO("%s()-4\n", __func__);
 		return;
 	}
 
+	FRL_INFO("%s()-5\n", __func__);
 	if (link->local_sink) {
 		if (link->local_sink->edid_caps.panel_patch.hdmi_spe_handling) {
 			link->dc->hwss.disable_link_output(link, &link_res, link->connector_signal);
 			link->dc->res_pool->clock_sources[t_id]->funcs->cs_power_down(
 				link->dc->res_pool->clock_sources[t_id]);
 			link->frl_verified_link_cap = *cur;
+			FRL_INFO("%s()-6\n", __func__);
 			return;
 		}
+		FRL_INFO("%s()-7\n", __func__);
 		/* Monitor patch do decrease 10G to 8G*/
 		if (link->local_sink->edid_caps.panel_patch.block_10g) {
 			if (cur->frl_link_rate == HDMI_FRL_LINK_RATE_10GBPS)
 				cur->frl_link_rate--;
+			FRL_INFO("%s()-8\n", __func__);
 		}
 	}
 
+	FRL_INFO("%s()-9\n", __func__);
 	link->frl_link_settings = cur_link_setting;
 	/* disable PHY first for PNP */
 	if (link->dc->ctx->dce_version <= DCN_VERSION_3_0)
