@@ -895,8 +895,10 @@ static void verify_link_capability_non_destructive(struct dc_link *link)
 		}
 		else {
 			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=false\n", __func__);
+			/*
 			link_set_all_streams_dpms_off_for_link(link);
 			hdmi_frl_verify_link_cap(link, &link->frl_reported_link_cap);
+			*/
 			link->local_sink->sink_signal = (link->frl_verified_link_cap.frl_link_rate != HDMI_FRL_LINK_RATE_DISABLE)
 												? SIGNAL_TYPE_HDMI_FRL : SIGNAL_TYPE_HDMI_TYPE_A;
 		}
