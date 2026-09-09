@@ -755,7 +755,7 @@ static int asus_kbd_register_leds(struct hid_device *hdev)
 	}
 
 #if !IS_REACHABLE(CONFIG_HID_ASUS_ALLY)
-	if (drvdata->quirks & QUIRK_ROG_ALLY_XPAD) {
+	if ((drvdata->quirks & QUIRK_ROG_ALLY_XPAD) && hid_is_usb(hdev)) {
 		struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
 		struct usb_device *udev = interface_to_usbdev(intf);
 		validate_mcu_fw_version(hdev,
