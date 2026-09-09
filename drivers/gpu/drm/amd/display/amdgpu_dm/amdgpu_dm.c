@@ -10311,7 +10311,6 @@ static void update_freesync_state_on_stream(
 	new_crtc_state->vrr_infopacket = vrr_infopacket;
 
 	new_stream->vrr_infopacket = vrr_infopacket;
-	new_stream->allow_freesync = mod_freesync_get_freesync_enabled(&vrr_params);
 
 	if (new_crtc_state->freesync_vrr_info_changed) {
 		if (aconn && aconn->dc_link) {
@@ -10647,6 +10646,7 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 	unsigned long flags;
 	u32 target_vblank, last_flip_vblank;
 	bool vrr_active = amdgpu_dm_crtc_vrr_active(acrtc_state);
+	bool allow_freesync = acrtc_state->freesync_config.state == VRR_STATE_ACTIVE_VARIABLE;
 	bool cursor_update = false;
 	bool pflip_present = false;
 	bool immediate_flip = false;
@@ -10965,6 +10965,9 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 			spin_unlock_irqrestore(&pcrtc->dev->event_lock, flags);
 		}
 		mutex_lock(&dm->dc_lock);
+		if (acrtc_state->update_type == UPDATE_TYPE_FULL &&
+		    allow_freesync != acrtc_state->stream->allow_freesync)
+			bundle->stream_update.allow_freesync = &allow_freesync;
 		update_planes_and_stream_adapter(dm->dc,
 					 acrtc_state->update_type,
 					 planes_count,
@@ -12429,6 +12432,7 @@ static int dm_update_crtc_state(struct amdgpu_display_manager *dm,
 	struct dc_stream_state *new_stream;
 	struct amdgpu_device *adev = dm->adev;
 	int ret = 0;
+	bool allow_freesync, old_allow_freesync;
 
 	/*
 	 * TODO Move this code into dm_crtc_atomic_check once we get rid of dc_validation_set
@@ -12683,6 +12687,27 @@ skip_modeset:
 	/* Update Freesync settings. */
 	get_freesync_config_for_crtc(dm_new_crtc_state,
 				     dm_new_conn_state);
+
+	allow_freesync = dm_new_crtc_state->freesync_config.state == VRR_STATE_ACTIVE_VARIABLE;
+	old_allow_freesync = dm_old_crtc_state->freesync_config.state == VRR_STATE_ACTIVE_VARIABLE;
+
+	/* Keep the proposed FreeSync permission in the private DC state. */
+	if (dm_new_crtc_state->stream != dm_old_crtc_state->stream ||
+	    old_allow_freesync != allow_freesync) {
+		ret = dm_atomic_get_state(state, &dm_state);
+		if (ret)
+			goto fail;
+
+		if (!dc_state_set_stream_allow_freesync(dm_state->context,
+							dm_new_crtc_state->stream,
+							allow_freesync)) {
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		/* DML must re-evaluate FPO when the permission changes. */
+		*lock_and_validation_needed = true;
+	}
 
 	return ret;
 

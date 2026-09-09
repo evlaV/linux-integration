@@ -420,6 +420,7 @@ enum dc_status dc_state_add_stream(
 	}
 
 	state->streams[state->stream_count] = stream;
+	state->stream_status[state->stream_count].allow_freesync_valid = false;
 	dc_stream_retain(stream);
 	state->stream_count++;
 
@@ -700,6 +701,36 @@ struct dc_stream_status *dc_state_get_stream_status(
 	}
 
 	return NULL;
+}
+
+bool dc_state_get_stream_allow_freesync(const struct dc_state *state,
+					const struct dc_stream_state *stream)
+{
+	unsigned int i;
+
+	for (i = 0; i < state->stream_count; i++) {
+		if (state->streams[i] == stream &&
+		    state->stream_status[i].allow_freesync_valid)
+			return state->stream_status[i].allow_freesync;
+	}
+
+	return stream->allow_freesync;
+}
+
+bool dc_state_set_stream_allow_freesync(struct dc_state *state,
+					const struct dc_stream_state *stream, bool allow_freesync)
+{
+	unsigned int i;
+
+	for (i = 0; i < state->stream_count; i++) {
+		if (state->streams[i] == stream) {
+			state->stream_status[i].allow_freesync = allow_freesync;
+			state->stream_status[i].allow_freesync_valid = true;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 enum mall_stream_type dc_state_get_pipe_subvp_type(const struct dc_state *state,

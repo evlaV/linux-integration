@@ -74,4 +74,11 @@ bool dc_state_add_all_planes_for_stream(
 struct dc_stream_status *dc_state_get_stream_status(
 	struct dc_state *state,
 	const struct dc_stream_state *stream);
+
+bool dc_state_get_stream_allow_freesync(const struct dc_state *state,
+					const struct dc_stream_state *stream);
+
+bool dc_state_set_stream_allow_freesync(struct dc_state *state,
+					const struct dc_stream_state *stream, bool allow_freesync);
+
 #endif /* _DC_STATE_H_ */

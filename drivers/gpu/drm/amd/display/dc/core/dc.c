@@ -3096,6 +3096,10 @@ static struct surface_update_descriptor check_update_surfaces_for_stream(
 		if (stream_update->mst_bw_update)
 			su_flags->bits.mst_bw = 1;
 
+		if (stream_update->allow_freesync &&
+		    *stream_update->allow_freesync != stream_update->stream->allow_freesync)
+			su_flags->bits.fams_changed = 1;
+
 		if (stream_update->stream->freesync_on_desktop &&
 			(stream_update->vrr_infopacket || stream_update->allow_freesync ||
 				stream_update->vrr_active_variable || stream_update->vrr_active_fixed))
