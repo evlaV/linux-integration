@@ -579,7 +579,7 @@ struct dc_stream_state *dcn32_can_support_mclk_switch_using_fw_based_vblank_stre
 	if (!is_refresh_rate_support_mclk_switch_using_fw_based_vblank_stretch(fpo_candidate_stream, fpo_vactive_margin_us, refresh_rate))
 		return NULL;
 
-	if (!fpo_candidate_stream->allow_freesync)
+	if (!dc_state_get_stream_allow_freesync(context, fpo_candidate_stream))
 		return NULL;
 
 	if (fpo_candidate_stream->vrr_active_variable &&
@@ -673,7 +673,9 @@ bool dcn32_subvp_drr_admissable(struct dc *dc, struct dc_state *context)
 				non_subvp_pipes++;
 				drr_psr_capable = (drr_psr_capable || dcn32_is_psr_capable(pipe));
 				if (pipe->stream->ignore_msa_timing_param &&
-						(pipe->stream->allow_freesync || pipe->stream->vrr_active_variable || pipe->stream->vrr_active_fixed)) {
+				    (dc_state_get_stream_allow_freesync(context, pipe->stream) ||
+				     pipe->stream->vrr_active_variable ||
+				     pipe->stream->vrr_active_fixed)) {
 					drr_pipe_found = true;
 				}
 			}
@@ -734,7 +736,9 @@ bool dcn32_subvp_vblank_admissable(struct dc *dc, struct dc_state *context, int 
 				non_subvp_pipes++;
 				vblank_psr_capable = (vblank_psr_capable || dcn32_is_psr_capable(pipe));
 				if (pipe->stream->ignore_msa_timing_param &&
-						(pipe->stream->allow_freesync || pipe->stream->vrr_active_variable || pipe->stream->vrr_active_fixed)) {
+				    (dc_state_get_stream_allow_freesync(context, pipe->stream) ||
+				     pipe->stream->vrr_active_variable ||
+				     pipe->stream->vrr_active_fixed)) {
 					drr_pipe_found = true;
 				}
 			}

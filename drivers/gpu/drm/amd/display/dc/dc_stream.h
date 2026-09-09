@@ -62,6 +62,9 @@ struct dc_stream_status {
 	bool is_abm_supported;
 	struct mall_stream_config mall_stream_config;
 	bool fpo_in_use;
+	/* Proposed permission for validation, without modifying the stream. */
+	bool allow_freesync;
+	bool allow_freesync_valid;
 };
 
 

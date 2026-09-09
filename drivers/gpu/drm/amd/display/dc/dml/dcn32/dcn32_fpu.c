@@ -844,7 +844,9 @@ static bool subvp_drr_schedulable(struct dc *dc, struct dc_state *context)
 			continue;
 
 		if (dc_state_get_pipe_subvp_type(context, drr_pipe) == SUBVP_NONE && drr_pipe->stream->ignore_msa_timing_param &&
-				(drr_pipe->stream->allow_freesync || drr_pipe->stream->vrr_active_variable || drr_pipe->stream->vrr_active_fixed)) {
+				(dc_state_get_stream_allow_freesync(context, drr_pipe->stream) ||
+				 drr_pipe->stream->vrr_active_variable ||
+				 drr_pipe->stream->vrr_active_fixed)) {
 			drr_found = true;
 			break;
 		}
@@ -3444,7 +3446,10 @@ bool dcn32_allow_subvp_high_refresh_rate(struct dc *dc, struct dc_state *context
 				uint32_t height = subvp_high_refresh_list.res[i].height;
 
 				if (dcn32_check_native_scaling_for_res(pipe, width, height)) {
-					if ((context->stream_count == 1 && !pipe->stream->allow_freesync) || context->stream_count > 1) {
+					if ((context->stream_count == 1 &&
+					     !dc_state_get_stream_allow_freesync(context,
+										 pipe->stream)) ||
+					    context->stream_count > 1) {
 						allow = true;
 						break;
 					}
