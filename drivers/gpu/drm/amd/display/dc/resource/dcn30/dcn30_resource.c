@@ -2150,7 +2150,7 @@ bool dcn30_can_support_mclk_switch_using_fw_based_vblank_stretch(struct dc *dc, 
 	if (!is_refresh_rate_support_mclk_switch_using_fw_based_vblank_stretch(context))
 		return false;
 
-	if (!context->streams[0]->allow_freesync)
+	if (!dc_state_get_stream_allow_freesync(context, context->streams[0]))
 		return false;
 
 	if (context->streams[0]->vrr_active_variable && (dc->debug.disable_fams_gaming == INGAME_FAMS_DISABLE))
