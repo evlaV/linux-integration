@@ -75,6 +75,7 @@ enum {
 static int hibernation_mode = HIBERNATION_SHUTDOWN;
 
 bool freezer_test_done;
+static bool platform_prepare_test_done;
 
 static const struct platform_hibernation_ops *hibernation_ops;
 
@@ -636,6 +637,11 @@ int hibernation_platform_enter(void)
 		goto Power_up;
 	}
 
+	if (hibernation_test(TEST_HIBERNATE_PLATFORM_PREPARE)) {
+		platform_prepare_test_done = true;
+		goto Power_up;
+	}
+
 	hibernation_ops->enter();
 	/* We should never get here */
 	while (1);
@@ -700,6 +706,8 @@ static int power_down(void)
 		break;
 	case HIBERNATION_PLATFORM:
 		error = hibernation_platform_enter();
+		if (platform_prepare_test_done)
+			goto exit;
 		if (error == -EAGAIN || error == -EBUSY) {
 			events_check_enabled = false;
 			pr_info("Wakeup event detected during hibernation, rolling back.\n");
@@ -819,6 +827,15 @@ int hibernate(void)
 	if (in_suspend) {
 		unsigned int flags = 0;
 
+		if (hibernation_test(TEST_HIBERNATE_SNAPSHOT)) {
+			swsusp_free();
+			/* recover any devices that refused to thaw */
+			dpm_resume_suspended_devices(PMSG_RECOVER);
+			in_suspend = 0;
+			pm_restore_gfp_mask();
+			goto Free_bitmaps;
+		}
+
 		if (hibernation_mode == HIBERNATION_PLATFORM)
 			flags |= SF_PLATFORM_MODE;
 		if (nocompress) {
@@ -842,13 +859,25 @@ int hibernate(void)
 		pm_pr_dbg("Writing hibernation image.\n");
 		error = swsusp_write(flags);
 		swsusp_free();
+
+		if (hibernation_test(TEST_HIBERNATE_IMAGE_WRITE)) {
+			/* Restore swap signature. */
+			if (swsusp_unmark())
+				pr_err("Swap will be unusable! Try swapon -a.\n");
+			/* recover any devices that refused to thaw */
+			dpm_resume_suspended_devices(PMSG_RECOVER);
+			in_suspend = 0;
+			pm_restore_gfp_mask();
+			goto Free_bitmaps;
+		}
+
 		if (!error) {
 			if (hibernation_mode == HIBERNATION_TEST_RESUME)
 				snapshot_test = true;
 			else
 				error = power_down();
 		}
-		if (error) {
+		if (error || platform_prepare_test_done) {
 			/* recover any devices that refused to thaw */
 			dpm_resume_suspended_devices(PMSG_RECOVER);
 		}
@@ -870,8 +899,9 @@ int hibernate(void)
 	}
 	thaw_processes();
 
-	/* Don't bother checking whether freezer_test_done is true */
+	/* Don't bother checking whether any of the test_done flags are true */
 	freezer_test_done = false;
+	platform_prepare_test_done = false;
  Exit:
 	filesystems_thaw();
 	pm_notifier_call_chain(PM_POST_HIBERNATION);
