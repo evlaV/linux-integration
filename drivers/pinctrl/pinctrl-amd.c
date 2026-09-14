@@ -8,6 +8,7 @@
  *
  */
 
+#include <linux/dmi.h>
 #include <linux/err.h>
 #include <linux/bug.h>
 #include <linux/kernel.h>
@@ -39,6 +40,8 @@
 #ifdef CONFIG_SUSPEND
 static struct amd_gpio *pinctrl_dev;
 #endif
+
+#define FREMONT_GPP6_PIN 18
 
 static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned offset)
 {
@@ -889,6 +892,7 @@ static void amd_gpio_irq_init(struct amd_gpio *gpio_dev)
 	unsigned long flags;
 	u32 pin_reg, mask;
 	int i;
+	bool fremont = dmi_match(DMI_BOARD_NAME, "Fremont");
 
 	mask = BIT(WAKE_CNTRL_OFF_S0I3) | BIT(WAKE_CNTRL_OFF_S3);
 
@@ -902,7 +906,10 @@ static void amd_gpio_irq_init(struct amd_gpio *gpio_dev)
 		raw_spin_lock_irqsave(&gpio_dev->lock, flags);
 
 		pin_reg = readl(gpio_dev->base + pin * 4);
-		pin_reg &= ~mask;
+		if (fremont && pin == FREMONT_GPP6_PIN)
+			pin_reg &= ~(mask | BIT(WAKE_CNTRL_OFF_S4));
+		else
+			pin_reg &= ~mask;
 		writel(pin_reg, gpio_dev->base + pin * 4);
 
 		raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
