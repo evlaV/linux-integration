@@ -14125,6 +14125,7 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 		if (i >= 0) {
 			amdgpu_dm_connector->vsdb_info = vsdb_info;
 			sink->edid_caps.freesync_vcp_code = vsdb_info.freesync_mccs_vcp_code;
+			drm_dbg_driver(adev_to_drm(adev), "VRR: freesync_vcp_code=%d\n", vsdb_info.freesync_mccs_vcp_code);
 
 			if (vsdb_info.freesync_supported) {
 				amdgpu_dm_connector->min_vfreq = vsdb_info.min_refresh_rate_hz;
