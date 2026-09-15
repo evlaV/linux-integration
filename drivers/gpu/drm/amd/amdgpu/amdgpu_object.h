@@ -90,6 +90,8 @@ struct amdgpu_bo_va {
 	 */
 	uint32_t			priority;
 
+	struct list_head		update_link;
+
 	/* all other members protected by the VM PD being reserved */
 	struct dma_fence	        *last_pt_update;
 
