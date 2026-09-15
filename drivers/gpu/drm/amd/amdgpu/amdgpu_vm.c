@@ -2454,7 +2454,7 @@ int amdgpu_vm_bo_map(struct amdgpu_vm_update_ctx *ctx,
 	eaddr = saddr + (size - 1) / AMDGPU_GPU_PAGE_SIZE;
 
 	tmp = amdgpu_vm_it_iter_first(&vm->va, saddr, eaddr);
-	if (tmp) {
+	if (tmp && list_empty(&tmp->pending_list)) {
 		/* bo and tmp overlap, invalid addr */
 		dev_err(ctx->adev->dev,
 			"bo %p va 0x%010Lx-0x%010Lx conflict with "
