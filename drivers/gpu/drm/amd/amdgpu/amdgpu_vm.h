@@ -284,6 +284,16 @@ struct amdgpu_vm_update_ctx {
 	struct amdgpu_vm *vm;
 
 	/**
+	 * @mapped_intervals: Interval tree of VA ranges mapped by this update operation.
+	 */
+	struct rb_root_cached pending_maps;
+
+	/**
+	 * @new: Pending new mappings not yet applied to bookkeeping structures.
+	 */
+	struct list_head new;
+
+	/**
 	 * @freed: A list of mappings that are freed and pending PT/PD updates during
 	 * this update operation.
 	 */
@@ -675,6 +685,7 @@ bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo);
 void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 			       struct amdgpu_device *adev,
 			       struct amdgpu_vm *vm);
+void amdgpu_vm_update_ctx_commit(struct amdgpu_vm_update_ctx *ctx);
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx);
 int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx);
 

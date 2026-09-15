@@ -104,6 +104,7 @@ int amdgpu_seq64_map(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		amdgpu_vm_bo_del(adev, *bo_va);
 		goto err_ctx;
 	}
+	amdgpu_vm_update_ctx_commit(&update_ctx);
 
 	r = amdgpu_vm_bo_update(&update_ctx, *bo_va, false);
 	if (r) {

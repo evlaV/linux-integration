@@ -1639,6 +1639,73 @@ static void amdgpu_vm_prt_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 }
 
 /**
+ * amdgpu_vm_bo_commit_insert - insert a new mapping
+ *
+ * @adev: amdgpu_device pointer
+ * @bo_va: bo_va to store the address
+ * @mapping: the mapping to insert
+ *
+ * Insert a new mapping into all structures.
+ */
+static void amdgpu_vm_bo_commit_insert(struct amdgpu_device *adev,
+				       struct amdgpu_bo_va *bo_va,
+				       struct amdgpu_bo_va_mapping *mapping)
+{
+	struct amdgpu_vm *vm = bo_va->base.vm;
+	struct amdgpu_bo *bo = bo_va->base.bo;
+
+	mapping->bo_va = bo_va;
+	list_add(&mapping->list, &bo_va->invalids);
+	amdgpu_vm_it_insert(mapping, &vm->va);
+
+	if (mapping->flags & AMDGPU_VM_PAGE_PRT)
+		amdgpu_vm_prt_get(adev);
+
+	if (amdgpu_vm_is_bo_always_valid(vm, bo) && !bo_va->base.moved)
+		amdgpu_vm_bo_needs_update(&bo_va->base);
+
+	trace_amdgpu_vm_bo_map(bo_va, mapping);
+}
+
+void amdgpu_vm_update_ctx_commit(struct amdgpu_vm_update_ctx *ctx)
+{
+	struct amdgpu_bo_va_mapping *mapping, *next;
+
+	list_for_each_entry_safe(mapping, next, &ctx->new, pending_list) {
+		list_del_init(&mapping->pending_list);
+		amdgpu_vm_bo_commit_insert(ctx->adev, mapping->bo_va, mapping);
+	}
+}
+
+static int
+amdgpu_vm_update_ctx_add_new_mapping(struct amdgpu_vm_update_ctx *ctx,
+				     struct amdgpu_bo_va *bo_va,
+				     struct amdgpu_bo_va_mapping *mapping)
+{
+	struct interval_tree_node *pending;
+
+	if (interval_tree_iter_first(&ctx->pending_maps, mapping->start,
+				     mapping->last))
+		return -EINVAL;
+
+	pending = kzalloc_obj(*pending);
+	if (!pending)
+		return -ENOMEM;
+
+	if (interval_tree_iter_first(&ctx->pending_maps, mapping->start,
+				     mapping->last))
+		return -EINVAL;
+
+	pending->start = mapping->start;
+	pending->last = mapping->last;
+	interval_tree_insert(pending, &ctx->pending_maps);
+
+	mapping->bo_va = bo_va;
+	list_add(&mapping->pending_list, &ctx->new);
+	return 0;
+}
+
+/**
  * amdgpu_vm_update_ctx_ensure_unmap_synced - VM update sync helper
  * @ctx: context for updating the VM
  *
@@ -1681,6 +1748,9 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->adev = adev;
 	ctx->vm = vm;
+
+	ctx->pending_maps = RB_ROOT_CACHED;
+	INIT_LIST_HEAD(&ctx->new);
 	INIT_LIST_HEAD(&ctx->freed);
 	amdgpu_sync_create(&ctx->sync);
 }
@@ -1694,8 +1764,17 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
  */
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 {
+	struct interval_tree_node *pending, *next_pending;
+
 	list_splice(&ctx->freed, &ctx->vm->delayed_freed);
 	amdgpu_sync_free(&ctx->sync);
+
+	rbtree_postorder_for_each_entry_safe(pending, next_pending, &ctx->pending_maps.rb_root, rb)
+		kfree(pending);
+
+	ctx->pending_maps = RB_ROOT_CACHED;
+
+	WARN_ON(!list_empty(&ctx->new));
 }
 
 /**
@@ -1967,36 +2046,6 @@ struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 	return bo_va;
 }
 
-
-/**
- * amdgpu_vm_bo_insert_map - insert a new mapping
- *
- * @adev: amdgpu_device pointer
- * @bo_va: bo_va to store the address
- * @mapping: the mapping to insert
- *
- * Insert a new mapping into all structures.
- */
-static void amdgpu_vm_bo_insert_map(struct amdgpu_device *adev,
-				    struct amdgpu_bo_va *bo_va,
-				    struct amdgpu_bo_va_mapping *mapping)
-{
-	struct amdgpu_vm *vm = bo_va->base.vm;
-	struct amdgpu_bo *bo = bo_va->base.bo;
-
-	mapping->bo_va = bo_va;
-	list_add(&mapping->list, &bo_va->invalids);
-	amdgpu_vm_it_insert(mapping, &vm->va);
-
-	if (mapping->flags & AMDGPU_VM_PAGE_PRT)
-		amdgpu_vm_prt_get(adev);
-
-	if (amdgpu_vm_is_bo_always_valid(vm, bo) && !bo_va->base.moved)
-		amdgpu_vm_bo_needs_update(&bo_va->base);
-
-	trace_amdgpu_vm_bo_map(bo_va, mapping);
-}
-
 /* Validate operation parameters to prevent potential abuse */
 static int amdgpu_vm_verify_parameters(struct amdgpu_device *adev,
 					  struct amdgpu_bo *bo,
@@ -2081,8 +2130,14 @@ int amdgpu_vm_bo_map(struct amdgpu_vm_update_ctx *ctx,
 	mapping->last = eaddr;
 	mapping->offset = offset;
 	mapping->flags = flags;
+	mapping->bo_va = bo_va;
+	INIT_LIST_HEAD(&mapping->pending_list);
 
-	amdgpu_vm_bo_insert_map(ctx->adev, bo_va, mapping);
+	r = amdgpu_vm_update_ctx_add_new_mapping(ctx, bo_va, mapping);
+	if (r) {
+		kfree(mapping);
+		return r;
+	}
 
 	return 0;
 }
@@ -2137,8 +2192,13 @@ int amdgpu_vm_bo_replace_map(struct amdgpu_vm_update_ctx *ctx,
 	mapping->last = eaddr;
 	mapping->offset = offset;
 	mapping->flags = flags;
+	INIT_LIST_HEAD(&mapping->pending_list);
 
-	amdgpu_vm_bo_insert_map(ctx->adev, bo_va, mapping);
+	r = amdgpu_vm_update_ctx_add_new_mapping(ctx, bo_va, mapping);
+	if (r) {
+		kfree(mapping);
+		return r;
+	}
 
 	return 0;
 }
