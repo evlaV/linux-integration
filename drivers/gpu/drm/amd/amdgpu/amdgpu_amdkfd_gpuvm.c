@@ -1341,12 +1341,15 @@ static int map_bo_to_gpuvm(struct kgd_mem *mem,
 	ret = amdgpu_vm_bo_map(&update_ctx, bo_va, entry->va, 0,
 			       amdgpu_bo_size(entry->bo_va->base.bo),
 			       entry->pte_flags);
-	amdgpu_vm_update_ctx_fini(&update_ctx);
 	if (ret) {
 		pr_err("Failed to map VA 0x%llx in vm. ret %d\n",
 				entry->va, ret);
+		amdgpu_vm_update_ctx_fini(&update_ctx);
 		return ret;
 	}
+
+	amdgpu_vm_update_ctx_commit(&update_ctx);
+	amdgpu_vm_update_ctx_fini(&update_ctx);
 
 	if (no_update_pte)
 		return 0;

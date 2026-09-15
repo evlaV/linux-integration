@@ -993,6 +993,8 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 		break;
 	}
 
+	amdgpu_vm_update_ctx_commit(&update_ctx);
+
 	/*
 	 * Once the VA operation is done, update the VM and obtain the fence
 	 * that represents the last relevant update for this mapping. This

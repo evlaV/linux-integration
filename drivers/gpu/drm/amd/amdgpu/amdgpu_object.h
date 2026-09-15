@@ -67,6 +67,7 @@ struct amdgpu_bo_param {
 struct amdgpu_bo_va_mapping {
 	struct amdgpu_bo_va		*bo_va;
 	struct list_head		list;
+	struct list_head		pending_list;
 	struct rb_node			rb;
 	uint64_t			start;
 	uint64_t			last;

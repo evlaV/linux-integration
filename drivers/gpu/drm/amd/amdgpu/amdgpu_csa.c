@@ -22,6 +22,7 @@
  * * Author: Monk.liu@amd.com
  */
 
+#include "amdgpu_vm.h"
 #include <drm/drm_exec.h>
 
 #include "amdgpu.h"
@@ -94,6 +95,7 @@ int amdgpu_map_static_csa(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	r = amdgpu_vm_bo_map(&update_ctx, *bo_va, csa_addr, 0, size,
 			     AMDGPU_PTE_READABLE | AMDGPU_PTE_WRITEABLE |
 			     AMDGPU_PTE_EXECUTABLE);
+	amdgpu_vm_update_ctx_commit(&update_ctx);
 
 	if (r) {
 		drm_err(adev_to_drm(adev),
