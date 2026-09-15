@@ -52,10 +52,13 @@ static int
 amdgpu_gem_add_input_fence(struct drm_file *filp,
 			   struct amdgpu_vm_update_ctx *update_ctx,
 			   uint64_t syncobj_handles_array,
+			   uint64_t syncobj_points_array,
 			   uint32_t num_syncobj_handles)
 {
 	struct dma_fence *fence;
 	uint32_t *syncobj_handles;
+	uint64_t *syncobj_points;
+	uint64_t point;
 	int ret, i;
 
 	if (!num_syncobj_handles)
@@ -66,6 +69,17 @@ amdgpu_gem_add_input_fence(struct drm_file *filp,
 	if (IS_ERR(syncobj_handles))
 		return PTR_ERR(syncobj_handles);
 
+	if (syncobj_points_array) {
+		syncobj_points = memdup_user(u64_to_user_ptr(syncobj_points_array),
+					      size_mul(sizeof(uint64_t), num_syncobj_handles));
+		if (IS_ERR(syncobj_points)) {
+			kfree(syncobj_handles);
+			return PTR_ERR(syncobj_handles);
+		}
+	} else {
+		syncobj_points = NULL;
+	}
+
 	for (i = 0; i < num_syncobj_handles; i++) {
 
 		if (!syncobj_handles[i]) {
@@ -73,7 +87,9 @@ amdgpu_gem_add_input_fence(struct drm_file *filp,
 			goto free_memdup;
 		}
 
-		ret = drm_syncobj_find_fence(filp, syncobj_handles[i], 0, 0, &fence);
+		point = syncobj_points ? syncobj_points[i] : 0;
+
+		ret = drm_syncobj_find_fence(filp, syncobj_handles[i], point, 0, &fence);
 		if (ret)
 			goto free_memdup;
 
@@ -86,7 +102,109 @@ amdgpu_gem_add_input_fence(struct drm_file *filp,
 
 free_memdup:
 	kfree(syncobj_handles);
+	kfree(syncobj_points);
 	return ret;
+}
+
+struct amdgpu_gem_timeline_out {
+	struct drm_syncobj **syncobjs;
+	struct dma_fence_chain **chains;
+	uint64_t *timeline_points;
+};
+
+static int amdgpu_gem_prepare_timeline_nodes(
+	struct drm_file *filp, uint64_t syncobj_handles_array,
+	uint64_t syncobj_points_array, uint32_t num_syncobjs,
+	struct amdgpu_gem_timeline_out *out)
+{
+	uint32_t *syncobj_handles;
+	uint32_t i;
+	int r;
+
+	syncobj_handles = memdup_user(u64_to_user_ptr(syncobj_handles_array),
+				      size_mul(sizeof(uint32_t), num_syncobjs));
+	if (IS_ERR(syncobj_handles))
+		return PTR_ERR(syncobj_handles);
+
+	out->timeline_points =
+		memdup_user(u64_to_user_ptr(syncobj_points_array),
+			    size_mul(sizeof(uint64_t), num_syncobjs));
+	if (IS_ERR(out->timeline_points)) {
+		r = PTR_ERR(out->timeline_points);
+		goto err_free_handles;
+	}
+
+	out->chains = kzalloc_objs(*out->chains, num_syncobjs);
+	if (!out->chains) {
+		r = -ENOMEM;
+		goto err_free_points;
+	}
+
+	out->syncobjs = kzalloc_objs(*out->syncobjs, num_syncobjs);
+	if (!out->syncobjs) {
+		r = -ENOMEM;
+		goto err_free_chains;
+	}
+
+	for (i = 0; i < num_syncobjs; i++) {
+		out->syncobjs[i] = drm_syncobj_find(filp, syncobj_handles[i]);
+		if (!out->syncobjs[i]) {
+			r = -ENOENT;
+			goto err_loop_rollback;
+		}
+
+		if (!out->timeline_points[i])
+			continue;
+
+		out->chains[i] = dma_fence_chain_alloc();
+		if (!out->chains[i]) {
+			r = -ENOMEM;
+			goto err_loop_rollback;
+		}
+
+		continue;
+err_loop_rollback:
+		for (;;) {
+			if (out->syncobjs[i])
+				drm_syncobj_put(out->syncobjs[i]);
+			if (out->chains[i])
+				dma_fence_chain_free(out->chains[i]);
+			if (i-- == 0)
+				goto err_free_sync;
+		}
+	}
+
+	return 0;
+
+err_free_sync:
+	kfree(out->syncobjs);
+	out->syncobjs = NULL;
+err_free_chains:
+	kfree(out->chains);
+	out->chains = NULL;
+err_free_points:
+	kfree(out->timeline_points);
+	out->timeline_points = NULL;
+err_free_handles:
+	kfree(syncobj_handles);
+	return r;
+}
+
+static void amdgpu_gem_timeline_out_fini(struct amdgpu_gem_timeline_out *tl_out,
+					 uint32_t num_syncobjs)
+{
+	uint32_t i;
+
+	for (i = 0; i < num_syncobjs; i++) {
+		if (tl_out->syncobjs)
+			drm_syncobj_put(tl_out->syncobjs[i]);
+		if (tl_out->chains)
+			dma_fence_chain_free(tl_out->chains[i]);
+	}
+
+	kfree(tl_out->timeline_points);
+	kfree(tl_out->syncobjs);
+	kfree(tl_out->chains);
 }
 
 static int
@@ -931,7 +1049,7 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 
 	/* Add input syncobj fences (if any) for synchronization. */
 	r = amdgpu_gem_add_input_fence(filp, &update_ctx,
-				       args->input_fence_syncobj_handles,
+				       args->input_fence_syncobj_handles, 0,
 				       args->num_syncobj_handles);
 	if (r)
 		goto error_put_gobj;
@@ -1046,6 +1164,251 @@ error:
 	drm_exec_fini(&exec);
 error_put_gobj:
 	drm_gem_object_put(gobj);
+	return r;
+}
+
+int amdgpu_gem_va2_ioctl(struct drm_device *dev, void *data,
+			 struct drm_file *filp)
+{
+	struct drm_amdgpu_gem_va2 *args = data;
+	struct amdgpu_device *adev = drm_to_adev(dev);
+	struct amdgpu_fpriv *fpriv = filp->driver_priv;
+	struct drm_amdgpu_gem_va_mapping *mappings;
+	struct amdgpu_gem_timeline_out tl_out;
+	struct amdgpu_vm_update_ctx update_ctx;
+	struct drm_gem_object *gobj;
+	struct amdgpu_bo_va *bo_va;
+	struct drm_exec exec;
+	bool delay = false;
+	u32 i;
+	int r;
+
+	mappings = vmemdup_array_user(u64_to_user_ptr(args->mappings),
+				      args->num_mappings,
+				      sizeof(struct drm_amdgpu_gem_va_mapping));
+	if (IS_ERR(mappings))
+		return PTR_ERR(mappings);
+
+	r = amdgpu_gem_prepare_timeline_nodes(filp, args->syncobjs_out,
+					      args->timeline_points_out,
+					      args->num_syncobjs_out, &tl_out);
+	if (r)
+		goto out_free_mappings;
+
+	drm_exec_init(&exec,
+		      DRM_EXEC_INTERRUPTIBLE_WAIT | DRM_EXEC_IGNORE_DUPLICATES,
+		      0);
+	amdgpu_vm_update_ctx_init(&update_ctx, adev, &fpriv->vm);
+	update_ctx.explicit_sync_unmap = true;
+
+	r = amdgpu_gem_add_input_fence(filp, &update_ctx, args->syncobjs_in,
+				       args->timeline_points_in,
+				       args->num_syncobjs_in);
+	if (r)
+		goto out;
+
+	drm_exec_until_all_locked(&exec)
+	{
+		r = amdgpu_vm_lock_pd(&fpriv->vm, &exec, 2);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r))
+			goto out;
+
+		for (i = 0; i < args->num_mappings; ++i) {
+			r = amdgpu_gem_va_validate_args(adev, mappings[i].va,
+							mappings[i].map_size,
+							mappings[i].flags);
+			if (r)
+				goto out;
+
+			mappings[i].va &= AMDGPU_GMC_HOLE_MASK;
+
+			if (mappings[i].flags & AMDGPU_VM_DELAY_UPDATE) {
+				/* Can't delay if we're supposed to signal fences */
+				if (args->num_syncobjs_out) {
+					r = -EINVAL;
+					goto out;
+				}
+				/* If one mapping is delayed, all mappings must be delayed */
+				if (i && !delay) {
+					r = -EINVAL;
+					goto out;
+				}
+			} else if (delay) {
+				/* If one mapping is not delayed, no mappings may be delayed */
+				r = -EINVAL;
+				goto out;
+			}
+
+			if ((mappings[i].operation != AMDGPU_VA_OP_CLEAR) &&
+			    !(mappings[i].flags & AMDGPU_VM_PAGE_PRT)) {
+				gobj = drm_gem_object_lookup(
+					filp, mappings[i].handle);
+				if (gobj == NULL) {
+					r = -ENOENT;
+					goto out;
+				}
+				bo_va = amdgpu_vm_bo_find(
+					&fpriv->vm, gem_to_amdgpu_bo(gobj));
+				if (!bo_va) {
+					drm_gem_object_put(gobj);
+					r = -ENOENT;
+					goto out;
+				}
+			} else {
+				gobj = NULL;
+				bo_va = mappings[i].operation !=
+							AMDGPU_VA_OP_CLEAR ?
+						fpriv->prt_va :
+						NULL;
+			}
+
+			if (gobj) {
+				r = drm_exec_lock_obj(&exec, gobj);
+				if (drm_exec_is_contended(&exec))
+					amdgpu_vm_update_ctx_rollback(
+						&update_ctx);
+				drm_exec_retry_on_contention(&exec);
+				if (unlikely(r))
+					goto out;
+			}
+
+			switch (mappings[i].operation) {
+			case AMDGPU_VA_OP_MAP:
+				r = amdgpu_vm_bo_map(&update_ctx, bo_va,
+						     mappings[i].va,
+						     mappings[i].offset_in_bo,
+						     mappings[i].map_size,
+						     mappings[i].flags);
+				break;
+			case AMDGPU_VA_OP_UNMAP:
+				r = amdgpu_vm_bo_unmap(&update_ctx, bo_va,
+						       mappings[i].flags);
+				break;
+
+			case AMDGPU_VA_OP_CLEAR:
+				r = amdgpu_vm_bo_clear_mappings(
+					&update_ctx, mappings[i].va,
+					mappings[i].map_size);
+				break;
+			case AMDGPU_VA_OP_REPLACE:
+				r = amdgpu_vm_bo_replace_map(
+					&update_ctx, bo_va, mappings[i].va,
+					mappings[i].offset_in_bo,
+					mappings[i].map_size,
+					mappings[i].flags);
+				break;
+			default:
+				r = -EINVAL;
+				break;
+			}
+
+			/* It's fine to put our reference here, exec still holds one */
+			drm_gem_object_put(gobj);
+
+			if (r)
+				goto out;
+
+			r = amdgpu_vm_bo_sync_mapping(&update_ctx, bo_va,
+						      false);
+			if (r)
+				goto out;
+		}
+	}
+
+	r = amdgpu_vm_update_ctx_execute_replace(&update_ctx);
+	if (r)
+		goto out;
+
+	amdgpu_vm_update_ctx_commit(&update_ctx);
+
+	if (!delay && (!adev->debug_vm || args->num_syncobjs_out)) {
+		struct dma_fence *fence, *merged;
+
+		if (!amdgpu_vm_ready(&fpriv->vm)) {
+			fence = dma_fence_get_stub();
+			goto insert_fence;
+		}
+
+		r = amdgpu_vm_clear_freed(&update_ctx, &fpriv->vm.last_update);
+		if (r) {
+			drm_err(adev_to_drm(adev),
+				"Could not clear freed PT entries: %d\n", r);
+			goto insert_fence;
+		}
+
+		fence = dma_fence_get(fpriv->vm.last_update);
+
+		r = amdgpu_vm_begin_prepare_update(&update_ctx, false, false);
+		if (r)
+			goto insert_fence;
+
+		list_for_each_entry(bo_va, &update_ctx.dirty_bo_vas,
+				    update_link) {
+			amdgpu_vm_bo_prepare_ranges(&update_ctx, bo_va, false);
+		}
+
+		r = amdgpu_vm_finish_prepare_update(&update_ctx);
+		if (r)
+			goto insert_fence;
+
+		list_for_each_entry(bo_va, &update_ctx.dirty_bo_vas,
+				    update_link) {
+			amdgpu_vm_bo_map_ranges(&update_ctx, bo_va, false);
+		}
+
+		r = amdgpu_vm_commit_update(&update_ctx, &fence);
+		if (r)
+			goto insert_fence;
+
+		list_for_each_entry(bo_va, &update_ctx.dirty_bo_vas,
+				    update_link) {
+			if (!amdgpu_vm_is_bo_always_valid(&fpriv->vm,
+							  bo_va->base.bo)) {
+				dma_fence_put(bo_va->last_pt_update);
+				bo_va->last_pt_update = dma_fence_get(fence);
+			}
+
+			amdgpu_vm_bo_finish_update(&update_ctx, bo_va, false);
+		}
+
+		/* Always update PDEs after we touched the mappings. */
+		r = amdgpu_vm_update_pdes(&update_ctx, false);
+		if (r)
+			goto insert_fence;
+
+		merged = dma_fence_unwrap_merge(fence, fpriv->vm.last_update);
+		if (!merged) {
+			/* As fallback in OOM situations */
+			dma_fence_wait(fpriv->vm.last_update, false);
+			dma_fence_wait(fence, false);
+			merged = dma_fence_get_stub();
+		}
+		fence = merged;
+
+insert_fence:
+		for (i = 0; i < args->num_syncobjs_out; ++i) {
+			if (!tl_out.timeline_points[i]) {
+				/* Replace the existing fence when no point is given. */
+				drm_syncobj_replace_fence(tl_out.syncobjs[i],
+							  fence);
+			} else {
+				/* Attach the last-update fence at a specific point. */
+				drm_syncobj_add_point(
+					tl_out.syncobjs[i], tl_out.chains[i],
+					fence, tl_out.timeline_points[i]);
+				tl_out.chains[i] = NULL;
+			}
+		}
+		dma_fence_put(fence);
+	}
+
+out:
+	amdgpu_vm_update_ctx_fini(&update_ctx);
+	drm_exec_fini(&exec);
+	amdgpu_gem_timeline_out_fini(&tl_out, args->num_syncobjs_out);
+out_free_mappings:
+	kvfree(mappings);
 	return r;
 }
 

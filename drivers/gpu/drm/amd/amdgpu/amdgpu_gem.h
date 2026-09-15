@@ -65,6 +65,8 @@ int amdgpu_gem_wait_idle_ioctl(struct drm_device *dev, void *data,
 			      struct drm_file *filp);
 int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 			  struct drm_file *filp);
+int amdgpu_gem_va2_ioctl(struct drm_device *dev, void *data,
+			 struct drm_file *filp);
 int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 			struct drm_file *filp);
 int amdgpu_gem_list_handles_ioctl(struct drm_device *dev, void *data,
