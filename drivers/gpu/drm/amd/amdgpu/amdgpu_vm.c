@@ -2054,6 +2054,37 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 }
 
 /**
+ * amdgpu_vm_update_ctx_rollback - clear pending VM updates
+ * @ctx: The context to roll back
+ *
+ * Cleans up any pending mapping changes, but does not reset
+ * anything else (like attached syncobjs).
+ */
+void amdgpu_vm_update_ctx_rollback(struct amdgpu_vm_update_ctx *ctx)
+{
+	struct amdgpu_bo_va_mapping *mapping, *next;
+	struct interval_tree_node *node, *next_node;
+	struct amdgpu_bo_va *bo_va, *next_bo_va;
+
+	list_for_each_entry_safe(mapping, next, &ctx->new, pending_list)
+		list_del_init(&mapping->pending_list);
+	list_for_each_entry_safe(mapping, next, &ctx->deleted, pending_list)
+		list_del_init(&mapping->pending_list);
+
+	list_for_each_entry_safe(bo_va, next_bo_va, &ctx->dirty_bo_vas,
+				 update_link)
+		list_del_init(&bo_va->update_link);
+
+	rbtree_postorder_for_each_entry_safe(node, next_node, &ctx->pending_maps.rb_root, rb)
+		kfree(node);
+	rbtree_postorder_for_each_entry_safe(node, next_node, &ctx->cleared_ranges.rb_root, rb)
+		kfree(node);
+
+	ctx->pending_maps = RB_ROOT_CACHED;
+	ctx->cleared_ranges = RB_ROOT_CACHED;
+}
+
+/**
  * amdgpu_vm_update_ctx_fini - finish a VM update operation
  * @ctx: The context of the update
  *
@@ -2062,9 +2093,6 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
  */
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 {
-	struct interval_tree_node *node, *next_node;
-	struct amdgpu_bo_va *bo_va, *next_bo_va;
-
 	if (ctx->update_params) {
 		if (ctx->in_critical)
 			amdgpu_vm_eviction_unlock(ctx->vm);
@@ -2073,26 +2101,9 @@ void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 		kfree(ctx->update_params);
 	}
 
+	amdgpu_vm_update_ctx_rollback(ctx);
 	list_splice(&ctx->freed, &ctx->vm->delayed_freed);
 	amdgpu_sync_free(&ctx->sync);
-
-	list_for_each_entry_safe(bo_va, next_bo_va, &ctx->dirty_bo_vas,
-				 update_link) {
-		list_del_init(&bo_va->update_link);
-	}
-
-	rbtree_postorder_for_each_entry_safe(node, next_node, &ctx->pending_maps.rb_root, rb) {
-		kfree(node);
-	}
-	rbtree_postorder_for_each_entry_safe(node, next_node, &ctx->cleared_ranges.rb_root, rb) {
-		kfree(node);
-	}
-
-	ctx->pending_maps = RB_ROOT_CACHED;
-	ctx->cleared_ranges = RB_ROOT_CACHED;
-
-	WARN_ON(!list_empty(&ctx->new));
-	WARN_ON(!list_empty(&ctx->deleted));
 }
 
 /**
