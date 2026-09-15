@@ -59,6 +59,7 @@ extern "C" {
 #define DRM_AMDGPU_USERQ_WAIT		0x18
 #define DRM_AMDGPU_GEM_LIST_HANDLES	0x19
 #define DRM_AMDGPU_PROC_OPTIONS		0x1A
+#define DRM_AMDGPU_GEM_VA2		0x1B
 
 #define DRM_IOCTL_AMDGPU_GEM_CREATE	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_CREATE, union drm_amdgpu_gem_create)
 #define DRM_IOCTL_AMDGPU_GEM_MMAP	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_MMAP, union drm_amdgpu_gem_mmap)
@@ -81,6 +82,7 @@ extern "C" {
 #define DRM_IOCTL_AMDGPU_USERQ_WAIT	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_USERQ_WAIT, struct drm_amdgpu_userq_wait)
 #define DRM_IOCTL_AMDGPU_GEM_LIST_HANDLES DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_LIST_HANDLES, struct drm_amdgpu_gem_list_handles)
 #define DRM_IOCTL_AMDGPU_PROC_OPTIONS	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_PROC_OPTIONS, struct drm_amdgpu_proc_options)
+#define DRM_IOCTL_AMDGPU_GEM_VA2	DRM_IOW(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_VA2, struct drm_amdgpu_gem_va)
 
 /**
  * DOC: memory domains
@@ -931,6 +933,50 @@ struct drm_amdgpu_gem_va {
 	__u32 num_syncobj_handles;
 	/** Array of sync object handle to wait for given input fences */
 	__u64 input_fence_syncobj_handles;
+};
+
+struct drm_amdgpu_gem_va_mapping {
+	/** GEM object handle */
+	__u32 handle;
+	/** AMDGPU_VA_OP_* */
+	__u32 operation;
+	/** AMDGPU_VM_PAGE_* */
+	__u32 flags;
+	__u32 _pad;
+
+	/** virtual address to assign . Must be correctly aligned.*/
+	__u64 va;
+	/** Specify offset inside of BO to assign. Must be correctly aligned.*/
+	__u64 offset_in_bo;
+	/** Specify mapping size. Must be correctly aligned. */
+	__u64 map_size;
+};
+
+struct drm_amdgpu_gem_va2 {
+	/** Number of mapping ops in @mappings */
+	__u32 num_mappings;
+	__u32 _pad;
+	/** Pointer to array of struct drm_amdgpu_gem_va_mapping */
+	__u64 mappings;
+
+	/** Number of elements in @syncobjs_in and @timeline_points_in */
+	__u32 num_syncobjs_in;
+	/** Number of elements in @syncobjs_out and @timeline_points_out */
+	__u32 num_syncobjs_out;
+	/** Array of u32 syncobj handles to wait for before mapping */
+	__u64 syncobjs_in;
+	/**
+	 * Array of timeline points, one for each object in @syncobjs_in.
+	 * If the syncobj is binary, its corrensponding timeline point must be 0.
+	 */
+	__u64 timeline_points_in;
+	/** Array of u32 syncobj handles to signal after mapping */
+	__u64 syncobjs_out;
+	/**
+	 * Array of timeline points, one for each object in @syncobjs_out.
+	 * If the syncobj is binary, its corrensponding timeline point must be 0.
+	 */
+	__u64 timeline_points_out;
 };
 
 #define AMDGPU_HW_IP_GFX          0
