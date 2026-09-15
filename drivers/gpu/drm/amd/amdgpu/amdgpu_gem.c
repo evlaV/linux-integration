@@ -833,9 +833,11 @@ error:
 	return dma_fence_get(ctx->vm->last_update);
 }
 
-int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
-			  struct drm_file *filp)
+static int amdgpu_gem_va_validate_args(struct amdgpu_device *adev, uint64_t va,
+				       uint64_t size, uint32_t flags)
 {
+	uint64_t vm_size, map_end;
+
 	const uint32_t valid_flags = AMDGPU_VM_DELAY_UPDATE |
 		AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE |
 		AMDGPU_VM_PAGE_EXECUTABLE | AMDGPU_VM_MTYPE_MASK |
@@ -843,6 +845,42 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 	const uint32_t prt_flags = AMDGPU_VM_DELAY_UPDATE |
 		AMDGPU_VM_PAGE_PRT;
 
+	if (va < AMDGPU_VA_RESERVED_BOTTOM) {
+		dev_dbg(adev_to_drm(adev)->dev,
+			"va_address 0x%llx is in reserved area 0x%llx\n",
+			va, AMDGPU_VA_RESERVED_BOTTOM);
+		return -EINVAL;
+	}
+
+	if (va >= AMDGPU_GMC_HOLE_START && va < AMDGPU_GMC_HOLE_END) {
+		dev_dbg(adev_to_drm(adev)->dev,
+			"va_address 0x%llx is in VA hole 0x%llx-0x%llx\n",
+			va, AMDGPU_GMC_HOLE_START,
+			AMDGPU_GMC_HOLE_END);
+		return -EINVAL;
+	}
+
+	vm_size = adev->vm_manager.max_pfn * AMDGPU_GPU_PAGE_SIZE;
+	vm_size -= AMDGPU_VA_RESERVED_TOP;
+	if (check_add_overflow(va & AMDGPU_GMC_HOLE_MASK, size, &map_end) || map_end > vm_size) {
+		dev_dbg(adev_to_drm(adev)->dev,
+			"va_address 0x%llx is in top reserved area 0x%llx\n",
+			va + size, vm_size);
+		return -EINVAL;
+	}
+
+	if ((flags & ~valid_flags) && (flags & ~prt_flags)) {
+		dev_dbg(adev_to_drm(adev)->dev, "invalid flags combination 0x%08X\n",
+			flags);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
+			  struct drm_file *filp)
+{
 	struct drm_amdgpu_gem_va *args = data;
 	struct drm_gem_object *gobj;
 	struct amdgpu_device *adev = drm_to_adev(dev);
@@ -853,42 +891,13 @@ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
 	struct dma_fence_chain *timeline_chain = NULL;
 	struct amdgpu_vm_update_ctx update_ctx;
 	struct drm_exec exec;
-	uint64_t vm_size, tmp;
 	int r = 0;
 
-	/* Validate virtual address range against reserved regions. */
-	if (args->va_address < AMDGPU_VA_RESERVED_BOTTOM) {
-		dev_dbg(dev->dev,
-			"va_address 0x%llx is in reserved area 0x%llx\n",
-			args->va_address, AMDGPU_VA_RESERVED_BOTTOM);
-		return -EINVAL;
-	}
-
-	if (args->va_address >= AMDGPU_GMC_HOLE_START &&
-	    args->va_address < AMDGPU_GMC_HOLE_END) {
-		dev_dbg(dev->dev,
-			"va_address 0x%llx is in VA hole 0x%llx-0x%llx\n",
-			args->va_address, AMDGPU_GMC_HOLE_START,
-			AMDGPU_GMC_HOLE_END);
-		return -EINVAL;
-	}
+	r = amdgpu_gem_va_validate_args(adev, args->va_address, args->map_size, args->flags);
+	if (r)
+		return r;
 
 	args->va_address &= AMDGPU_GMC_HOLE_MASK;
-
-	vm_size = adev->vm_manager.max_pfn * AMDGPU_GPU_PAGE_SIZE;
-	vm_size -= AMDGPU_VA_RESERVED_TOP;
-	if (check_add_overflow(args->va_address, args->map_size, &tmp) || tmp > vm_size) {
-		dev_dbg(dev->dev,
-			"va_address 0x%llx is in top reserved area 0x%llx\n",
-			args->va_address + args->map_size, vm_size);
-		return -EINVAL;
-	}
-
-	if ((args->flags & ~valid_flags) && (args->flags & ~prt_flags)) {
-		dev_dbg(dev->dev, "invalid flags combination 0x%08X\n",
-			args->flags);
-		return -EINVAL;
-	}
 
 	/* Validate operation type. */
 	switch (args->operation) {
