@@ -310,6 +310,11 @@ struct amdgpu_vm_update_ctx {
 	struct list_head cleared;
 
 	/**
+	 * @dirty_bo_vas: amdgpu_bo_va structures touched by current pending mapping changes.
+	 */
+	struct list_head dirty_bo_vas;
+
+	/**
 	 * @freed: A list of mappings that are freed and pending PT/PD updates during
 	 * this update operation.
 	 */

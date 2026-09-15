@@ -1767,6 +1767,8 @@ amdgpu_vm_update_ctx_add_new_mapping(struct amdgpu_vm_update_ctx *ctx,
 	mapping->bo_va = bo_va;
 	WARN_ON(!list_empty(&mapping->pending_list));
 	list_add(&mapping->pending_list, &ctx->new);
+	if (list_empty(&mapping->bo_va->update_link))
+		list_add(&mapping->bo_va->update_link, &ctx->dirty_bo_vas);
 	return 0;
 }
 
@@ -1782,8 +1784,10 @@ static void
 amdgpu_vm_update_ctx_add_freed_mapping(struct amdgpu_vm_update_ctx *ctx,
 				       struct amdgpu_bo_va_mapping *mapping)
 {
-	WARN_ON(!list_empty(&mapping->pending_list));
-	list_add(&mapping->pending_list, &ctx->deleted);
+	if (list_empty(&mapping->bo_va->update_link))
+		list_add(&mapping->bo_va->update_link, &ctx->dirty_bo_vas);
+	if (list_empty(&mapping->pending_list))
+		list_add(&mapping->pending_list, &ctx->deleted);
 }
 
 int amdgpu_vm_update_ctx_execute_replace(struct amdgpu_vm_update_ctx *ctx)
@@ -1910,6 +1914,7 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 
 	ctx->pending_maps = RB_ROOT_CACHED;
 	ctx->cleared_ranges = RB_ROOT_CACHED;
+	INIT_LIST_HEAD(&ctx->dirty_bo_vas);
 	INIT_LIST_HEAD(&ctx->new);
 	INIT_LIST_HEAD(&ctx->deleted);
 	INIT_LIST_HEAD(&ctx->freed);
@@ -1927,9 +1932,15 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx)
 {
 	struct interval_tree_node *node, *next_node;
+	struct amdgpu_bo_va *bo_va, *next_bo_va;
 
 	list_splice(&ctx->freed, &ctx->vm->delayed_freed);
 	amdgpu_sync_free(&ctx->sync);
+
+	list_for_each_entry_safe(bo_va, next_bo_va, &ctx->dirty_bo_vas,
+				 update_link) {
+		list_del_init(&bo_va->update_link);
+	}
 
 	rbtree_postorder_for_each_entry_safe(node, next_node, &ctx->pending_maps.rb_root, rb) {
 		kfree(node);
@@ -2201,6 +2212,7 @@ struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 	bo_va->ref_count = 1;
 	bo_va->last_pt_update = dma_fence_get_stub();
 	bo_va->priority = U32_MAX;
+	INIT_LIST_HEAD(&bo_va->update_link);
 	INIT_LIST_HEAD(&bo_va->valids);
 	INIT_LIST_HEAD(&bo_va->invalids);
 
