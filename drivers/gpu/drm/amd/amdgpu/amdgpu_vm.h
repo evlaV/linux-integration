@@ -757,6 +757,7 @@ void amdgpu_vm_update_ctx_init(struct amdgpu_vm_update_ctx *ctx,
 			       struct amdgpu_vm *vm);
 int amdgpu_vm_update_ctx_execute_replace(struct amdgpu_vm_update_ctx *ctx);
 void amdgpu_vm_update_ctx_commit(struct amdgpu_vm_update_ctx *ctx);
+void amdgpu_vm_update_ctx_rollback(struct amdgpu_vm_update_ctx *ctx);
 void amdgpu_vm_update_ctx_fini(struct amdgpu_vm_update_ctx *ctx);
 int amdgpu_vm_update_ctx_ensure_unmap_synced(struct amdgpu_vm_update_ctx *ctx);
 
