@@ -174,7 +174,7 @@ static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo, bool soft)
 
 	amdgpu_vm_assert_locked(vm);
 	spin_lock(&vm_bo->vm->status_lock);
-	vm_bo->moved = true;
+	vm_bo->moved = !soft;
 	if (bo->tbo.type == ttm_bo_type_kernel)
 		list_move(&vm_bo->vm_status, &vm->evicted);
 	else if (soft)
