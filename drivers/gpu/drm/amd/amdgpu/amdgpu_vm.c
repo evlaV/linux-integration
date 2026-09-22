@@ -229,7 +229,7 @@ static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo, bool soft)
 	struct amdgpu_vm_bo_status *lists;
 
 	lists = amdgpu_vm_bo_lock_lists(vm_bo);
-	vm_bo->moved = true;
+	vm_bo->moved = !soft;
 	if (soft)
 		amdgpu_vm_bo_insert_soft_evicted(lists, vm_bo);
 	else
@@ -752,34 +752,33 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		amdgpu_vm_bo_needs_update(bo_base);
 	}
 
-	if (!ticket)
-		return 0;
-
-	spin_lock(&vm->individual_lock);
-restart:
-	list_for_each_entry(bo_base, &vm->individual.evicted, vm_status) {
-		struct amdgpu_bo *bo = bo_base->bo;
-
-		if (dma_resv_locking_ctx(bo->tbo.base.resv) != ticket)
-			continue;
-
-		spin_unlock(&vm->individual_lock);
-
-		r = validate(param, bo);
-		if (r)
-			return r;
-
-		bo_base->moved = true;
-		amdgpu_vm_bo_needs_update(bo_base);
-
-		/* It's a bit inefficient to always jump back to the start, but
-		 * we would need to re-structure the KFD for properly fixing
-		 * that.
-		 */
+	if (ticket) {
 		spin_lock(&vm->individual_lock);
-		goto restart;
+restart:
+		list_for_each_entry(bo_base, &vm->individual.evicted, vm_status) {
+			struct amdgpu_bo *bo = bo_base->bo;
+
+			if (dma_resv_locking_ctx(bo->tbo.base.resv) != ticket)
+				continue;
+
+			spin_unlock(&vm->individual_lock);
+
+			r = validate(param, bo);
+			if (r)
+				return r;
+
+			bo_base->moved = true;
+			amdgpu_vm_bo_needs_update(bo_base);
+
+			/* It's a bit inefficient to always jump back to the start, but
+			 * we would need to re-structure the KFD for properly fixing
+			 * that.
+			 */
+			spin_lock(&vm->individual_lock);
+			goto restart;
+		}
+		spin_unlock(&vm->individual_lock);
 	}
-	spin_unlock(&vm->individual_lock);
 
 	list_for_each_entry_safe(bo_base, tmp, &vm->always_valid.soft_evicted,
 				 vm_status) {
