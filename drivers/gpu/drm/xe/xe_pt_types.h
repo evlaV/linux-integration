@@ -91,12 +91,29 @@ struct xe_vm_pgtable_update_op {
 	bool rebind;
 };
 
+/**
+ * struct xe_pt_job_ops - Page-table update operations (dynamically allocated)
+ *
+ * This is the portion of &struct xe_vma_ops and
+ * &struct xe_vm_pgtable_update_ops that is dynamically allocated, as it
+ * must remain valid until the associated bind job completes. A reference
+ * count controls its lifetime.
+ */
+struct xe_pt_job_ops {
+	/** @current_op: current page-table update operation */
+	u32 current_op;
+	/** @refcount: reference count */
+	struct kref refcount;
+	/** @deferred: list of deferred PT entries to destroy */
+	struct llist_head deferred;
+	/** @ops: page-table update operations */
+	struct xe_vm_pgtable_update_op *ops;
+};
+
 /** struct xe_vm_pgtable_update_ops: page table update operations */
 struct xe_vm_pgtable_update_ops {
-	/** @ops: operations */
-	struct xe_vm_pgtable_update_op *ops;
-	/** @deferred: deferred list to destroy PT entries */
-	struct llist_head deferred;
+	/** @pt_job_ops: PT update operations dynamic allocation*/
+	struct xe_pt_job_ops *pt_job_ops;
 	/** @q: exec queue for PT operations */
 	struct xe_exec_queue *q;
 	/** @prl: embedded page reclaim list */
@@ -107,8 +124,6 @@ struct xe_vm_pgtable_update_ops {
 	u64 last;
 	/** @num_ops: number of operations */
 	u32 num_ops;
-	/** @current_op: current operations */
-	u32 current_op;
 	/** @needs_svm_lock: Needs SVM lock */
 	bool needs_svm_lock;
 	/** @needs_invalidation: Needs invalidation */

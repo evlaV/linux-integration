@@ -1861,7 +1861,7 @@ xe_migrate_update_pgtables_cpu(struct xe_migrate *m,
 	}
 
 	xe_migrate_update_pgtables_cpu_execute(vm, m->tile, ops,
-					       pt_update_ops->ops,
+					       pt_update_ops->pt_job_ops->ops,
 					       pt_update_ops->num_ops);
 
 	return dma_fence_get_stub();
@@ -1888,7 +1888,7 @@ __xe_migrate_update_pgtables(struct xe_migrate *m,
 	bool usm = is_migrate && xe->info.has_usm;
 
 	for (i = 0; i < pt_update_ops->num_ops; ++i) {
-		struct xe_vm_pgtable_update_op *pt_op = &pt_update_ops->ops[i];
+		struct xe_vm_pgtable_update_op *pt_op = &pt_update_ops->pt_job_ops->ops[i];
 		struct xe_vm_pgtable_update *updates = pt_op->entries;
 
 		num_updates += pt_op->num_entries;
@@ -1957,7 +1957,7 @@ __xe_migrate_update_pgtables(struct xe_migrate *m,
 
 			for (; i < pt_update_ops->num_ops; ++i) {
 				struct xe_vm_pgtable_update_op *pt_op =
-					&pt_update_ops->ops[i];
+					&pt_update_ops->pt_job_ops->ops[i];
 				struct xe_vm_pgtable_update *updates = pt_op->entries;
 
 				for (; j < pt_op->num_entries; ++j, ++current_update, ++idx) {
@@ -1994,7 +1994,7 @@ next_cmd:
 			(page_ofs / sizeof(u64)) * XE_PAGE_SIZE;
 		for (i = 0; i < pt_update_ops->num_ops; ++i) {
 			struct xe_vm_pgtable_update_op *pt_op =
-				&pt_update_ops->ops[i];
+				&pt_update_ops->pt_job_ops->ops[i];
 			struct xe_vm_pgtable_update *updates = pt_op->entries;
 
 			for (j = 0; j < pt_op->num_entries; ++j) {
@@ -2012,7 +2012,7 @@ next_cmd:
 
 		for (i = 0; i < pt_update_ops->num_ops; ++i) {
 			struct xe_vm_pgtable_update_op *pt_op =
-				&pt_update_ops->ops[i];
+				&pt_update_ops->pt_job_ops->ops[i];
 			struct xe_vm_pgtable_update *updates = pt_op->entries;
 
 			for (j = 0; j < pt_op->num_entries; ++j)
