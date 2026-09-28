@@ -315,8 +315,8 @@ void ttm_bo_fini(struct ttm_buffer_object *bo)
 				      false, 30 * HZ);
 	}
 
-	if (bo->bdev->funcs->release_notify)
-		bo->bdev->funcs->release_notify(bo);
+	if (bdev->funcs->release_notify)
+		bdev->funcs->release_notify(bo);
 
 	drm_vma_offset_remove(bdev->vma_manager, &bo->base.vma_node);
 	ttm_mem_io_free(bdev, bo->resource);
@@ -328,7 +328,7 @@ void ttm_bo_fini(struct ttm_buffer_object *bo)
 		/* The BO is not idle, resurrect it for delayed destroy */
 		ttm_bo_flush_all_fences(bo);
 
-		spin_lock(&bo->bdev->lru_lock);
+		spin_lock(&bdev->lru_lock);
 
 		/*
 		 * Make pinned bos immediately available to
@@ -345,7 +345,7 @@ void ttm_bo_fini(struct ttm_buffer_object *bo)
 
 		kref_init(&bo->base.refcount);
 		bo->base.funcs = &ttm_deleted_object_funcs;
-		spin_unlock(&bo->bdev->lru_lock);
+		spin_unlock(&bdev->lru_lock);
 
 		INIT_WORK(&bo->delayed_delete, ttm_bo_delayed_delete);
 
@@ -391,7 +391,6 @@ static int ttm_bo_bounce_temp_buffer(struct ttm_buffer_object *bo,
 
 int ttm_bo_evict(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx)
 {
-	struct ttm_device *bdev = bo->bdev;
 	struct ttm_resource *evict_mem;
 	struct ttm_placement placement;
 	struct ttm_place hop;
@@ -409,7 +408,7 @@ int ttm_bo_evict(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx)
 	dma_resv_assert_held(bo->base.resv);
 
 	placement.num_placement = 0;
-	bdev->funcs->evict_flags(bo, &placement);
+	bo->bdev->funcs->evict_flags(bo, &placement);
 
 	if (!placement.num_placement) {
 		ret = ttm_bo_wait_ctx(bo, ctx);
@@ -462,16 +461,16 @@ bool ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 			      const struct ttm_place *place)
 {
 	struct ttm_resource *res = bo->resource;
-	struct ttm_device *bdev = bo->bdev;
 
 	dma_resv_assert_held(bo->base.resv);
-	if (bo->resource->mem_type == TTM_PL_SYSTEM)
+
+	if (res->mem_type == TTM_PL_SYSTEM)
 		return true;
 
 	/* Don't evict this BO if it's outside of the
 	 * requested placement range
 	 */
-	return ttm_resource_intersects(bdev, res, place, bo->base.size);
+	return ttm_resource_intersects(bo->bdev, res, place, bo->base.size);
 }
 EXPORT_SYMBOL(ttm_bo_eviction_valuable);
 
@@ -1300,20 +1299,19 @@ s64 ttm_bo_swapout(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx,
 	 * The driver may use the fact that we're moving from SYSTEM
 	 * as an indication that we're about to swap out.
 	 */
-	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, &place)) {
+	if (bo->pin_count || !bdev->funcs->eviction_valuable(bo, &place)) {
 		ret = -EBUSY;
 		goto out;
 	}
 
-	if (!bo->ttm || !ttm_tt_is_populated(bo->ttm) ||
-	    bo->ttm->page_flags & TTM_TT_FLAG_EXTERNAL ||
-	    bo->ttm->page_flags & TTM_TT_FLAG_SWAPPED) {
+	if (!tt || !ttm_tt_is_populated(tt) ||
+	    tt->page_flags & (TTM_TT_FLAG_EXTERNAL | TTM_TT_FLAG_SWAPPED)) {
 		ret = -EBUSY;
 		goto out;
 	}
 
 	if (ttm_bo_is_zombie(bo)) {
-		pgoff_t num_pages = bo->ttm->num_pages;
+		pgoff_t num_pages = tt->num_pages;
 
 		ret = ttm_bo_wait_ctx(bo, ctx);
 		if (ret)
@@ -1354,8 +1352,8 @@ s64 ttm_bo_swapout(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx,
 		goto out;
 
 	ttm_bo_unmap_virtual(bo);
-	if (bo->bdev->funcs->swap_notify)
-		bo->bdev->funcs->swap_notify(bo);
+	if (bdev->funcs->swap_notify)
+		bdev->funcs->swap_notify(bo);
 
 	if (ttm_tt_is_populated(tt)) {
 		spin_lock(&bdev->lru_lock);
@@ -1406,6 +1404,7 @@ void ttm_bo_tt_destroy(struct ttm_buffer_object *bo)
 int ttm_bo_populate(struct ttm_buffer_object *bo,
 		    struct ttm_operation_ctx *ctx)
 {
+	struct ttm_device *bdev = bo->bdev;
 	struct ttm_tt *tt = bo->ttm;
 	bool swapped;
 	int ret;
@@ -1416,16 +1415,16 @@ int ttm_bo_populate(struct ttm_buffer_object *bo,
 		return 0;
 
 	swapped = ttm_tt_is_swapped(tt);
-	ret = ttm_tt_populate(bo->bdev, tt, ctx);
+	ret = ttm_tt_populate(bdev, tt, ctx);
 	if (ret)
 		return ret;
 
 	if (swapped && !ttm_tt_is_swapped(tt) && !bo->pin_count &&
 	    bo->resource) {
-		spin_lock(&bo->bdev->lru_lock);
+		spin_lock(&bdev->lru_lock);
 		ttm_resource_add_bulk_move(bo->resource, bo);
 		ttm_resource_move_to_lru_tail(bo->resource);
-		spin_unlock(&bo->bdev->lru_lock);
+		spin_unlock(&bdev->lru_lock);
 	}
 
 	return 0;

@@ -2348,7 +2348,6 @@ int btrfs_run_delalloc_range(struct btrfs_inode *inode, struct folio *locked_fol
 			     u64 start, u64 end, struct writeback_control *wbc)
 {
 	const bool zoned = btrfs_is_zoned(inode->root->fs_info);
-	int ret;
 
 	/*
 	 * The range must cover part of the @locked_folio, or a return of 1
@@ -2356,10 +2355,8 @@ int btrfs_run_delalloc_range(struct btrfs_inode *inode, struct folio *locked_fol
 	 */
 	ASSERT(!(end <= folio_pos(locked_folio) || start >= folio_end(locked_folio)));
 
-	if (should_nocow(inode, start, end)) {
-		ret = run_delalloc_nocow(inode, locked_folio, start, end);
-		return ret;
-	}
+	if (should_nocow(inode, start, end))
+		return run_delalloc_nocow(inode, locked_folio, start, end);
 
 	if (btrfs_inode_can_compress(inode) &&
 	    inode_need_compress(inode, start, end) &&
@@ -2367,11 +2364,9 @@ int btrfs_run_delalloc_range(struct btrfs_inode *inode, struct folio *locked_fol
 		return 1;
 
 	if (zoned)
-		ret = run_delalloc_cow(inode, locked_folio, start, end, wbc,
-				       true);
+		return run_delalloc_cow(inode, locked_folio, start, end, wbc, true);
 	else
-		ret = cow_file_range(inode, locked_folio, start, end, NULL, 0);
-	return ret;
+		return cow_file_range(inode, locked_folio, start, end, NULL, 0);
 }
 
 void btrfs_split_delalloc_extent(struct btrfs_inode *inode,
@@ -3384,6 +3379,9 @@ out:
 	 * updating everything for this ordered extent.
 	 */
 	btrfs_remove_ordered_extent(inode, ordered_extent);
+
+	/* Cleanup any remaining biocs attached to the OE. */
+	btrfs_cleanup_ordered_bioc_list(ordered_extent);
 
 	/* once for us */
 	btrfs_put_ordered_extent(ordered_extent);
@@ -8171,7 +8169,8 @@ static int btrfs_getattr(struct mnt_idmap *idmap,
 	stat->result_mask |= STATX_SUBVOL;
 
 	spin_lock(&BTRFS_I(inode)->lock);
-	delalloc_bytes = BTRFS_I(inode)->new_delalloc_bytes;
+	delalloc_bytes = S_ISREG(inode->i_mode) ?
+			 BTRFS_I(inode)->new_delalloc_bytes : 0;
 	inode_bytes = inode_get_bytes(inode);
 	spin_unlock(&BTRFS_I(inode)->lock);
 	stat->blocks = (ALIGN(inode_bytes, blocksize) +

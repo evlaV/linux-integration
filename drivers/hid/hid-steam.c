@@ -1245,6 +1245,10 @@ static int steam_sensors_register(struct steam_device *steam)
 
 	input_set_drvdata(sensors, steam);
 	sensors->dev.parent = &hdev->dev;
+	if (!(steam->quirks & STEAM_QUIRK_DECK)) {
+		sensors->open = steam_sensor_open;
+		sensors->close = steam_sensor_close;
+	}
 
 	/*
 	 * The open/close calls are needed in these specific cases:

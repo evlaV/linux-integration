@@ -163,27 +163,28 @@ static int acpi_battery_technology(struct acpi_battery *battery)
 static int acpi_battery_get_state(struct acpi_battery *battery);
 static void acpi_battery_derive_rate(struct acpi_battery *battery);
 
+static bool acpi_battery_is_full(struct acpi_battery *battery)
+{
+	/* battery not reporting charge */
+	if (battery->capacity_now == ACPI_BATTERY_VALUE_UNKNOWN ||
+	    battery->capacity_now == 0)
+		return false;
+
+	/* good batteries update full_charge as the batteries degrade */
+	if (battery->full_charge_capacity == battery->capacity_now)
+		return true;
+
+	/* fallback to using design values for broken batteries */
+	return battery->design_capacity <= battery->capacity_now;
+}
+
 static int acpi_battery_is_charged(struct acpi_battery *battery)
 {
 	/* charging, discharging, critical low or charge limited */
 	if (battery->state != 0)
 		return 0;
 
-	/* battery not reporting charge */
-	if (battery->capacity_now == ACPI_BATTERY_VALUE_UNKNOWN ||
-	    battery->capacity_now == 0)
-		return 0;
-
-	/* good batteries update full_charge as the batteries degrade */
-	if (battery->full_charge_capacity == battery->capacity_now)
-		return 1;
-
-	/* fallback to using design values for broken batteries */
-	if (battery->design_capacity <= battery->capacity_now)
-		return 1;
-
-	/* we don't do any sort of metric based on percentages */
-	return 0;
+	return acpi_battery_is_full(battery);
 }
 
 static bool acpi_battery_is_degraded(struct acpi_battery *battery)
@@ -228,24 +229,28 @@ static int acpi_battery_get_property(struct power_supply *psy,
 		if (battery->state & ACPI_BATTERY_STATE_DISCHARGING)
 			val->intval = acpi_battery_handle_discharging(battery);
 		else if (battery->state & ACPI_BATTERY_STATE_CHARGING)
-			/* Validate the status by checking the current. */
-			if (battery->rate_now != ACPI_BATTERY_VALUE_UNKNOWN &&
-			    battery->rate_now == 0) {
-				/* On charge but no current (0W/0mA). */
-				val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
-			} else if (battery->charge_time == ACPI_BATTERY_VALUE_UNKNOWN) {
-				/*
-				 * On steamdeck OLED, lower power PSU can still report
-				 * "Charging" status however, we check here if battery
-				 * charge time is reported as well or not. If not,
-				 * probably we can confirm a lower power PSU which is
-				 * actually discharing the deck.
-				 *
-				 * Hence report status as discharging.
-				 * */
-				val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+			/* Check the rate and capacity to validate the status. */
+			if (!acpi_battery_is_full(battery) ||
+			    (battery->rate_now != ACPI_BATTERY_VALUE_UNKNOWN &&
+			     battery->rate_now > 0)) {
+				if (battery->charge_time == ACPI_BATTERY_VALUE_UNKNOWN) {
+					/*
+					 * On steamdeck OLED, lower power PSU can still report
+					 * "Charging" status however, we check here if battery
+					 * charge time is reported as well or not. If not,
+					 * probably we can confirm a lower power PSU which is
+					 * actually discharing the deck.
+					 *
+					 * Hence report status as discharging.
+					 */
+					val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+				} else {
+
+					val->intval = POWER_SUPPLY_STATUS_CHARGING;
+				}
 			} else {
-				val->intval = POWER_SUPPLY_STATUS_CHARGING;
+				/* Full and zero rate. */
+				val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
 			}
 		else if (battery->state & ACPI_BATTERY_STATE_CHARGE_LIMITING)
 			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;

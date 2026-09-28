@@ -2456,9 +2456,7 @@ int btrfs_rm_device(struct btrfs_fs_info *fs_info,
 		free_fs_devices(cur_devices);
 	}
 
-	ret = btrfs_commit_transaction(trans);
-
-	return ret;
+	return btrfs_commit_transaction(trans);
 
 error_undo:
 	if (test_bit(BTRFS_DEV_STATE_WRITEABLE, &device->dev_state)) {
@@ -3035,7 +3033,11 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 error_sysfs:
 	btrfs_sysfs_remove_device(device);
 	mutex_lock(&fs_info->fs_devices->device_list_mutex);
+	if (seeding_dev)
+		btrfs_assign_next_active_device(device, seed_devices->latest_dev);
 	mutex_lock(&fs_info->chunk_mutex);
+	if (!list_empty(&device->post_commit_list))
+		list_del_init(&device->post_commit_list);
 	list_del_rcu(&device->dev_list);
 	list_del(&device->dev_alloc_list);
 	fs_info->fs_devices->num_devices--;
@@ -3721,7 +3723,11 @@ static int btrfs_may_alloc_data_chunk(struct btrfs_fs_info *fs_info,
 	u64 chunk_type;
 
 	cache = btrfs_lookup_block_group(fs_info, chunk_offset);
-	ASSERT(cache);
+	if (unlikely(!cache)) {
+		btrfs_err(fs_info, "balance: chunk at bytenr %llu has no corresponding block group",
+			  chunk_offset);
+		return -EUCLEAN;
+	}
 	chunk_type = cache->flags;
 	btrfs_put_block_group(cache);
 
@@ -7347,7 +7353,6 @@ static int read_one_dev(struct extent_buffer *leaf,
 	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 	struct btrfs_device *device;
 	u64 devid;
-	int ret;
 	u8 fs_uuid[BTRFS_FSID_SIZE];
 	u8 dev_uuid[BTRFS_UUID_SIZE];
 
@@ -7446,8 +7451,8 @@ static int read_one_dev(struct extent_buffer *leaf,
 		atomic64_add(device->total_bytes - device->bytes_used,
 				&fs_info->free_chunk_space);
 	}
-	ret = 0;
-	return ret;
+
+	return 0;
 }
 
 int btrfs_read_sys_array(struct btrfs_fs_info *fs_info)
