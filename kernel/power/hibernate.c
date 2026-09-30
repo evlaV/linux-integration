@@ -349,8 +349,13 @@ static int create_image(int platform_mode)
 		goto Enable_irqs;
 	}
 
-	if (hibernation_test(TEST_CORE) || pm_wakeup_pending())
+	if (hibernation_test(TEST_CORE))
 		goto Power_up;
+
+	if (pm_wakeup_pending()) {
+		error = -ECANCELED;
+		goto Power_up;
+	}
 
 	in_suspend = 1;
 	save_processor_state();
@@ -632,7 +637,7 @@ int hibernation_platform_enter(void)
 		goto Enable_irqs;
 
 	if (pm_wakeup_pending()) {
-		error = -EAGAIN;
+		error = -ECANCELED;
 		goto Power_up;
 	}
 
@@ -679,7 +684,7 @@ static int power_down(void)
 	if (pm_wakeup_pending()) {
 		pm_wakeup_clear(0);
 		pr_info("Wakeup event detected after image write, aborting power down.\n");
-		error = -EAGAIN;
+		error = -ECANCELED;
 		goto exit;
 	}
 
