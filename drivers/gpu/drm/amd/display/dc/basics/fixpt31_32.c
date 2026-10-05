@@ -77,18 +77,23 @@ struct fixed31_32 dc_fixpt_from_fraction(long long numerator, long long denomina
 	unsigned long long arg2_value = arg2_negative ? -denominator : denominator;
 
 	unsigned long long remainder;
+	unsigned long long res_value;
 
-	/* determine integer part */
-
-	unsigned long long res_value = complete_integer_division_u64(
-		arg1_value, arg2_value, &remainder);
-
-	ASSERT(res_value <= LONG_MAX);
-
-	/* determine fractional part */
-	{
+	if (arg1_value <= U32_MAX) {
+		/* the shift cannot overflow */
+		res_value = complete_integer_division_u64(
+			arg1_value << FIXED31_32_BITS_PER_FRACTIONAL_PART,
+			arg2_value, &remainder);
+	} else {
 		unsigned int i = FIXED31_32_BITS_PER_FRACTIONAL_PART;
 
+		/* determine integer part */
+		res_value = complete_integer_division_u64(
+			arg1_value, arg2_value, &remainder);
+
+		ASSERT(res_value <= LONG_MAX);
+
+		/* determine fractional part */
 		do {
 			remainder <<= 1;
 
