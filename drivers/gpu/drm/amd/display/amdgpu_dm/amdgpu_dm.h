@@ -1150,6 +1150,8 @@ int amdgpu_dm_check_crtc_color_mgmt(struct dm_crtc_state *crtc,
 int amdgpu_dm_update_plane_color_mgmt(struct dm_crtc_state *crtc,
 				      struct drm_plane_state *plane_state,
 				      struct dc_plane_state *dc_plane_state);
+struct fixed31_32 amdgpu_dm_hdr_mult_from_plane(struct drm_atomic_commit *state,
+						struct drm_plane_state *plane_state);
 
 void amdgpu_dm_update_connector_after_detect(
 		struct amdgpu_dm_connector *aconnector);

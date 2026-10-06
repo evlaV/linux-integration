@@ -10653,6 +10653,63 @@ static void dm_arm_vblank_event_pre_programming(struct amdgpu_crtc *acrtc,
 		drm_crtc_vblank_get(&acrtc->base);
 }
 
+/*
+ * DC programs a changed HDR multiplier on an existing surface as a medium
+ * update, so a plane whose only color change is its multiplier does not need
+ * a new dc_plane_state.
+ */
+static bool dm_plane_only_hdr_mult_changed(struct drm_atomic_commit *state,
+					   struct drm_plane *plane,
+					   struct drm_plane_state *old_plane_state,
+					   struct drm_plane_state *new_plane_state)
+{
+	struct dm_plane_state *dm_old = to_dm_plane_state(old_plane_state);
+	struct dm_plane_state *dm_new = to_dm_plane_state(new_plane_state);
+	struct drm_colorop_state *old_colorop_state, *new_colorop_state;
+	struct drm_colorop *colorop;
+	bool changed = false;
+	int i;
+
+	if (old_plane_state->color_pipeline != new_plane_state->color_pipeline ||
+	    dm_old->degamma_tf != dm_new->degamma_tf ||
+	    dm_old->degamma_lut != dm_new->degamma_lut ||
+	    dm_old->ctm != dm_new->ctm ||
+	    dm_old->shaper_lut != dm_new->shaper_lut ||
+	    dm_old->shaper_tf != dm_new->shaper_tf ||
+	    dm_old->lut3d != dm_new->lut3d ||
+	    dm_old->blend_lut != dm_new->blend_lut ||
+	    dm_old->blend_tf != dm_new->blend_tf)
+		return false;
+
+	if (!new_plane_state->color_pipeline && dm_old->hdr_mult != dm_new->hdr_mult)
+		changed = true;
+
+	for_each_oldnew_colorop_in_state(state, colorop, old_colorop_state,
+					 new_colorop_state, i) {
+		if (colorop->plane != plane)
+			continue;
+
+		if (old_colorop_state->bypass != new_colorop_state->bypass ||
+		    old_colorop_state->curve_1d_type != new_colorop_state->curve_1d_type ||
+		    old_colorop_state->data != new_colorop_state->data ||
+		    old_colorop_state->lut1d_interpolation !=
+		    new_colorop_state->lut1d_interpolation ||
+		    old_colorop_state->lut3d_interpolation !=
+		    new_colorop_state->lut3d_interpolation)
+			return false;
+
+		if (old_colorop_state->multiplier != new_colorop_state->multiplier) {
+			if (colorop->type != DRM_COLOROP_MULTIPLIER ||
+			    new_colorop_state->bypass)
+				return false;
+			changed = true;
+		}
+	}
+
+	/* DC treats a zero hdr_mult in a surface update as not provided. */
+	return changed && amdgpu_dm_hdr_mult_from_plane(state, new_plane_state).value;
+}
+
 static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 				    struct drm_device *dev,
 				    struct amdgpu_display_manager *dm,
@@ -10761,7 +10818,13 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 			continue;
 
 		bundle->surface_updates[planes_count].surface = dc_plane;
-		if (new_pcrtc_state->color_mgmt_changed || new_plane_state->color_mgmt_changed) {
+		if (to_dm_plane_state(old_plane_state)->dc_state == dc_plane &&
+		    dm_plane_only_hdr_mult_changed(state, plane, old_plane_state,
+						   new_plane_state)) {
+			bundle->surface_updates[planes_count].hdr_mult =
+				amdgpu_dm_hdr_mult_from_plane(state, new_plane_state);
+		} else if (new_pcrtc_state->color_mgmt_changed ||
+			   new_plane_state->color_mgmt_changed) {
 			bundle->surface_updates[planes_count].gamma = &dc_plane->gamma_correction;
 			bundle->surface_updates[planes_count].in_transfer_func = &dc_plane->in_transfer_func;
 			bundle->surface_updates[planes_count].gamut_remap_matrix = &dc_plane->gamut_remap_matrix;
@@ -12811,7 +12874,9 @@ static bool should_reset_plane(struct drm_atomic_commit *state,
 		return true;
 
 	/* Plane color pipeline or its colorop changes. */
-	if (new_plane_state->color_mgmt_changed)
+	if (new_plane_state->color_mgmt_changed &&
+	    !dm_plane_only_hdr_mult_changed(state, plane, old_plane_state,
+					    new_plane_state))
 		return true;
 
 	/*
@@ -12880,13 +12945,17 @@ static bool should_reset_plane(struct drm_atomic_commit *state,
 		/* HDR/Transfer Function changes. */
 		if (dm_old_other_state->degamma_tf != dm_new_other_state->degamma_tf ||
 		    dm_old_other_state->degamma_lut != dm_new_other_state->degamma_lut ||
-		    dm_old_other_state->hdr_mult != dm_new_other_state->hdr_mult ||
 		    dm_old_other_state->ctm != dm_new_other_state->ctm ||
 		    dm_old_other_state->shaper_lut != dm_new_other_state->shaper_lut ||
 		    dm_old_other_state->shaper_tf != dm_new_other_state->shaper_tf ||
 		    dm_old_other_state->lut3d != dm_new_other_state->lut3d ||
 		    dm_old_other_state->blend_lut != dm_new_other_state->blend_lut ||
 		    dm_old_other_state->blend_tf != dm_new_other_state->blend_tf)
+			return true;
+
+		if (dm_old_other_state->hdr_mult != dm_new_other_state->hdr_mult &&
+		    !dm_plane_only_hdr_mult_changed(state, other, old_other_state,
+						    new_other_state))
 			return true;
 
 		/* Framebuffer checks fall at the end. */

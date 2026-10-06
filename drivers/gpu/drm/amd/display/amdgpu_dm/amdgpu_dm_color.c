@@ -2017,6 +2017,38 @@ amdgpu_dm_plane_set_colorop_properties(struct drm_plane_state *plane_state,
 }
 
 /**
+ * amdgpu_dm_hdr_mult_from_plane - DC HDR multiplier requested for a plane
+ * @state: atomic commit holding the plane's colorop states
+ * @plane_state: DRM plane state
+ *
+ * Returns:
+ * The multiplier colorop value when the plane uses a color pipeline, or the
+ * AMD_PLANE_HDR_MULT value otherwise. A bypassed or missing multiplier colorop
+ * gives 1.0.
+ */
+struct fixed31_32 amdgpu_dm_hdr_mult_from_plane(struct drm_atomic_commit *state,
+						struct drm_plane_state *plane_state)
+{
+	struct drm_colorop_state *colorop_state;
+	struct drm_colorop *colorop;
+
+	if (!plane_state->color_pipeline)
+		return amdgpu_dm_fixpt_from_s3132(to_dm_plane_state(plane_state)->hdr_mult);
+
+	for (colorop = plane_state->color_pipeline; colorop; colorop = colorop->next) {
+		if (colorop->type != DRM_COLOROP_MULTIPLIER)
+			continue;
+
+		colorop_state = drm_atomic_get_new_colorop_state(state, colorop);
+		if (colorop_state && !colorop_state->bypass)
+			return amdgpu_dm_fixpt_from_s3132(colorop_state->multiplier);
+		break;
+	}
+
+	return dc_fixpt_one;
+}
+
+/**
  * amdgpu_dm_update_plane_color_mgmt: Maps DRM color management to DC plane.
  * @crtc: amdgpu_dm crtc state
  * @plane_state: DRM plane state
