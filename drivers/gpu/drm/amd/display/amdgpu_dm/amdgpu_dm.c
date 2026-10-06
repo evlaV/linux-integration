@@ -10179,6 +10179,7 @@ static void update_freesync_state_on_stream(
 {
 	struct mod_vrr_params vrr_params;
 	struct dc_info_packet vrr_infopacket = {0};
+	struct dc_info_packet vtem_infopacket = {0};
 	struct amdgpu_device *adev = dm->adev;
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(new_crtc_state->base.crtc);
 	unsigned long flags;
@@ -10245,21 +10246,34 @@ static void update_freesync_state_on_stream(
 		&vrr_infopacket,
 		pack_sdp_v1_3);
 
-	/* Per HDMI 2.1, VTEM is valid on TMDS as well as FRL */
-	if (new_stream->signal == SIGNAL_TYPE_HDMI_FRL ||
-	    (new_stream->signal == SIGNAL_TYPE_HDMI_TYPE_A &&
-	     aconn && aconn->base.display_info.hdmi.vrr_cap.supported))
-		mod_build_infopacket_vtem(new_stream, &vrr_params, 0, &vrr_infopacket);
+	/*
+	 * If the sink does not support FreeSync, but it does support VRR,
+	 * we need to build a VTEM packet to enable VRR.
+	 */
+	if (aconn && !aconn->vsdb_info.freesync_supported &&
+	    aconn->base.display_info.hdmi.vrr_cap.supported &&
+	    (new_stream->signal == SIGNAL_TYPE_HDMI_FRL ||
+	     new_stream->signal == SIGNAL_TYPE_HDMI_TYPE_A)) {
+		mod_build_infopacket_vtem(new_stream, &vrr_params, 0, &vtem_infopacket);
+		memset(&vrr_infopacket, 0, sizeof(vrr_infopacket));
+	}
 
 	new_crtc_state->freesync_vrr_info_changed |=
 		(memcmp(&new_crtc_state->vrr_infopacket,
 			&vrr_infopacket,
 			sizeof(vrr_infopacket)) != 0);
+	new_crtc_state->freesync_vrr_info_changed |=
+		(memcmp(&new_crtc_state->vtem_infopacket,
+			&vtem_infopacket,
+			sizeof(vtem_infopacket)) != 0);
 
 	acrtc->dm_irq_params.vrr_params = vrr_params;
 	new_crtc_state->vrr_infopacket = vrr_infopacket;
+	new_crtc_state->vtem_infopacket = vtem_infopacket;
 
 	new_stream->vrr_infopacket = vrr_infopacket;
+	new_stream->vtem_infopacket = vtem_infopacket;
+	new_stream->allow_freesync = mod_freesync_get_freesync_enabled(&vrr_params);
 
 	/*
 	 * HDMI ALLM: when Gaming-VRR is active (VRR_EN=1) and the sink
@@ -10867,6 +10881,8 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 			if (acrtc_state->freesync_vrr_info_changed) {
 				bundle->stream_update.vrr_infopacket =
 					&acrtc_state->stream->vrr_infopacket;
+				bundle->stream_update.vtem_infopacket =
+					&acrtc_state->stream->vtem_infopacket;
 				bundle->stream_update.vsp_infopacket =
 					&acrtc_state->stream->vsp_infopacket;
 			}
@@ -12329,6 +12345,8 @@ static void reset_freesync_config_for_crtc(
 
 	memset(&new_crtc_state->vrr_infopacket, 0,
 	       sizeof(new_crtc_state->vrr_infopacket));
+	memset(&new_crtc_state->vtem_infopacket, 0,
+	       sizeof(new_crtc_state->vtem_infopacket));
 }
 
 static bool
