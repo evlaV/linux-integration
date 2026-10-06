@@ -13601,6 +13601,16 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
 		dm_old_crtc_state = to_dm_crtc_state(old_crtc_state);
 
+		/* VRR test: trace the vrr_enabled userspace requests per commit */
+		drm_dbg_atomic(dev,
+			       "[CRTC:%d:%s] VRR test: requested vrr_enabled %d->%d (active %d->%d, modeset %d)\n",
+			       crtc->base.id, crtc->name,
+			       old_crtc_state->vrr_enabled,
+			       new_crtc_state->vrr_enabled,
+			       old_crtc_state->active,
+			       new_crtc_state->active,
+			       drm_atomic_crtc_needs_modeset(new_crtc_state));
+
 		if (!drm_atomic_crtc_needs_modeset(new_crtc_state) &&
 		    !new_crtc_state->color_mgmt_changed &&
 		    old_crtc_state->vrr_enabled == new_crtc_state->vrr_enabled &&
@@ -14296,7 +14306,9 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	struct dc_sink *sink;
 	struct amdgpu_device *adev = drm_to_adev(connector->dev);
 	struct amdgpu_hdmi_vsdb_info vsdb_info = {0};
-	const struct edid *edid;
+	const struct edid *edid = NULL;
+	int prev_min_vfreq = amdgpu_dm_connector->min_vfreq;
+	int prev_max_vfreq = amdgpu_dm_connector->max_vfreq;
 	bool freesync_capable = false;
 	enum adaptive_sync_type as_type = ADAPTIVE_SYNC_TYPE_NONE;
 
@@ -14484,8 +14496,25 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	}
 
 update:
-	if (dm_con_state)
-		dm_con_state->freesync_capable = freesync_capable;
+        /* Preserve VRR capability across transient incomplete EDID reads. */
+	if (dm_con_state) {
+		bool connected = amdgpu_dm_connector->dc_link &&
+				 amdgpu_dm_connector->dc_link->local_sink;
+		bool authoritative = drm_edid && edid && edid->extensions;
+
+		if (!freesync_capable && dm_con_state->freesync_capable &&
+		    connected && !authoritative) {
+			drm_dbg_driver(adev_to_drm(adev),
+				       "VRR: preserving capability for connector=%d:%s range=%d-%d\n",
+				       connector->base.id, connector->name,
+				       prev_min_vfreq, prev_max_vfreq);
+			amdgpu_dm_connector->min_vfreq = prev_min_vfreq;
+			amdgpu_dm_connector->max_vfreq = prev_max_vfreq;
+			freesync_capable = true;
+		} else {
+			dm_con_state->freesync_capable = freesync_capable;
+		}
+	}
 
 	drm_dbg_driver(adev_to_drm(adev),
 		       "VRR: caps result: freesync_capable=%d min_vfreq=%d max_vfreq=%d\n",
@@ -14498,9 +14527,14 @@ update:
 		amdgpu_dm_connector->dc_link->replay_settings.replay_feature_enabled = false;
 	}
 
-	if (connector->vrr_capable_property)
+	if (connector->vrr_capable_property) {
+		/* VRR test: trace the vrr_capable value published to userspace */
+		drm_dbg_driver(adev_to_drm(adev),
+			       "[CONNECTOR:%d:%s] VRR test: publishing vrr_capable=%d\n",
+			       connector->base.id, connector->name, freesync_capable);
 		drm_connector_set_vrr_capable_property(connector,
 						       freesync_capable);
+	}
 }
 
 void amdgpu_dm_trigger_timing_sync(struct drm_device *dev)
