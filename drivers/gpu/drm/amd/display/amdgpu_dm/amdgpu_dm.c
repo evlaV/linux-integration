@@ -944,6 +944,11 @@ static void dmub_hpd_callback(struct amdgpu_device *adev,
 
 	link_index = notify->link_index;
 	link = adev->dm.dc->links[link_index];
+	drm_dbg_kms(adev_to_drm(adev),
+			"HPD_TRACE: DMUB callback type=%d link=%u notify_hpd_high=%d cached_hpd_high=%d\n",
+			notify->type, link_index,
+			notify->hpd_status == DP_HPD_PLUG,
+			link ? link->hpd_status : -1);
 	dev = adev->dm.ddev;
 
 	drm_connector_list_iter_begin(dev, &iter);
@@ -2037,8 +2042,11 @@ static void hdmi_frl_status_polling_work(struct work_struct *work)
 	struct amdgpu_display_manager *dm =
 		container_of(to_delayed_work(work), struct amdgpu_display_manager,
 				hdmi_frl_status_polling_work);
+	struct amdgpu_device *adev = dm->adev;
 	struct dc *dc = dm->dc;
 	struct dc_link *dc_link;
+	struct amdgpu_dm_connector *connectors_to_update[MAX_LINKS] = {};
+	unsigned int connector_update_count = 0;
 	bool link_update = false;
 	bool link_detected;
 
@@ -2061,19 +2069,68 @@ static void hdmi_frl_status_polling_work(struct work_struct *work)
 
 			link_update = dc_link_frl_poll_status_flag(dc_link);
 			if (link_update) {
+				drm_dbg_kms(adev_to_drm(adev),
+					    "HPD_TRACE: FRL poll requested retrain link=%d local_sink=%p cached_hpd_high=%d\n",
+					    dc_link->link_index, dc_link->local_sink,
+					    dc_link->hpd_status);
 				link_detected =
 					dc_link_detect(
 						dc_link, DETECT_REASON_RETRAIN);
 				if (!link_detected)
-					DRM_ERROR("HDMI FRL retrain failed\n");
+					drm_err(adev_to_drm(adev),
+						"HPD_TRACE: FRL retrain detect failed link=%u sink=%p priv=%p\n",
+							dc_link->link_index,
+							dc_link->local_sink,
+							dc_link->priv);
+				/* Authoritative sink compare is done under hpd_lock below. */
+				else if (dc_link->local_sink && dc_link->priv) {
+					drm_dbg_kms(adev_to_drm(adev),
+						"HPD_TRACE: queue connector refresh link=%u\n",
+						dc_link->link_index);
+					connectors_to_update[connector_update_count++] =
+						dc_link->priv;
+				} else {
+					drm_dbg_kms(adev_to_drm(adev),
+						"HPD_TRACE: FRL retrain no connector refresh link=%u sink=%p priv=%p\n",
+							dc_link->link_index,
+							dc_link->local_sink,
+							dc_link->priv);
+				}
 			}
 		}
 		mutex_unlock(&dm->dc_lock);
+
+		for (unsigned int i = 0; i < connector_update_count; i++) {
+			struct amdgpu_dm_connector *aconnector =
+				connectors_to_update[i];
+
+			mutex_lock(&aconnector->hpd_lock);
+			if (aconnector->dc_link->local_sink != aconnector->dc_sink) {
+				drm_dbg_kms(adev_to_drm(adev),
+						"HPD_TRACE: update connector link=%u old=%p new=%p\n",
+						aconnector->dc_link->link_index,
+						aconnector->dc_sink,
+						aconnector->dc_link->local_sink);
+				amdgpu_dm_update_connector_after_detect(aconnector);
+			} else {
+				drm_dbg_kms(adev_to_drm(adev),
+						"HPD_TRACE: connector refresh no-op link=%u sink=%p\n",
+							aconnector->dc_link->link_index,
+							aconnector->dc_link->local_sink);
+			}
+			mutex_unlock(&aconnector->hpd_lock);
+		}
+	} else {
+		drm_dbg_kms(adev_to_drm(adev),
+				"HPD_TRACE: FRL poll skipped dc_lock busy\n");
 	}
 
-	queue_delayed_work(dm->hdmi_frl_status_polling_wq,
-			   &dm->hdmi_frl_status_polling_work,
-			   msecs_to_jiffies(dm->hdmi_frl_status_polling_delay_ms));
+	mutex_lock(&dm->dc_lock);
+	if (dm->hdmi_frl_status_polling_wq)
+		queue_delayed_work(dm->hdmi_frl_status_polling_wq,
+				   &dm->hdmi_frl_status_polling_work,
+				   msecs_to_jiffies(dm->hdmi_frl_status_polling_delay_ms));
+	mutex_unlock(&dm->dc_lock);
 }
 
 static int amdgpu_dm_init(struct amdgpu_device *adev)
@@ -2462,7 +2519,18 @@ static int amdgpu_dm_early_fini(struct amdgpu_ip_block *ip_block)
 
 static void amdgpu_dm_fini(struct amdgpu_device *adev)
 {
+	struct workqueue_struct *frl_wq;
 	int i;
+
+	mutex_lock(&adev->dm.dc_lock);
+	frl_wq = adev->dm.hdmi_frl_status_polling_wq;
+	adev->dm.hdmi_frl_status_polling_wq = NULL;
+	mutex_unlock(&adev->dm.dc_lock);
+
+	if (frl_wq) {
+		cancel_delayed_work_sync(&adev->dm.hdmi_frl_status_polling_work);
+		destroy_workqueue(frl_wq);
+	}
 
 	if (adev->dm.vblank_control_workqueue) {
 		destroy_workqueue(adev->dm.vblank_control_workqueue);
@@ -4594,6 +4662,11 @@ static void handle_hpd_irq_helper(struct amdgpu_dm_connector *aconnector)
 
 	if (!dc_link_detect_connection_type(aconnector->dc_link, &new_connection_type))
 		drm_err(adev_to_drm(adev), "KMS: Failed to detect connector\n");
+	drm_dbg_kms(dev,
+		    "HPD_TRACE: IRQ link=%u sampled_connection=%d local_sink=%p link_type=%d debounce_ms=%u\n",
+		    aconnector->dc_link->link_index, new_connection_type,
+		    aconnector->dc_link->local_sink, aconnector->dc_link->type,
+		    aconnector->hdmi_hpd_debounce_delay_ms);
 
 	/*
 	 * Check for HDMI disconnect with debounce enabled.
@@ -11520,19 +11593,20 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 			break;
 		}
 	}
-	if (frl_stream_found) {
+	if (frl_stream_found && dm->hdmi_frl_status_polling_wq) {
 		if (queue_delayed_work(dm->hdmi_frl_status_polling_wq,
 				       &dm->hdmi_frl_status_polling_work,
 				       msecs_to_jiffies(dm->hdmi_frl_status_polling_delay_ms)))
 			drm_dbg_kms(dev, "200ms frl status polling starts ...\n");
-	} else {
-		if (cancel_delayed_work_sync(&dm->hdmi_frl_status_polling_work))
-			drm_dbg_kms(dev, "200ms frl status polling stops ...\n");
 	}
+	bool cancel_frl_polling = !frl_stream_found || !dm->hdmi_frl_status_polling_wq;
 	/* Allow idle optimization when vblank count is 0 for display off */
 	if ((dm->active_vblank_irq_count == 0) && amdgpu_dm_is_headless(dm->adev))
 		dc_allow_idle_optimizations(dm->dc, true);
 	mutex_unlock(&dm->dc_lock);
+	if (cancel_frl_polling &&
+	    cancel_delayed_work_sync(&dm->hdmi_frl_status_polling_work))
+		drm_dbg_kms(dev, "200ms frl status polling stops ...\n");
 
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
 		struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
