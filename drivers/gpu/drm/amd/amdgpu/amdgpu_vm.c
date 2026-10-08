@@ -791,20 +791,20 @@ restart:
 		if (r)
 			return r;
 
-		bo_base->moved = true;
-		amdgpu_vm_bo_needs_update(bo_base);
-
 		/*
 		 * If the vm_bo is still in a suboptimal place after
 		 * validate(), we failed to find enough space in the
 		 * optimal place, so back off for now and retry on the
-		 * next submission.
+		 * next submission. Its PTEs still match its placement, so
+		 * don't mark it moved.
 		 */
 		if (amdgpu_vm_bo_needs_eviction(adev, bo_base))
-			goto out;
+			break;
 
+		bo_base->moved = true;
+		amdgpu_vm_bo_needs_update(bo_base);
 	}
-out:
+
 	return 0;
 }
 
