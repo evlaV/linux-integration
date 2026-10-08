@@ -331,6 +331,11 @@ static void amdgpu_vm_bo_reset_state_machine(struct amdgpu_vm *vm)
 		amdgpu_vm_bo_needs_update(vm_bo);
 	list_for_each_entry_safe(vm_bo, tmp, &vm->always_valid.idle, vm_status)
 		amdgpu_vm_bo_needs_update(vm_bo);
+	list_for_each_entry_safe(vm_bo, tmp, &vm->always_valid.soft_evicted,
+				 vm_status) {
+		vm_bo->moved = true;
+		amdgpu_vm_bo_needs_update(vm_bo);
+	}
 
 	spin_lock(&vm->individual_lock);
 	list_for_each_entry_safe(vm_bo, tmp, &vm->individual.idle, vm_status) {
