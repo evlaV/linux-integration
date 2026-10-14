@@ -853,12 +853,15 @@ static void verify_link_capability_destructive(struct dc_link *link,
 				link, &known_limit_link_setting,
 				LINK_TRAINING_MAX_VERIFY_RETRY);
 	} else if (dc_is_hdmi_signal(link->local_sink->sink_signal)) {
+		LINK_INFO("[peihsiny] %s dc_is_hdmi_signal()=true\n", __func__);
 		if (!is_hdmi_frl_in_use(link)) {
+			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=false\n", __func__);
 			link_set_all_streams_dpms_off_for_link(link);
 			hdmi_frl_verify_link_cap(link, &link->frl_reported_link_cap);
 			link->local_sink->sink_signal = (link->frl_verified_link_cap.frl_link_rate != HDMI_FRL_LINK_RATE_DISABLE)
 												? SIGNAL_TYPE_HDMI_FRL : SIGNAL_TYPE_HDMI_TYPE_A;
 		} else {
+			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=true\n", __func__);
 			link->local_sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
 			link->frl_verified_link_cap.frl_link_rate = HDMI_FRL_LINK_RATE_DISABLE;
 		}
@@ -882,12 +885,15 @@ static void verify_link_capability_non_destructive(struct dc_link *link)
 		else
 			link->verified_link_cap = dp_get_max_link_cap(link);
 	} else if (dc_is_hdmi_signal(link->local_sink->sink_signal)) {
-		link->verified_link_cap = link->reported_link_cap;
+		link->frl_verified_link_cap = link->frl_reported_link_cap;
 
+		LINK_INFO("[peihsiny] %s dc_is_hdmi_signal()=true\n", __func__);
 		if (is_hdmi_frl_in_use(link)) {
+			LINK_INFO("[peihsiny] %s is_hdmi_frl_in_use()=true\n", __func__);
 			link->local_sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
 			link->frl_verified_link_cap.frl_link_rate = HDMI_FRL_LINK_RATE_DISABLE;
 		}
+
 	}
 }
 
@@ -933,7 +939,7 @@ static bool should_verify_link_capability_destructively(struct dc_link *link,
 		destrictive = true;
 		if (is_hdmi_frl_in_use(link)) {
 			destrictive = false;
-		} else if (link->dc->config.skip_frl_pretraining) {
+		} else if (link->local_sink->edid_caps.panel_patch.skip_frl_pre_training) {
 			for (i = 0; i < MAX_PIPES; i++) {
 				if (pipes[i].stream != NULL &&
 					pipes[i].stream->link == link) {
@@ -943,6 +949,8 @@ static bool should_verify_link_capability_destructively(struct dc_link *link,
 					}
 				}
 			}
+		} else if (link->dc->debug.skip_detection_link_training) {
+			destrictive = false;
 		}
 	}
 
