@@ -1,8 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 7
 PATCHLEVEL = 2
+<<<<<<< HEAD
 SUBLEVEL = 7
 EXTRAVERSION = -valve2
+||||||| f42acb367842
+SUBLEVEL = 7
+EXTRAVERSION =
+=======
+SUBLEVEL = 10
+EXTRAVERSION =
+>>>>>>> stable/linux-7.2.y
 NAME = Baby Opossum Posse
 
 # *DOCUMENTATION*

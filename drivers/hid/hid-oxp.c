@@ -2611,10 +2611,20 @@ static int oxp_hid_probe(struct hid_device *hdev,
 
 static void oxp_hid_remove(struct hid_device *hdev)
 {
+<<<<<<< HEAD
 	struct oxp_hid_cfg *cfg = hid_get_drvdata(hdev);
 
 	if (cfg)
 		oxp_quiesce_work(cfg);
+||||||| f42acb367842
+	cancel_delayed_work(&drvdata.oxp_rgb_queue);
+	cancel_delayed_work(&drvdata.oxp_btn_queue);
+	cancel_delayed_work(&drvdata.oxp_mcu_init);
+=======
+	cancel_delayed_work_sync(&drvdata.oxp_rgb_queue);
+	cancel_delayed_work_sync(&drvdata.oxp_btn_queue);
+	cancel_delayed_work_sync(&drvdata.oxp_mcu_init);
+>>>>>>> stable/linux-7.2.y
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
 }

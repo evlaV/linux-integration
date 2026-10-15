@@ -1350,8 +1350,16 @@ s64 ttm_bo_swapout(struct ttm_buffer_object *bo, struct ttm_operation_ctx *ctx,
 		bdev->funcs->swap_notify(bo);
 
 	if (ttm_tt_is_populated(tt)) {
+<<<<<<< HEAD
 		ret = ttm_tt_swapout(bdev, tt, gfp_flags);
 		if (!ret) {
+||||||| f42acb367842
+		ret = ttm_tt_swapout(bdev, tt, swapout_walk->gfp_flags);
+		if (!ret) {
+=======
+		ret = ttm_tt_swapout(bdev, tt, swapout_walk->gfp_flags);
+		if (ret > 0) {
+>>>>>>> stable/linux-7.2.y
 			spin_lock(&bdev->lru_lock);
 			ttm_resource_del_bulk_move_unevictable(bo->resource, bo);
 			ttm_resource_move_to_lru_tail(bo->resource);
