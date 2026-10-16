@@ -22,7 +22,6 @@
 
 #include <linux/acpi.h>
 #include <linux/cleanup.h>
-#include "linux/export.h"
 #include <linux/dmi.h>
 #include <linux/hid.h>
 #include <linux/module.h>
@@ -885,7 +884,7 @@ static int mcu_request_version(struct hid_device *hdev)
 	return ret;
 }
 
-void validate_mcu_fw_version(struct hid_device *hdev, int idProduct)
+static void validate_mcu_fw_version(struct hid_device *hdev, int idProduct)
 {
 	int min_version, version;
 
@@ -913,7 +912,6 @@ void validate_mcu_fw_version(struct hid_device *hdev, int idProduct)
 		set_ally_mcu_powersave(true);
 	}
 }
-EXPORT_SYMBOL_NS(validate_mcu_fw_version, "HID_ASUS");
 
 static bool asus_has_report_id(struct hid_device *hdev, u16 report_id)
 {
@@ -933,6 +931,8 @@ static bool asus_has_report_id(struct hid_device *hdev, u16 report_id)
 static int asus_kbd_register_leds(struct hid_device *hdev)
 {
 	struct asus_drvdata *drvdata = hid_get_drvdata(hdev);
+	struct usb_interface *intf;
+	struct usb_device *udev;
 	unsigned char kbd_func;
 	int ret;
 
@@ -951,14 +951,12 @@ static int asus_kbd_register_leds(struct hid_device *hdev)
 			return ret;
 	}
 
-#if !IS_REACHABLE(CONFIG_HID_ASUS_ALLY)
 	if ((drvdata->quirks & QUIRK_ROG_ALLY_XPAD) && hid_is_usb(hdev)) {
-		struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
-		struct usb_device *udev = interface_to_usbdev(intf);
+		intf = to_usb_interface(hdev->dev.parent);
+		udev = interface_to_usbdev(intf);
 		validate_mcu_fw_version(hdev,
 			le16_to_cpu(udev->descriptor.idProduct));
 	}
-#endif /* !IS_REACHABLE(CONFIG_HID_ASUS_ALLY) */
 
 	drvdata->listener.brightness_set = asus_kbd_backlight_set;
 	ret = asus_hid_register_listener(&drvdata->listener);
