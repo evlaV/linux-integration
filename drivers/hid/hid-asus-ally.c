@@ -1541,8 +1541,11 @@ static void ally_x_work(struct work_struct *work)
 	update_qam = ally_x->update_qam_btn;
 	spin_unlock_irqrestore(&ally_x->lock, flags);
 
-	if (update_ff && ff_report)
+	if (update_ff && ff_report) {
+		ff_report->ff.magnitude_left = ff_report->ff.magnitude_strong;
+		ff_report->ff.magnitude_right = ff_report->ff.magnitude_weak;
 		asus_dev_set_report(ally_x->hdev, (u8 *)ff_report, sizeof(*ff_report));
+	}
 	kfree(ff_report);
 
 	if (update_qam) {
