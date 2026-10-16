@@ -110,10 +110,10 @@ struct frl_cap_chk_params_fixed31_32 {
 	int      lanes;
 	struct fixed31_32   f_pixel_clock_nominal;   /* Pixel Clock rate (Hz)  */
 	struct fixed31_32   r_bit_nominal;           /* FRL bitrate (bps) */
-	int      audio_packet_type;
+	unsigned int audio_packet_type;
 	struct fixed31_32   f_audio;                 /* Audio rate (Hz) */
-	int      h_active;                /* Active pixels per line */
-	int      h_blank;                 /* Blanking pixels per line */
+	uint32_t h_active;                /* Active pixels per line */
+	uint32_t h_blank;                 /* Blanking pixels per line */
 	int      bpc;                     /* Bits per component */
 	int      vic;                     /* Video Identification Code */
 
@@ -1295,6 +1295,13 @@ struct dc_debug_options {
 	unsigned int min_deep_sleep_dcfclk_khz;
 	unsigned int force_odm2to1_for_edp_pixclk_mhz;
 	bool enable_replay_esd_recovery;
+	uint8_t iommu_mismatch_temp_wka;
+	bool disable_dynamic_expansion_for_test_pattern;
+	bool psr_phy_force_phy_power_down_up_level_2;
+	uint32_t dml21_custom_derate_num_dpms;
+	uint32_t dml21_custom_derate_at_dpm[DML2_MAX_NUM_DPM_LVL];
+	bool override_utm_client_qc_profile;
+	uint8_t utm_client_qc_profiles[4];
 };
 
 
