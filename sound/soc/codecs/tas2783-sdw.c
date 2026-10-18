@@ -1107,6 +1107,11 @@ static s32 tas_sdw_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
+	if (!tas_dev->hw_init) {
+		dev_err(tas_dev->dev, "error playback without init writes");
+		return -EINVAL;
+	}
+
 	sdw_stream = snd_soc_dai_get_dma_data(dai, substream);
 	if (!sdw_stream)
 		return -EINVAL;
@@ -1508,6 +1513,12 @@ static int tas_port_prep(struct sdw_slave *slave, struct sdw_prepare_ch *prep_ch
 	addr = SDW_DPN_PREPARECTRL(prep_ch->num);
 	switch (pre_ops) {
 	case SDW_OPS_PORT_PRE_PREP:
+		if (!tas_dev->hw_init) {
+			dev_err(dev, "error port %d prepare without init writes\n",
+				prep_ch->num);
+			return -EINVAL;
+		}
+
 		/*
 		 * The Function has to be powered before the port can complete
 		 * channel preparation.  hw_params() does that when a stream is
