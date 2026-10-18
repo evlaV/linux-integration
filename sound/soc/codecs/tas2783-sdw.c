@@ -25,7 +25,6 @@
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
-#include <linux/wait.h>
 #include <linux/soundwire/sdw.h>
 #include <linux/soundwire/sdw_registers.h>
 #include <linux/soundwire/sdw_type.h>
@@ -41,7 +40,6 @@
 
 #include "tas2783.h"
 
-#define TIMEOUT_FW_DL_MS (3000)
 #define FW_DL_OFFSET	84 /* binary file information */
 #define FW_FL_HDR	20 /* minimum number of bytes in one chunk */
 #define TAS2783_PROBE_TIMEOUT 5000
@@ -110,9 +108,7 @@ struct tas2783_prv {
 	u8 dev_name[32];
 	bool hw_init;
 	unsigned int fw_version;
-	/* wq for firmware download */
-	wait_queue_head_t fw_wait;
-	bool fw_dl_task_done;
+	/* firmware download result */
 	bool fw_dl_success;
 	/* use fallback fw name */
 	bool fw_use_fallback;
@@ -918,10 +914,9 @@ static s32 tas_fw_get_next_file(const u8 *data, struct tas_fw_file *file)
 	return file->length + sizeof(u32) * 5;
 }
 
-static void tas2783_fw_ready(const struct firmware *fmw, void *context)
+static s32 tas2783_fw_download(struct tas2783_prv *tas_dev,
+			       const struct firmware *fmw)
 {
-	struct tas2783_prv *tas_dev =
-		(struct tas2783_prv *)context;
 	const u8 *buf = NULL;
 	s32  img_sz, ret = 0, cur_file = 0;
 	s32 offset = 0;
@@ -929,41 +924,20 @@ static void tas2783_fw_ready(const struct firmware *fmw, void *context)
 
 	struct tas_fw_hdr *hdr __free(kfree) = kzalloc_obj(*hdr);
 	struct tas_fw_file *file __free(kfree) = kzalloc_obj(*file);
-	if (!file || !hdr) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	/* firmware binary not found*/
-	if (!fmw || !fmw->data) {
-		if (!tas_dev->fw_use_fallback) {
-			tas_dev->fw_use_fallback = true;
-			dev_info(tas_dev->dev,
-				"Failed to read preferred fw binary: %s, attempting fallback binary load\n",
-				tas_dev->rca_binaryname);
-		} else {
-			dev_err(tas_dev->dev,
-				"Failed to read fallback fw binary %s\n",
-				tas_dev->rca_binaryname);
-		}
-
-		ret = -EINVAL;
-		goto out;
-	}
+	if (!file || !hdr)
+		return -ENOMEM;
 
 	img_sz = fmw->size;
 	buf = fmw->data;
 	offset += tas_fw_read_hdr(buf, hdr);
 	if (hdr->size != img_sz) {
-		ret = -EINVAL;
 		dev_err(tas_dev->dev, "firmware size mismatch with header");
-		goto out;
+		return -EINVAL;
 	}
 
 	if (img_sz < FW_DL_OFFSET) {
-		ret = -EINVAL;
 		dev_err(tas_dev->dev, "unexpected size, size is too small");
-		goto out;
+		return -EINVAL;
 	}
 
 	mutex_lock(&tas_dev->pde_lock);
@@ -1024,13 +998,7 @@ static void tas2783_fw_ready(const struct firmware *fmw, void *context)
 				       (val[2] << 8) | val[3];
 	}
 
-out:
-	if (!ret)
-		tas_dev->fw_dl_success = true;
-	tas_dev->fw_dl_task_done = true;
-	wake_up(&tas_dev->fw_wait);
-	if (fmw)
-		release_firmware(fmw);
+	return ret;
 }
 
 static inline s32 tas_clear_latch(struct tas2783_prv *priv)
@@ -1403,31 +1371,32 @@ static void tas_generate_fw_name(struct sdw_slave *slave, char *name, size_t siz
 
 static s32 tas_fw_load(struct tas2783_prv *tas_dev, struct sdw_slave *slave)
 {
+	const struct firmware *fmw;
 	s32 ret;
-	u8 unique_id = tas_dev->sdw_peripheral->id.unique_id;
 
 	tas_generate_fw_name(slave, tas_dev->rca_binaryname,
 			     sizeof(tas_dev->rca_binaryname));
 
-	tas_dev->fw_dl_task_done = false;
-	ret = request_firmware_nowait(THIS_MODULE, FW_ACTION_UEVENT,
-				      tas_dev->rca_binaryname, tas_dev->dev,
-				      GFP_KERNEL, tas_dev, tas2783_fw_ready);
+	ret = request_firmware_direct(&fmw, tas_dev->rca_binaryname,
+				      tas_dev->dev);
 	if (ret) {
-		dev_err(tas_dev->dev,
-			"firmware request failed for uid=%d, ret=%d\n",
-			unique_id, ret);
+		if (!tas_dev->fw_use_fallback) {
+			tas_dev->fw_use_fallback = true;
+			dev_info(tas_dev->dev,
+				 "Failed to read preferred fw binary: %s, attempting fallback binary load\n",
+				 tas_dev->rca_binaryname);
+		} else {
+			dev_err(tas_dev->dev,
+				"Failed to read fallback fw binary %s\n",
+				tas_dev->rca_binaryname);
+		}
 		return ret;
 	}
 
-	ret = wait_event_timeout(tas_dev->fw_wait, tas_dev->fw_dl_task_done,
-				 msecs_to_jiffies(TIMEOUT_FW_DL_MS));
-	if (!ret) {
-		dev_err(tas_dev->dev, "fw request, wait_event timeout\n");
-		return -EAGAIN;
-	}
+	ret = tas2783_fw_download(tas_dev, fmw);
+	release_firmware(fmw);
 
-	return 0;
+	return ret;
 }
 
 static s32 tas_io_init(struct device *dev, struct sdw_slave *slave)
@@ -1449,8 +1418,9 @@ static s32 tas_io_init(struct device *dev, struct sdw_slave *slave)
 
 	tas_dev->fw_use_fallback = false;
 	ret = tas_fw_load(tas_dev, slave);
-	if (!ret && tas_dev->fw_use_fallback)
+	if (ret && tas_dev->fw_use_fallback)
 		ret = tas_fw_load(tas_dev, slave);
+	tas_dev->fw_dl_success = !ret;
 
 	if (!ret) {
 		if (tas_dev->sa_func_data)
@@ -1651,7 +1621,6 @@ static s32 tas_sdw_probe(struct sdw_slave *peripheral,
 	tas_dev->amp_level = TAS2783_AMP_LEVEL_MAX;
 	tas_dev->dvc_level = TAS2783_DVC_LVL_MAX;
 
-	init_waitqueue_head(&tas_dev->fw_wait);
 	dev_set_drvdata(dev, tas_dev);
 	regmap = devm_regmap_init_sdw_mbq_cfg(&peripheral->dev,
 					      peripheral,
