@@ -659,6 +659,7 @@ struct rtw_rx_pkt_stat {
 	bool decrypted;
 	bool is_c2h;
 	bool channel_invalid;
+	bool suspect;
 
 	s32 signal_power;
 	u16 pkt_len;
