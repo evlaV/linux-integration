@@ -208,6 +208,9 @@
 #define   PCIE_GLI_9767_COMBO_MUX_CTL_RST_EN		  BIT(6)
 #define   PCIE_GLI_9767_COMBO_MUX_CTL_WAIT_PERST_EN	  BIT(10)
 
+#define PCIE_GLI_9767_PHY_STS			0x8CC
+#define   PCIE_GLI_9767_PHY_STS_UHS2_BUSY	  BIT(13)
+
 #define PCIE_GLI_9767_PWR_MACRO_CTL					0x8D0
 #define   PCIE_GLI_9767_PWR_MACRO_CTL_LOW_VOLTAGE			  GENMASK(3, 0)
 #define   PCIE_GLI_9767_PWR_MACRO_CTL_LD0_LOW_OUTPUT_VOLTAGE		  GENMASK(15, 12)
@@ -1198,6 +1201,27 @@ static void gl9767_set_low_power_negotiation(struct pci_dev *pdev, bool enable)
 	gl9767_vhs_read(pdev);
 }
 
+static u32 gl9767_read_phy_sts(struct pci_dev *pdev)
+{
+	u32 value;
+
+	pci_read_config_dword(pdev, PCIE_GLI_9767_PHY_STS, &value);
+
+	return value;
+}
+
+static void sdhci_gl9767_uhs2_wait_phy_ready(struct sdhci_host *host)
+{
+	struct sdhci_pci_slot *slot = sdhci_priv(host);
+	struct pci_dev *pdev = slot->chip->pdev;
+	u32 value;
+
+	if (read_poll_timeout_atomic(gl9767_read_phy_sts, value,
+				     !(value & PCIE_GLI_9767_PHY_STS_UHS2_BUSY),
+				     10, 10000, false, pdev))
+		pr_warn("%s: UHS-II PHY not ready after reset.\n", mmc_hostname(host->mmc));
+}
+
 static void sdhci_gl9767_uhs2_phy_reset(struct sdhci_host *host, bool assert)
 {
 	struct sdhci_pci_slot *slot = sdhci_priv(host);
@@ -1284,9 +1308,12 @@ static void sdhci_gl9767_set_clock(struct sdhci_host *host, unsigned int clock)
 
 	sdhci_enable_clk(host, clk);
 
-	if (mmc_card_uhs2(host->mmc))
+	if (mmc_card_uhs2(host->mmc)) {
 		/* De-assert reset */
 		sdhci_gl9767_uhs2_phy_reset(host, false);
+		/* Low power negotiation before the PHY settles makes MMIO read all-ones */
+		sdhci_gl9767_uhs2_wait_phy_ready(host);
+	}
 
 	gl9767_set_low_power_negotiation(pdev, true);
 }
