@@ -208,7 +208,7 @@ static void rtw_rx_fill_rx_status(struct rtw_dev *rtwdev,
 	if (rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_SCAN_OFFLOAD) &&
 	    test_bit(RTW_FLAG_SCANNING, rtwdev->flags))
 		rtw_set_rx_freq_by_pktstat(pkt_stat, rx_status);
-	if (pkt_stat->crc_err)
+	if (pkt_stat->crc_err || pkt_stat->icv_err)
 		rx_status->flag |= RX_FLAG_FAILED_FCS_CRC;
 	if (pkt_stat->decrypted)
 		rx_status->flag |= RX_FLAG_DECRYPTED;
@@ -262,6 +262,134 @@ static void rtw_rx_fill_rx_status(struct rtw_dev *rtwdev,
 	}
 }
 
+static bool rtw_rx_ccmp_hdr_valid(struct rtw_rx_pkt_stat *pkt_stat,
+				  struct ieee80211_hdr *hdr)
+{
+	u32 hdr_len = ieee80211_hdrlen(hdr->frame_control);
+	u8 *iv;
+
+	if (!ieee80211_has_protected(hdr->frame_control))
+		return true;
+
+	if (pkt_stat->pkt_len < hdr_len + IEEE80211_CCMP_HDR_LEN + FCS_LEN)
+		return false;
+
+	iv = (u8 *)hdr + hdr_len;
+
+	/* reserved octet is zero, key ID octet has ExtIV set */
+	return iv[2] == 0 && (iv[3] & BIT(5));
+}
+
+static u64 rtw_rx_ccmp_pn(const u8 *iv)
+{
+	return (u64)iv[0] | (u64)iv[1] << 8 | (u64)iv[4] << 16 |
+	       (u64)iv[5] << 24 | (u64)iv[6] << 32 | (u64)iv[7] << 40;
+}
+
+static void rtw_rx_report_suspect(struct rtw_dev *rtwdev, const char *why,
+				  struct rtw_rx_pkt_stat *pkt_stat,
+				  void *rx_desc8, struct ieee80211_hdr *hdr,
+				  u64 max_pn)
+{
+	u32 hdr_len = ieee80211_hdrlen(hdr->frame_control);
+	u32 n = ++rtwdev->rx_pn_guard.events;
+	u8 tid = ieee80211_is_data_qos(hdr->frame_control) ?
+		 ieee80211_get_tid(hdr) : 0;
+	u64 pn = 0;
+
+	if (pkt_stat->pkt_len >= hdr_len + IEEE80211_CCMP_HDR_LEN)
+		pn = rtw_rx_ccmp_pn((u8 *)hdr + hdr_len);
+
+	pkt_stat->suspect = true;
+
+	if (n > RTW_RX_PN_GUARD_DUMPS) {
+		dev_warn_ratelimited(rtwdev->dev,
+				     "suspect hw-decrypted frame #%u (%s): tid %u max pn 0x%012llx pn 0x%012llx%s\n",
+				     n, why, tid, max_pn, pn,
+				     pkt_stat->decrypted ? "" : ", left to mac80211");
+		return;
+	}
+
+	rtw_warn(rtwdev,
+		 "suspect hw-decrypted frame #%u (%s): seq %u tid %u max pn 0x%012llx pn 0x%012llx len %u rate 0x%x%s\n",
+		 n, why, ieee80211_get_sn(hdr), tid, max_pn, pn,
+		 pkt_stat->pkt_len, pkt_stat->rate,
+		 pkt_stat->decrypted ? "" : ", left to mac80211");
+	print_hex_dump(KERN_WARNING, "rtw88 rx desc: ", DUMP_PREFIX_OFFSET,
+		       16, 1, rx_desc8, (u8 *)hdr - (u8 *)rx_desc8, false);
+	print_hex_dump(KERN_WARNING, "rtw88 rx frame: ", DUMP_PREFIX_OFFSET,
+		       16, 1, hdr, min_t(u32, pkt_stat->pkt_len, hdr_len + 128),
+		       false);
+}
+
+/* Some 8822CE devices occasionally deliver a frame whose descriptor and
+ * 802.11 header are valid but whose remaining bytes, including the
+ * cleartext CCMP header, are not that frame's, while the descriptor still
+ * claims a successful hardware decryption. mac80211 then stores the garbage
+ * PN as the key's last PN and drops every later frame as a replay until
+ * the next rekey.
+ *
+ * The transmitter numbers all frames of a key from one PN counter, shared
+ * by every TID (the receiver keeps per-TID replay counters only because of
+ * QoS reordering). So track the highest PN seen per transmitter and
+ * unicast/group key for hardware-decrypted data frames, and report frames
+ * whose PN is implausibly far beyond it. A genuine frame on any TID cannot
+ * be, however long that TID was idle. A suspect PN never becomes the
+ * reference, so later genuine frames are not flagged and later bad frames
+ * are still caught. With sw_decrypt_suspect set, a suspect frame is passed
+ * to mac80211 as not decrypted, so it is verified in software and dropped
+ * on MIC failure without moving the replay counter.
+ */
+static void rtw_rx_pn_guard(struct rtw_dev *rtwdev,
+			    struct rtw_rx_pkt_stat *pkt_stat,
+			    void *rx_desc8, struct ieee80211_hdr *hdr)
+{
+	struct rtw_rx_pn_guard *guard = &rtwdev->rx_pn_guard;
+	u32 gen = atomic_read(&rtwdev->rx_pn_guard_gen);
+	u32 hdr_len;
+	u64 pn, max;
+	u8 grp;
+
+	if (guard->gen != gen) {
+		memset(guard->valid, 0, sizeof(guard->valid));
+		guard->gen = gen;
+	}
+
+	if (!ieee80211_is_data(hdr->frame_control) ||
+	    !ieee80211_has_protected(hdr->frame_control))
+		return;
+
+	hdr_len = ieee80211_hdrlen(hdr->frame_control);
+	if (pkt_stat->pkt_len < hdr_len + IEEE80211_CCMP_HDR_LEN + FCS_LEN)
+		return;
+
+	grp = is_multicast_ether_addr(hdr->addr1);
+	pn = rtw_rx_ccmp_pn((u8 *)hdr + hdr_len);
+
+	if (!guard->valid[grp] ||
+	    !ether_addr_equal(guard->ta[grp], hdr->addr2)) {
+		guard->pn[grp] = pn;
+		ether_addr_copy(guard->ta[grp], hdr->addr2);
+		guard->valid[grp] = true;
+		return;
+	}
+
+	max = guard->pn[grp];
+	if (pn <= max)
+		return;
+
+	/* rtw_pn_guard_jump is 2^24 by default; see the comment above */
+	if (pn - max > READ_ONCE(rtw_pn_guard_jump)) {
+		if (READ_ONCE(rtw_sw_decrypt_suspect))
+			pkt_stat->decrypted = false;
+		rtw_rx_report_suspect(rtwdev, "PN jump", pkt_stat, rx_desc8,
+				      hdr, max);
+		return;
+	}
+
+	guard->pn[grp] = pn;
+}
+
 int rtw_rx_query_rx_desc(struct rtw_dev *rtwdev, void *rx_desc8,
 			 struct rtw_rx_pkt_stat *pkt_stat,
 			 struct ieee80211_rx_status *rx_status)
@@ -283,7 +411,8 @@ int rtw_rx_query_rx_desc(struct rtw_dev *rtwdev, void *rx_desc8,
 	pkt_stat->shift = le32_get_bits(rx_desc->w0, RTW_RX_DESC_W0_SHIFT);
 	pkt_stat->phy_status = le32_get_bits(rx_desc->w0, RTW_RX_DESC_W0_PHYST);
 	swdec = le32_get_bits(rx_desc->w0, RTW_RX_DESC_W0_SWDEC);
-	pkt_stat->decrypted = !swdec && enc_type != RX_DESC_ENC_NONE;
+	pkt_stat->decrypted = !swdec && enc_type != RX_DESC_ENC_NONE &&
+			      !pkt_stat->crc_err && !pkt_stat->icv_err;
 
 	pkt_stat->cam_id = le32_get_bits(rx_desc->w1, RTW_RX_DESC_W1_MACID);
 
@@ -325,6 +454,18 @@ int rtw_rx_query_rx_desc(struct rtw_dev *rtwdev, void *rx_desc8,
 
 	if (pkt_stat->phy_status)
 		rtwdev->chip->ops->query_phy_status(rtwdev, phy_status, pkt_stat);
+
+	if (pkt_stat->decrypted && enc_type == RX_DESC_ENC_AES &&
+	    !rtw_rx_ccmp_hdr_valid(pkt_stat, hdr)) {
+		rtw_dbg(rtwdev, RTW_DBG_RX,
+			"AES frame without a usable CCMP header, drop the decryption flag\n");
+		pkt_stat->decrypted = false;
+		rtw_rx_report_suspect(rtwdev, "bad CCMP header", pkt_stat,
+				      rx_desc8, hdr, 0);
+	}
+
+	if (pkt_stat->decrypted && enc_type == RX_DESC_ENC_AES)
+		rtw_rx_pn_guard(rtwdev, pkt_stat, rx_desc8, hdr);
 
 	rtw_rx_fill_rx_status(rtwdev, pkt_stat, hdr, rx_status);
 
