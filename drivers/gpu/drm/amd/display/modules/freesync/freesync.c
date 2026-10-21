@@ -968,9 +968,6 @@ void mod_freesync_build_vrr_infopacket(struct mod_freesync *mod_freesync,
 		return;
 
 	switch (packet_type) {
-	case PACKET_TYPE_VTEM:
-		mod_build_vtem_infopacket(stream, vrr, infopacket);
-		break;
 	case PACKET_TYPE_FS_V3:
 		build_vrr_infopacket_v3(stream->signal, vrr, app_tf, infopacket, stream->freesync_on_desktop);
 		break;

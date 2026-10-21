@@ -129,6 +129,14 @@ static void apply_edid_quirks(struct dc_link *link, struct edid *edid,
 		drm_dbg_driver(dev, "Disabling VSC on monitor with panel id %X\n", panel_id);
 		edid_caps->panel_patch.disable_colorimetry = true;
 		break;
+	case drm_edid_encode_panel_id('S', 'D', 'C', 0x4203):
+	case drm_edid_encode_panel_id('S', 'D', 'C', 0x4197):
+		if (dc_is_embedded_signal(link->connector_signal)) {
+			drm_dbg_driver(dev, "Force PHY power down/up level 2 on panel id %X\n",
+				       panel_id);
+			link->ctx->dc->debug.psr_phy_force_phy_power_down_up_level_2 = true;
+		}
+		break;
 	/* Workaround for monitors that get corrupted by the PHY SSC reduction */
 	case drm_edid_encode_panel_id('D', 'E', 'L', 0x4147):
 		drm_dbg_driver(dev, "Skip PHY SSC reduction on panel id %X\n", panel_id);
@@ -144,6 +152,24 @@ static void apply_edid_quirks(struct dc_link *link, struct edid *edid,
 	case drm_edid_encode_panel_id('A', 'P', 'P', 0xAE46):
 		drm_dbg_driver(dev, "Hiding secondary tile on panel id %X\n", panel_id);
 		edid_caps->panel_patch.disable_second_tile = true;
+		break;
+	/*
+	 * Workaround for the Acer Predator X34GS which reports a FreeSync
+	 * minimum refresh rate that does not operate reliably. Force the
+	 * FreeSync range minimum to 55 Hz.
+	 */
+	case drm_edid_encode_panel_id('A', 'C', 'R', 0x08AF):
+		drm_dbg_driver(dev, "Force FreeSync min to 55 Hz on panel id %X\n", panel_id);
+		edid_caps->panel_patch.force_freesync_min_hz = 55;
+		break;
+	/*
+	 * Workaround for the Lenovo G34w-30 which reports a FreeSync
+	 * minimum refresh rate (48 Hz) that fails to light up over DP.
+	 * Force the FreeSync range minimum to 60 Hz.
+	 */
+	case drm_edid_encode_panel_id('L', 'E', 'N', 0x66F1):
+		drm_dbg_driver(dev, "Force FreeSync min to 60 Hz on panel id %X\n", panel_id);
+		edid_caps->panel_patch.force_freesync_min_hz = 60;
 		break;
 	default:
 		return;
@@ -1155,9 +1181,10 @@ void populate_hdmi_info_from_connector(bool enable_frl, struct drm_hdmi_info *hd
 		edid_caps->max_frl_rate = get_max_frl_rate(hdmi->max_lanes, hdmi->max_frl_rate_per_lane);
 		edid_caps->frl_dsc_support = hdmi->dsc_cap.v_1p2;
 		if (edid_caps->frl_dsc_support) {
-			if (hdmi->dsc_cap.bpc_supported == 10)
+			/* HF-VSDB DSC max bpc is cumulative: >=12 implies 10 and 8. */
+			if (hdmi->dsc_cap.bpc_supported >= 10)
 				edid_caps->frl_dsc_10bpc = true;
-			else if (hdmi->dsc_cap.bpc_supported == 12)
+			if (hdmi->dsc_cap.bpc_supported >= 12)
 				edid_caps->frl_dsc_12bpc = true;
 			edid_caps->frl_dsc_all_bpp = hdmi->dsc_cap.all_bpp;
 			edid_caps->frl_dsc_native_420 = hdmi->dsc_cap.native_420;
@@ -1625,6 +1652,25 @@ bool dm_helpers_is_vrr_pcon_allowed(const struct dc_link *link, const struct drm
 	}
 
 	return dm_is_freesync_pcon_whitelist(link->dpcd_caps.branch_dev_id);
+}
+
+enum adaptive_sync_type dm_get_adaptive_sync_support_type(struct dc_link *link)
+{
+	struct dpcd_caps *dpcd_caps = &link->dpcd_caps;
+	enum adaptive_sync_type as_type = ADAPTIVE_SYNC_TYPE_NONE;
+
+	switch (dpcd_caps->dongle_type) {
+	case DISPLAY_DONGLE_DP_HDMI_CONVERTER:
+		if (dpcd_caps->adaptive_sync_caps.dp_adap_sync_caps.bits.ADAPTIVE_SYNC_SDP_SUPPORT == true &&
+			dpcd_caps->allow_invalid_MSA_timing_param == true &&
+			dm_is_freesync_pcon_whitelist(dpcd_caps->branch_dev_id))
+			as_type = FREESYNC_TYPE_PCON_IN_WHITELIST;
+		break;
+	default:
+		break;
+	}
+
+	return as_type;
 }
 
 bool dm_helpers_is_fullscreen(struct dc_context *ctx, struct dc_stream_state *stream)
