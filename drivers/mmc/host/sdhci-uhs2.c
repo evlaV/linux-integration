@@ -333,7 +333,8 @@ static int sdhci_uhs2_interface_detect(struct sdhci_host *host)
 {
 	u32 val;
 
-	if (read_poll_timeout(sdhci_readl, val, (val & SDHCI_UHS2_IF_DETECT),
+	/* An all-ones read means the controller did not respond, not a detected interface */
+	if (read_poll_timeout(sdhci_readl, val, val != ~0U && (val & SDHCI_UHS2_IF_DETECT),
 			      100, UHS2_INTERFACE_DETECT_TIMEOUT_100MS, true,
 			      host, SDHCI_PRESENT_STATE)) {
 		pr_debug("%s: not detect UHS2 interface in 100ms.\n", mmc_hostname(host->mmc));
@@ -344,7 +345,7 @@ static int sdhci_uhs2_interface_detect(struct sdhci_host *host)
 	/* Enable UHS2 error interrupts */
 	sdhci_uhs2_clear_set_irqs(host, SDHCI_INT_ALL_MASK, SDHCI_UHS2_INT_ERROR_MASK);
 
-	if (read_poll_timeout(sdhci_readl, val, (val & SDHCI_UHS2_LANE_SYNC),
+	if (read_poll_timeout(sdhci_readl, val, val != ~0U && (val & SDHCI_UHS2_LANE_SYNC),
 			      100, UHS2_LANE_SYNC_TIMEOUT_150MS, true, host, SDHCI_PRESENT_STATE)) {
 		pr_debug("%s: UHS2 Lane sync fail in 150ms.\n", mmc_hostname(host->mmc));
 		sdhci_dbg_dumpregs(host, "UHS2 Lane sync fail in 150ms");
