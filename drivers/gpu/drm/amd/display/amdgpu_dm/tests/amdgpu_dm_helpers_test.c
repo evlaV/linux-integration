@@ -950,7 +950,7 @@ static void dm_test_populate_hdmi_frl_dsc_unknown_values(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, caps->frl_dsc_max_frl_rate, 0);
 }
 
-/* Tests for dm_get_adaptive_sync_support_type() */
+/* Tests for dm_helpers_is_vrr_pcon_allowed() */
 
 /**
  * dm_test_adaptive_sync_type_none_default - Test Adaptive sync type none default
@@ -965,8 +965,8 @@ static void dm_test_adaptive_sync_type_none_default(struct kunit *test)
 
 	/* dongle_type = 0 (DISPLAY_DONGLE_NONE) → default case → TYPE_NONE */
 	KUNIT_EXPECT_EQ(test,
-			(int)dm_get_adaptive_sync_support_type(link),
-			(int)ADAPTIVE_SYNC_TYPE_NONE);
+			(bool)dm_helpers_is_vrr_pcon_allowed(link),
+			(bool)false);
 }
 
 /**
@@ -984,8 +984,8 @@ static void dm_test_adaptive_sync_type_converter_no_conditions(struct kunit *tes
 	link->dpcd_caps.dongle_type = DISPLAY_DONGLE_DP_HDMI_CONVERTER;
 
 	KUNIT_EXPECT_EQ(test,
-			(int)dm_get_adaptive_sync_support_type(link),
-			(int)ADAPTIVE_SYNC_TYPE_NONE);
+			(bool)dm_helpers_is_vrr_pcon_allowed(link),
+			(bool)false);
 }
 
 /**
@@ -1006,8 +1006,8 @@ static void dm_test_adaptive_sync_type_converter_partial_conditions(struct kunit
 	link->dpcd_caps.branch_dev_id = DP_BRANCH_DEVICE_ID_0060AD;
 
 	KUNIT_EXPECT_EQ(test,
-			(int)dm_get_adaptive_sync_support_type(link),
-			(int)ADAPTIVE_SYNC_TYPE_NONE);
+			(bool)dm_helpers_is_vrr_pcon_allowed(link),
+			(bool)false);
 }
 
 /**
@@ -1028,8 +1028,8 @@ static void dm_test_adaptive_sync_type_pcon_whitelist(struct kunit *test)
 	link->dpcd_caps.branch_dev_id = DP_BRANCH_DEVICE_ID_0060AD;
 
 	KUNIT_EXPECT_EQ(test,
-			(int)dm_get_adaptive_sync_support_type(link),
-			(int)FREESYNC_TYPE_PCON_IN_WHITELIST);
+			(bool)dm_helpers_is_vrr_pcon_allowed(link),
+			(bool)true);
 }
 
 /**
@@ -1050,8 +1050,8 @@ static void dm_test_adaptive_sync_type_converter_nonwhitelist(struct kunit *test
 	link->dpcd_caps.branch_dev_id = 0xFFFFFF;
 
 	KUNIT_EXPECT_EQ(test,
-			(int)dm_get_adaptive_sync_support_type(link),
-			(int)ADAPTIVE_SYNC_TYPE_NONE);
+			(bool)dm_helpers_is_vrr_pcon_allowed(link),
+			(bool)false);
 }
 
 /* Tests for dm_helpers_is_fullscreen() and dm_helpers_is_hdr_on() */
@@ -3761,7 +3761,7 @@ static struct kunit_case amdgpu_dm_helpers_test_cases[] = {
 	KUNIT_CASE(dm_test_populate_hdmi_frl_dsc_10bpc),
 	KUNIT_CASE(dm_test_populate_hdmi_frl_dsc_12bpc),
 	KUNIT_CASE(dm_test_populate_hdmi_frl_dsc_unknown_values),
-	/* dm_get_adaptive_sync_support_type */
+	/* dm_helpers_is_vrr_pcon_allowed */
 	KUNIT_CASE(dm_test_adaptive_sync_type_none_default),
 	KUNIT_CASE(dm_test_adaptive_sync_type_converter_no_conditions),
 	KUNIT_CASE(dm_test_adaptive_sync_type_converter_partial_conditions),
