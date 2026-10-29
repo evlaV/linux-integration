@@ -894,6 +894,11 @@ void mod_power_update_backlight_on_mode_change(
 {
     struct set_backlight_level_params backlight_level_params = { 0 };
 
+	if (dc_link_can_preserve_backlight(link)) {
+		dc_link_restore_backlight(link);
+		return;
+	}
+
 		/* Cache the panel's backlight control type once at mode-change/init
 		 * time. It is a stable per-panel property (decided in the OS shim
 		 * from panel type + DPCD caps), so the brightness translation
