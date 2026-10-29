@@ -1572,6 +1572,7 @@ static int dm_suspend(struct amdgpu_ip_block *ip_block)
 {
 	struct amdgpu_device *adev = ip_block->adev;
 	struct amdgpu_display_manager *dm = &adev->dm;
+	int i;
 
 	if (amdgpu_in_reset(adev)) {
 		enum dc_status res;
@@ -1630,8 +1631,14 @@ static int dm_suspend(struct amdgpu_ip_block *ip_block)
 	 * themselves; syncing under it would deadlock).
 	 */
 	amdgpu_dm_ism_disable(dm);
-	scoped_guard(mutex, &dm->dc_lock)
+	scoped_guard(mutex, &dm->dc_lock) {
 		amdgpu_dm_ism_force_full_power(dm);
+		for (i = 0; i < dm->num_of_edps; i++) {
+			if (dm->backlight_dev[i] &&
+			    !dc_link_can_preserve_backlight(dm->backlight_link[i]))
+				dm->backlight_update_pending[i] = true;
+		}
+	}
 
 	amdgpu_dm_hpd_rx_irq_work_suspend(dm);
 
@@ -1996,9 +2003,11 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
 		mutex_unlock(&dm->dc_lock);
 
 		/* set the backlight after a reset */
-		for (i = 0; i < dm->num_of_edps; i++) {
-			if (dm->backlight_dev[i])
-				amdgpu_dm_backlight_set_level(dm, i, dm->brightness[i]);
+		scoped_guard(mutex, &dm->dc_lock) {
+			for (i = 0; i < dm->num_of_edps; i++) {
+				if (dm->backlight_dev[i])
+					amdgpu_dm_backlight_restore(dm, i, true);
+			}
 		}
 
 		return 0;
@@ -4537,6 +4546,23 @@ static void amdgpu_dm_mod_power_setup_streams(struct drm_atomic_commit *state,
 
 }
 
+/* Mark the level on @link as lost so commit_tail re-applies it. */
+static void amdgpu_dm_backlight_invalidate_link(struct amdgpu_display_manager *dm,
+						const struct dc_link *link)
+{
+	int i;
+
+	lockdep_assert_held(&dm->dc_lock);
+
+	if (dc_link_can_preserve_backlight(link))
+		return;
+
+	for (i = 0; i < dm->num_of_edps; i++) {
+		if (dm->backlight_link[i] == link)
+			dm->backlight_update_pending[i] = true;
+	}
+}
+
 static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 					struct dc_state *dc_state)
 {
@@ -4551,7 +4577,6 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 	bool mode_set_reset_required = false;
 	u32 i;
 	struct dc_commit_streams_params params = {dc_state->streams, dc_state->stream_count};
-	bool set_backlight_level = false;
 
 	/* Disable writeback */
 	for_each_old_connector_in_state(state, connector, old_con_state, i) {
@@ -4673,7 +4698,6 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 			acrtc->hw_mode = new_crtc_state->mode;
 			crtc->hwmode = new_crtc_state->mode;
 			mode_set_reset_required = true;
-			set_backlight_level = true;
 		} else if (modereset_required(new_crtc_state)) {
 			drm_dbg_atomic(dev,
 				       "Atomic commit: RESET. crtc id %d:[%p]\n",
@@ -4696,6 +4720,19 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 	mutex_lock(&dm->dc_lock);
 	dc_exit_ips_for_hw_access(dm->dc);
 	WARN_ON(!dc_commit_streams(dm->dc, &params));
+
+	/* Preserve modeset restoration for panels whose target DC does not save. */
+	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
+		if (!drm_atomic_crtc_needs_modeset(new_crtc_state))
+			continue;
+
+		dm_old_crtc_state = to_dm_crtc_state(old_crtc_state);
+		dm_new_crtc_state = to_dm_crtc_state(new_crtc_state);
+		if (dm_old_crtc_state->stream)
+			amdgpu_dm_backlight_invalidate_link(dm, dm_old_crtc_state->stream->link);
+		if (dm_new_crtc_state->stream)
+			amdgpu_dm_backlight_invalidate_link(dm, dm_new_crtc_state->stream->link);
+	}
 
 	bool frl_stream_found = false;
 
@@ -4739,19 +4776,6 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
 					dm_new_crtc_state->stream, acrtc);
 			else
 				acrtc->otg_inst = status->primary_otg_inst;
-		}
-	}
-
-	/* During boot up and resume the DC layer will reset the panel brightness
-	 * to fix a flicker issue.
-	 * It will cause the dm->actual_brightness is not the current panel brightness
-	 * level. (the dm->brightness is the correct panel level)
-	 * So we set the backlight level with dm->brightness value after set mode
-	 */
-	if (set_backlight_level) {
-		for (i = 0; i < dm->num_of_edps; i++) {
-			if (dm->backlight_dev[i])
-				amdgpu_dm_backlight_set_level(dm, i, dm->brightness[i]);
 		}
 	}
 }
@@ -5369,11 +5393,12 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 	/* Update audio instances for each connector. */
 	amdgpu_dm_commit_audio(dev, state);
 
-	/* restore the backlight level */
-	for (i = 0; i < dm->num_of_edps; i++) {
-		if (dm->backlight_dev[i] &&
-		    (dm->actual_brightness[i] != dm->brightness[i]))
-			amdgpu_dm_backlight_set_level(dm, i, dm->brightness[i]);
+	/* Serialize the restore check with sysfs writes to avoid redundant updates. */
+	scoped_guard(mutex, &dm->dc_lock) {
+		for (i = 0; i < dm->num_of_edps; i++) {
+			if (dm->backlight_dev[i])
+				amdgpu_dm_backlight_restore(dm, i, false);
+		}
 	}
 
 	/*

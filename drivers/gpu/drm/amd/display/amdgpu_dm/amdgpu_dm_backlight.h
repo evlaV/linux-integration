@@ -49,6 +49,8 @@ void amdgpu_dm_setup_backlight_device(struct amdgpu_display_manager *dm,
 			    struct amdgpu_dm_connector *aconnector);
 void amdgpu_dm_update_connector_ext_caps(struct amdgpu_dm_connector *aconnector);
 bool amdgpu_dm_should_create_sysfs(struct amdgpu_dm_connector *aconnector);
+void amdgpu_dm_backlight_restore(struct amdgpu_display_manager *dm,
+				 int bl_idx, bool power_lost);
 
 extern const struct attribute_group amdgpu_group;
 

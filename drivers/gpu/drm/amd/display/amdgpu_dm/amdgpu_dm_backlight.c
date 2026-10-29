@@ -323,11 +323,15 @@ void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 	struct amdgpu_dm_backlight_caps *caps;
 	struct dc_link *link;
 	u32 brightness = 0;
-	u32 prev_brightness;
 	u32 millipercent = 0;
 	bool rc = false, reallow_idle = false;
 	struct drm_connector *connector;
 	struct dc_stream_state *stream;
+
+	lockdep_assert_held(&dm->dc_lock);
+
+	dm->brightness[bl_idx] = user_brightness;
+	dm->backlight_update_pending[bl_idx] = true;
 
 	list_for_each_entry(connector, &dm->ddev->mode_config.connector_list, head) {
 		struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
@@ -336,19 +340,12 @@ void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 			continue;
 
 		/* if connector is off, save the brightness for next time it's on */
-		if (!aconnector->base.encoder) {
-			dm->brightness[bl_idx] = user_brightness;
-			dm->actual_brightness[bl_idx] = 0;
+		if (!aconnector->base.encoder)
 			return;
-		}
 	}
 
 	amdgpu_dm_update_backlight_caps(dm, bl_idx);
 	caps = &dm->backlight_caps[bl_idx];
-
-	prev_brightness = dm->brightness[bl_idx];
-	dm->brightness[bl_idx] = user_brightness;
-	dm->actual_brightness[bl_idx] = user_brightness;
 
 	/* update scratch register */
 	if (bl_idx == 0)
@@ -377,7 +374,6 @@ void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 					   power_supply_is_system_supplied() > 0);
 	}
 
-	mutex_lock(&dm->dc_lock);
 	if (dm->dc->caps.ips_support && dm->dc->ctx->dmub_srv->idle_allowed) {
 		dc_allow_idle_optimizations(dm->dc, false);
 		reallow_idle = true;
@@ -413,12 +409,34 @@ void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
 	if (dm->dc->caps.ips_support && reallow_idle)
 		dc_allow_idle_optimizations(dm->dc, true);
 
-	mutex_unlock(&dm->dc_lock);
-
-	if (!rc)
-		dm->actual_brightness[bl_idx] = prev_brightness;
+	if (rc) {
+		dm->actual_brightness[bl_idx] = user_brightness;
+		dm->backlight_update_pending[bl_idx] = false;
+	}
 }
 EXPORT_IF_KUNIT(amdgpu_dm_backlight_set_level);
+
+void amdgpu_dm_backlight_restore(struct amdgpu_display_manager *dm,
+					int bl_idx, bool power_lost)
+{
+	struct dc_link *link = (struct dc_link *)dm->backlight_link[bl_idx];
+	bool preserve = dc_link_can_preserve_backlight(link);
+
+	lockdep_assert_held(&dm->dc_lock);
+
+	if (power_lost && !preserve)
+		dm->backlight_update_pending[bl_idx] = true;
+
+	if (dm->backlight_update_pending[bl_idx] ||
+	    dm->actual_brightness[bl_idx] != dm->brightness[bl_idx]) {
+		amdgpu_dm_backlight_set_level(dm, bl_idx, dm->brightness[bl_idx]);
+	} else if (preserve && link->backlight_settings.restore_pending &&
+		   dm_find_stream_with_link(dm, link)) {
+		/* Retry the live AUX target, which may differ from the last sysfs request. */
+		dc_exit_ips_for_hw_access(dm->dc);
+		dc_link_restore_backlight(link);
+	}
+}
 
 STATIC_IFN_KUNIT
 int amdgpu_dm_backlight_update_status(struct backlight_device *bd)
@@ -426,7 +444,15 @@ int amdgpu_dm_backlight_update_status(struct backlight_device *bd)
 	struct amdgpu_display_manager *dm = bl_get_data(bd);
 	int i = amdgpu_dm_backlight_get_device_index(dm, bd);
 
-	amdgpu_dm_backlight_set_level(dm, i, bd->props.brightness);
+	scoped_guard(mutex, &dm->dc_lock) {
+		if (dm->backlight_state[i] != bd->props.state) {
+			dm->backlight_state[i] = bd->props.state;
+			/* Blanking and PM must not replay stale OLED sysfs levels. */
+			if (dc_link_can_preserve_backlight(dm->backlight_link[i]))
+				return 0;
+		}
+		amdgpu_dm_backlight_set_level(dm, i, bd->props.brightness);
+	}
 
 	return 0;
 }
@@ -545,7 +571,9 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 		backlight_device_register(bl_name, aconnector->base.kdev, dm,
 					  &amdgpu_dm_backlight_ops, &props);
 	dm->brightness[aconnector->bl_idx] = props.brightness;
-	dm->actual_brightness[aconnector->bl_idx] = props.brightness;
+	dm->backlight_state[aconnector->bl_idx] = props.state;
+	/* Nothing applied yet, commit_tail applies @brightness on the first commit. */
+	dm->backlight_update_pending[aconnector->bl_idx] = true;
 
 	if (IS_ERR(dm->backlight_dev[aconnector->bl_idx])) {
 		drm_err(drm, "DM: Backlight registration failed!\n");
@@ -558,10 +586,8 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 		real_brightness =
 			amdgpu_dm_backlight_ops.get_brightness(dm->backlight_dev[aconnector->bl_idx]);
 
-		if (real_brightness != init_brightness) {
-			dm->actual_brightness[aconnector->bl_idx] = real_brightness;
+		if (real_brightness != init_brightness)
 			dm->brightness[aconnector->bl_idx] = real_brightness;
-		}
 		drm_dbg_driver(drm, "DM: Registered Backlight device: %s\n", bl_name);
 	}
 }
