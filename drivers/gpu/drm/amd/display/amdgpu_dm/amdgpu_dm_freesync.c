@@ -362,7 +362,6 @@ void amdgpu_dm_update_freesync_state_on_stream(
 	new_crtc_state->vrr_infopacket = vrr_infopacket;
 
 	new_stream->vrr_infopacket = vrr_infopacket;
-	new_stream->allow_freesync = mod_freesync_get_freesync_enabled(&vrr_params);
 
 	if (new_crtc_state->freesync_vrr_info_changed) {
 		if (aconn && aconn->dc_link) {

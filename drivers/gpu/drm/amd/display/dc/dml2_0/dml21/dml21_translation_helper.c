@@ -95,6 +95,7 @@ static unsigned int calc_max_hardware_v_total(const struct dc_stream_state *stre
 }
 
 static void populate_dml21_timing_config_from_stream_state(struct dml2_timing_cfg *timing,
+		const struct dc_state *context,
 		struct dc_stream_state *stream,
 		struct pipe_ctx *otg_master_pipe,
 		struct dml2_context *dml_ctx)
@@ -136,7 +137,7 @@ static void populate_dml21_timing_config_from_stream_state(struct dml2_timing_cf
 	timing->drr_config.enabled = stream->ignore_msa_timing_param;
 	timing->drr_config.drr_active_variable = stream->vrr_active_variable;
 	timing->drr_config.drr_active_fixed = stream->vrr_active_fixed;
-	timing->drr_config.disallowed = !stream->allow_freesync;
+	timing->drr_config.disallowed = !dc_state_get_stream_allow_freesync(context, stream);
 
 	/* limit min refresh rate to DC cap */
 	min_hardware_refresh_in_uhz = stream->timing.min_refresh_in_uhz;
@@ -890,6 +891,7 @@ bool dml21_map_dc_state_into_dml_display_cfg(const struct dc *in_dc, struct dc_s
 	int disp_cfg_stream_location, disp_cfg_plane_location;
 	struct dml2_display_cfg *dml_dispcfg = &dml_ctx->v21.display_config;
 	unsigned int plane_count = 0;
+	struct dml2_timing_cfg *timing;
 	struct pipe_ctx *otg_master_pipe;
 
 	memset(&dml_ctx->v21.dml_to_dc_pipe_mapping, 0, sizeof(struct dml2_dml_to_dc_pipe_mapping));
@@ -919,7 +921,11 @@ bool dml21_map_dc_state_into_dml_display_cfg(const struct dc *in_dc, struct dc_s
 		ASSERT(otg_master_pipe);
 
 		ASSERT(disp_cfg_stream_location >= 0 && disp_cfg_stream_location < __DML2_WRAPPER_MAX_STREAMS_PLANES__);
-		populate_dml21_timing_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].timing, context->streams[stream_index], otg_master_pipe, dml_ctx);
+		timing = &dml_dispcfg->stream_descriptors[disp_cfg_stream_location].timing;
+		populate_dml21_timing_config_from_stream_state(timing, context,
+							       context->streams[stream_index],
+							       otg_master_pipe, dml_ctx);
+		populate_dml21_timing_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].timing, context, context->streams[stream_index], otg_master_pipe, dml_ctx);
 		populate_dml21_output_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].output, context->streams[stream_index], otg_master_pipe);
 		populate_dml21_writeback_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].writeback, context->streams[stream_index]);
 		populate_dml21_stream_overrides_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location], context->streams[stream_index], &context->stream_status[stream_index]);
