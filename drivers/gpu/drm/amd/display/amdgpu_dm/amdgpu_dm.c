@@ -5119,12 +5119,14 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 	for_each_oldnew_connector_in_state(state, connector, old_con_state, new_con_state, i) {
 		struct dm_connector_state *dm_new_con_state = to_dm_connector_state(new_con_state);
 		struct dm_connector_state *dm_old_con_state = to_dm_connector_state(old_con_state);
+		struct amdgpu_dm_connector *dm_conn = to_amdgpu_dm_connector(connector);
 		struct amdgpu_crtc *acrtc = to_amdgpu_crtc(dm_new_con_state->base.crtc);
 		struct dc_surface_update *dummy_updates;
 		struct dc_stream_update stream_update;
 		struct dc_info_packet hdr_packet;
 		struct dc_stream_status *status = NULL;
 		bool abm_changed, hdr_changed, scaling_changed, output_color_space_changed = false;
+		bool allm_changed = false;
 
 		memset(&stream_update, 0, sizeof(stream_update));
 
@@ -5154,7 +5156,11 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		hdr_changed =
 			!drm_connector_atomic_hdr_metadata_equal(old_con_state, new_con_state);
 
-		if (!scaling_changed && !abm_changed && !hdr_changed && !output_color_space_changed)
+		allm_changed = dm_conn->hdmi_allm_capable &&
+			       (new_con_state->allm_mode != old_con_state->allm_mode);
+
+		if (!scaling_changed && !abm_changed && !hdr_changed &&
+		    !output_color_space_changed && !allm_changed)
 			continue;
 
 		stream_update.stream = dm_new_crtc_state->stream;
@@ -5182,6 +5188,17 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		if (hdr_changed) {
 			amdgpu_dm_fill_hdr_info_packet(new_con_state, &hdr_packet);
 			stream_update.hdr_static_metadata = &hdr_packet;
+		}
+
+		if (allm_changed) {
+			amdgpu_dm_update_allm_state_on_crtc_stream(dm_new_crtc_state, new_con_state);
+			mod_build_hf_vsif_infopacket(dm_new_crtc_state->stream,
+				&dm_new_crtc_state->stream->hfvsif_infopacket);
+
+			stream_update.hdmi_allm_active =
+				&dm_new_crtc_state->stream->hdmi_allm_active;
+			stream_update.hfvsif_infopacket =
+				&dm_new_crtc_state->stream->hfvsif_infopacket;
 		}
 
 		status = dc_stream_get_status(dm_new_crtc_state->stream);
