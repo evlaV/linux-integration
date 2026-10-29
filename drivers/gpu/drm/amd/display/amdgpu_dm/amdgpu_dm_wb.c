@@ -34,6 +34,7 @@
 #include "dc.h"
 
 #include <drm/drm_edid.h>
+#include <drm/drm_exec.h>
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
 
@@ -92,6 +93,7 @@ STATIC_IFN_KUNIT int amdgpu_dm_wb_prepare_job(struct drm_writeback_connector *wb
 	struct drm_gem_object *obj;
 	struct amdgpu_device *adev;
 	struct amdgpu_bo *rbo;
+	struct drm_exec exec;
 	uint32_t domain;
 	int r;
 
@@ -105,26 +107,29 @@ STATIC_IFN_KUNIT int amdgpu_dm_wb_prepare_job(struct drm_writeback_connector *wb
 	rbo = gem_to_amdgpu_bo(obj);
 	adev = amdgpu_ttm_adev(rbo->tbo.bdev);
 
-	r = amdgpu_bo_reserve(rbo, true);
-	if (r) {
-		drm_err(adev_to_drm(adev), "fail to reserve bo: %pe\n", ERR_PTR(r));
-		return r;
-	}
+	drm_exec_init(&exec, 0, 0);
+	drm_exec_until_all_locked(&exec)
+	{
+		r = drm_exec_prepare_obj(&exec, obj, TTM_NUM_MOVE_FENCES);
+		drm_exec_retry_on_contention(&exec);
+		if (r) {
+			drm_err(adev_to_drm(adev),
+				"Failed to prepare framebuffer BO (%d)\n", r);
+			goto error_unlock;
+		}
 
-	r = dma_resv_reserve_fences(rbo->tbo.base.resv, TTM_NUM_MOVE_FENCES);
-	if (r) {
-		drm_err(adev_to_drm(adev), "reserving fence slot failed: %pe\n", ERR_PTR(r));
-		goto error_unlock;
-	}
+		domain = amdgpu_display_supported_domains(adev, rbo->flags);
 
-	domain = amdgpu_display_supported_domains(adev, rbo->flags);
-
-	rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-	r = amdgpu_bo_pin(rbo, domain);
-	if (unlikely(r != 0)) {
-		if (r != -ERESTARTSYS)
-			DRM_ERROR("Failed to pin framebuffer: %pe\n", ERR_PTR(r));
-		goto error_unlock;
+		rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+		r = amdgpu_bo_pin(rbo, &exec, domain);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r != 0)) {
+			if (r != -ERESTARTSYS)
+				DRM_ERROR(
+					"Failed to pin framebuffer with error %d\n",
+					r);
+			goto error_unlock;
+		}
 	}
 
 	r = amdgpu_ttm_alloc_gart(&rbo->tbo);
@@ -133,7 +138,7 @@ STATIC_IFN_KUNIT int amdgpu_dm_wb_prepare_job(struct drm_writeback_connector *wb
 		goto error_unpin;
 	}
 
-	amdgpu_bo_unreserve(rbo);
+	drm_exec_fini(&exec);
 
 	afb->address = amdgpu_bo_gpu_offset(rbo);
 

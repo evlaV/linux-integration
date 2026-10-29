@@ -1342,7 +1342,7 @@ static int dqm_repin_mqd_bo(struct device_queue_manager *dqm, struct queue *q)
 	r = amdgpu_bo_reserve(bo, false);
 	if (r)
 		return r;
-	r = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_VRAM);
+	r = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_VRAM);
 	if (r) {
 		amdgpu_bo_unreserve(bo);
 		dev_err(dqm->dev->adev->dev,
