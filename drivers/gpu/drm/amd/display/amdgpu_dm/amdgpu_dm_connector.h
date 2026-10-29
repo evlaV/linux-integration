@@ -77,6 +77,9 @@ enum drm_mode_status amdgpu_dm_connector_mode_valid(struct drm_connector *connec
 void dm_restore_drm_connector_state(struct drm_device *dev,
 				    struct drm_connector *connector);
 
+void amdgpu_dm_update_allm_state_on_crtc_stream(struct dm_crtc_state *new_crtc_state,
+						const struct drm_connector_state *new_conn);
+
 void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 				    const struct drm_edid *drm_edid,
 				    bool do_mccs);

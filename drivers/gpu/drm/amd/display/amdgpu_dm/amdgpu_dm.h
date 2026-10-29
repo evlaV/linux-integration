@@ -901,6 +901,9 @@ struct amdgpu_dm_connector {
 
 	/* HDMI compliance automation */
 	bool hdmi_comp_auto;
+
+	/* HDMI ALLM */
+	bool hdmi_allm_capable;
 };
 
 static inline void amdgpu_dm_set_mst_status(uint8_t *status,

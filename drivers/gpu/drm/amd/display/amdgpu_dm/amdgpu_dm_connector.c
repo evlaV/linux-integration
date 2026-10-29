@@ -3224,6 +3224,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
 	aconnector->audio_inst = -1;
 	aconnector->pack_sdp_v1_3 = false;
 	aconnector->as_type = ADAPTIVE_SYNC_TYPE_NONE;
+	aconnector->hdmi_allm_capable = false;
 	memset(&aconnector->vsdb_info, 0, sizeof(aconnector->vsdb_info));
 	mutex_init(&aconnector->hpd_lock);
 	mutex_init(&aconnector->handle_mst_msg_ready);
@@ -3429,6 +3430,10 @@ int amdgpu_dm_initialize_hdmi_connector(struct amdgpu_dm_connector *aconnector)
 	struct cec_connector_info conn_info;
 	struct drm_device *ddev = aconnector->base.dev;
 	struct device *hdmi_dev = ddev->dev;
+
+	/* ALLM */
+	drm_connector_attach_allm_capable_property(&aconnector->base);
+	drm_connector_attach_allm_mode_property(&aconnector->base);
 
 	if (amdgpu_dc_debug_mask & DC_DISABLE_HDMI_CEC) {
 		drm_info(ddev, "HDMI-CEC feature masked\n");
@@ -3933,6 +3938,31 @@ static void extend_range_from_vsdb(struct drm_display_info *display,
 	display->monitor_range.max_vfreq = vrr_max;
 }
 
+void amdgpu_dm_update_allm_state_on_crtc_stream(struct dm_crtc_state *new_crtc_state,
+						const struct drm_connector_state *new_conn)
+{
+	struct mod_freesync_config *config = &new_crtc_state->freesync_config;
+	struct dc_stream_state *new_stream = new_crtc_state->stream;
+	bool allm_active = false;
+
+	switch (new_conn->allm_mode) {
+	case DRM_ALLM_MODE_ENABLED_DYNAMIC:
+		allm_active = config->state == VRR_STATE_ACTIVE_VARIABLE ||
+			      new_stream->content_type == DISPLAY_CONTENT_TYPE_GAME;
+		break;
+
+	case DRM_ALLM_MODE_ENABLED_FORCED:
+		allm_active = true;
+		break;
+
+	case DRM_ALLM_MODE_DISABLED:
+	default:
+		allm_active = false;
+	}
+
+	new_stream->hdmi_allm_active = allm_active;
+}
+
 /**
  * amdgpu_dm_update_freesync_caps - Update Freesync capabilities
  *
@@ -4090,4 +4120,9 @@ update:
 
 	if (connector->passive_vrr_capable_property)
 		drm_connector_set_passive_vrr_capable_property(connector, freesync_on_desktop);
+
+	amdgpu_dm_connector->hdmi_allm_capable = connector->display_info.hdmi.allm;
+	if (connector->allm_capable_property)
+		drm_connector_set_allm_capable_property(
+			connector, connector->display_info.hdmi.allm);
 }
