@@ -2007,6 +2007,8 @@ amdgpu_dm_connector_atomic_duplicate_state(struct drm_connector *connector)
 	__drm_atomic_helper_connector_duplicate_state(connector, &new_state->base);
 
 	new_state->freesync_capable = state->freesync_capable;
+	new_state->freesync_on_desktop_capable =
+		state->freesync_on_desktop_capable;
 	new_state->abm_level = state->abm_level;
 	new_state->scaling = state->scaling;
 	new_state->underscan_enable = state->underscan_enable;
@@ -3318,6 +3320,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
 			drm_connector_attach_vrr_capable_property(&aconnector->base);
 			drm_connector_attach_color_format_property(&aconnector->base,
 								   supported_colorformats);
+			drm_connector_attach_passive_vrr_capable_property(&aconnector->base);
 		}
 
 
@@ -3958,6 +3961,7 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	struct drm_hdmi_vrr_cap hdmi_vrr = {0};
 	struct dpcd_caps dpcd_caps = {0};
 	const struct edid *edid;
+	bool freesync_on_desktop = false;
 	bool freesync_capable = false;
 	bool pcon_allowed = false;
 	bool is_pcon = false;
@@ -4038,6 +4042,7 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 			monitor_range_from_vsdb(&connector->display_info, &vsdb_info);
 
 		freesync_capable = copy_range_to_amdgpu_connector(connector);
+		freesync_on_desktop = freesync_capable;
 
 	/* DP -> HDMI PCON */
 	} else if (pcon_allowed) {
@@ -4052,6 +4057,7 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 		amdgpu_dm_connector->pack_sdp_v1_3 = true;
 		amdgpu_dm_connector->as_type = ADAPTIVE_SYNC_TYPE_PCON_ALLOWED;
 		freesync_capable = copy_range_to_amdgpu_connector(connector);
+		freesync_on_desktop = freesync_capable;
 	}
 
 	/* Handle MCCS */
@@ -4068,8 +4074,10 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	}
 
 update:
-	if (dm_con_state)
+	if (dm_con_state) {
 		dm_con_state->freesync_capable = freesync_capable;
+		dm_con_state->freesync_on_desktop_capable = freesync_on_desktop;
+	}
 
 	if (connector->state && amdgpu_dm_connector->dc_link && !freesync_capable &&
 	    amdgpu_dm_connector->dc_link->replay_settings.config.replay_supported) {
@@ -4078,6 +4086,8 @@ update:
 	}
 
 	if (connector->vrr_capable_property)
-		drm_connector_set_vrr_capable_property(connector,
-						       freesync_capable);
+		drm_connector_set_vrr_capable_property(connector, freesync_capable);
+
+	if (connector->passive_vrr_capable_property)
+		drm_connector_set_passive_vrr_capable_property(connector, freesync_on_desktop);
 }
