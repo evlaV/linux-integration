@@ -346,6 +346,7 @@ struct claw_drvdata {
 	int cmd_status;
 	u16 bcd_device;
 	u8 ep;
+	bool resync; /* Set on a reset during resume, cleared by cfg_resume_fn() */
 
 	/* Gamepad Variables */
 	enum claw_mkeys_function_index mkeys_function;
@@ -1784,12 +1785,24 @@ static void cfg_resume_fn(struct work_struct *work)
 {
 	struct delayed_work *dwork = container_of(work, struct delayed_work, work);
 	struct claw_drvdata *drvdata = container_of(dwork, struct claw_drvdata, cfg_resume);
+	bool gp_registered, rgb_registered, resync;
 
-	guard(spinlock_irqsave)(&drvdata->registration_lock);
-	    /* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
-	if (!smp_load_acquire(&drvdata->gp_registered) ||
-	    /* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
-	    !smp_load_acquire(&drvdata->rgb_registered))
+	/* Pairs with smp_store_release from claw_resume in process context */
+	resync = smp_load_acquire(&drvdata->resync);
+	/* Consumed here, so a later resume does not repeat the read */
+	smp_store_release(&drvdata->resync, false);
+
+	scoped_guard(spinlock_irqsave, &drvdata->registration_lock) {
+		/* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
+		gp_registered = smp_load_acquire(&drvdata->gp_registered);
+		/* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
+		rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
+	}
+
+	/* A bus reset re-initialises the MCU, so its state is re-read rather
+	 * than assumed to have survived.
+	 */
+	if (resync || !gp_registered || !rgb_registered)
 		schedule_delayed_work(&drvdata->cfg_setup, msecs_to_jiffies(500));
 }
 
@@ -1976,19 +1989,28 @@ hw_stop:
 	hid_hw_stop(hdev);
 }
 
-static int claw_resume(struct hid_device *hdev)
+static int claw_resume(struct hid_device *hdev, bool resync)
 {
 	struct claw_drvdata *drvdata = hid_get_drvdata(hdev);
 
 	if (!drvdata)
 		return -ENODEV;
 
+	/* A bus reset re-initialises the MCU, so request a re-read of its state.
+	 * The request is kept until cfg_resume_fn() consumes it, so a following
+	 * plain resume cannot drop it after claw_suspend() cancels the work.
+	 */
+	if (resync) {
+		/* Pairs with smp_load_acquire from cfg_resume_fn in system_wq context */
+		smp_store_release(&drvdata->resync, true);
+	}
+
 	/* MCU can take up to 500ms to be ready after resume */
 	schedule_delayed_work(&drvdata->cfg_resume, msecs_to_jiffies(500));
 	return 0;
 }
 
-static int msi_resume(struct hid_device *hdev)
+static int msi_resume_common(struct hid_device *hdev, bool resync)
 {
 	int ret;
 	u8 ep;
@@ -2000,9 +2022,19 @@ static int msi_resume(struct hid_device *hdev)
 
 	ep = ret;
 	if (ep == CLAW_XINPUT_CFG_INTF_IN || ep == CLAW_DINPUT_CFG_INTF_IN)
-		return claw_resume(hdev);
+		return claw_resume(hdev, resync);
 
 	return 0;
+}
+
+static int msi_resume(struct hid_device *hdev)
+{
+	return msi_resume_common(hdev, false);
+}
+
+static int msi_reset_resume(struct hid_device *hdev)
+{
+	return msi_resume_common(hdev, true);
 }
 
 static int claw_suspend(struct hid_device *hdev)
@@ -2052,6 +2084,7 @@ static struct hid_driver msi_driver = {
 	.probe		= msi_probe,
 	.remove		= msi_remove,
 	.resume		= pm_ptr(msi_resume),
+	.reset_resume	= pm_ptr(msi_reset_resume),
 	.suspend	= pm_ptr(msi_suspend),
 };
 module_hid_driver(msi_driver);
