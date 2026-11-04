@@ -12,6 +12,7 @@
 #ifndef _GIP_H
 #define _GIP_H
 
+#include <crypto/sha2.h>
 #include <linux/hid.h>
 #include <linux/led-class-multicolor.h>
 #include <linux/power_supply.h>
@@ -134,6 +135,13 @@ enum gip_metadata_status {
 	GIP_METADATA_PENDING = 3,
 };
 
+enum gip_security_status {
+	GIP_SECURITY_PENDING = 0,
+	GIP_SECURITY_SKIPPED,
+	GIP_SECURITY_SENT,
+	GIP_SECURITY_DONE,
+};
+
 enum gip_elite_button_format {
 	GIP_BTN_FMT_UNKNOWN,
 	GIP_BTN_FMT_XBE1,
@@ -141,6 +149,12 @@ enum gip_elite_button_format {
 	GIP_BTN_FMT_XBE2_4,
 	GIP_BTN_FMT_XBE2_5,
 };
+
+struct gip_audio_format_pair {
+	uint8_t inbound;
+	uint8_t outbound;
+};
+static_assert(sizeof(struct gip_audio_format_pair) == 2);
 
 struct gip_header {
 	uint8_t message_type;
@@ -210,24 +224,27 @@ struct gip_extended_status {
 };
 
 struct gip_out_fragment {
+	struct gip_attachment *attachment;
 	bool active;
 	bool acked;
 	uint8_t message;
 	uint8_t flags;
 	uint8_t seq;
+	uint8_t retries;
 	uint16_t total_length;
 	uint32_t fragment_offset;
 	uint8_t *data;
+	struct delayed_work timeout;
 };
 
 struct gip_security {
-	struct shash_desc *shash_transcript;
-	struct shash_desc *shash_prf;
+	struct sha256_ctx transcript;
 
 	struct work_struct work_exchange_rsa;
 	struct work_struct work_exchange_ecdh;
 	struct work_struct work_complete;
 
+	enum gip_security_status status;
 	uint8_t last_sent_command;
 
 	uint8_t random_host[GIP_SECURITY_RANDOM_LEN];
@@ -277,8 +294,14 @@ struct gip_attachment {
 	struct delayed_work metadata_next;
 	int metadata_retries;
 	struct gip_metadata metadata;
+	struct delayed_work early_security;
 	struct gip_security security;
-	bool security_sent;
+
+#ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
+	uint8_t left_vibration_level;
+	uint8_t right_vibration_level;
+	struct work_struct rumble_work;
+#endif
 
 	uint8_t seq_system;
 	uint8_t seq_security;
@@ -292,6 +315,7 @@ struct gip_attachment {
 		struct led_classdev_mc color;
 	} guide_led;
 
+	spinlock_t battery_lock;
 	struct power_supply *battery;
 	struct power_supply_desc battery_desc;
 	struct gip_extended_status status;
@@ -311,6 +335,7 @@ struct gip_urb {
 	struct urb *urb;
 	uint8_t *data;
 	unsigned int offset;
+	bool active;
 };
 
 struct gip_interface {
@@ -326,7 +351,7 @@ struct gip_interface {
 	struct gip_urb out_queue[MAX_OUT_MESSAGES];
 
 	struct work_struct send_fragment;
-	unsigned has_pending_out;
+	unsigned int has_pending_out;
 };
 
 struct gip_device {
@@ -343,6 +368,7 @@ struct gip_device {
 	spinlock_t message_lock;
 
 	struct gip_attachment *attachments[MAX_ATTACHMENTS];
+	struct mutex attachment_lock;
 };
 
 struct gip_quirks {
@@ -378,17 +404,17 @@ struct gip_driver {
 
 static inline struct device *gip_attachment_dev(struct gip_attachment *attachment)
 {
-	return &attachment->device->udev->dev;
+	return &attachment->device->data.intf->dev;
 }
 
 static inline struct device *gip_interface_dev(struct gip_interface *intf)
 {
-	return &intf->device->udev->dev;
+	return &intf->intf->dev;
 }
 
 static inline struct device *gip_device_dev(struct gip_device *device)
 {
-	return &device->udev->dev;
+	return &device->data.intf->dev;
 }
 
 static inline struct device *gip_security_dev(struct gip_security *security)
