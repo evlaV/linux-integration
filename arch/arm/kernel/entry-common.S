@@ -456,8 +456,8 @@ ENDPROC(sys_oabi_readahead)
  */
 	syscall_table_start sys_oabi_call_table
 #undef __SYSCALL_WITH_COMPAT
-#define __SYSCALL_WITH_COMPAT(nr, native, compat)	__SYSCALL(nr, compat)
-#include <calls-oabi.S>
+#define __SYSCALL_WITH_COMPAT(nr, native, compat)	__SYSCALL(nr, native)
+#include <calls-oabic.S>
 	syscall_table_end sys_oabi_call_table
 
 #endif
