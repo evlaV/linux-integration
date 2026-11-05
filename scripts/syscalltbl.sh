@@ -70,7 +70,7 @@ gen_tbl() {
 	tmpfile=$(mktemp)
 	offset_nr=$2
 
-	grep -E "^[0-9A-Fa-fXx]+[[:space:]]+$abis" "$input" > $tmpfile
+	grep -E "^[0-9A-Fa-fXx]+[[:space:]]+$abis+[[:space:]]" "$input" > $tmpfile || true
 	while read nr abi name native compat noreturn; do
 
                 if [ -n "$offset_nr" ]; then
