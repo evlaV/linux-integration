@@ -110,6 +110,7 @@
 #include "ivsrcid/dcn/irqsrcs_dcn_1_0.h"
 
 #include "modules/inc/mod_freesync.h"
+#include "modules/inc/mod_info_packet.h"
 #include "modules/inc/mod_power.h"
 #include "modules/power/power_helpers.h"
 
@@ -755,6 +756,8 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
 			create_singlethread_workqueue("hdmi_frl_status_polling_wq");
 		if (!adev->dm.hdmi_frl_status_polling_wq)
 			drm_err(adev_to_drm(adev), "failed to initialize hdmi_frl_status_polling_wq\n");
+		adev->dm.hdmi_frl_status_polling_delay_ms = 200;
+		INIT_DELAYED_WORK(&adev->dm.hdmi_frl_status_polling_work, hdmi_frl_status_polling_work);
 	}
 	if (dc_is_dmub_outbox_supported(adev->dm.dc)) {
 		init_completion(&adev->dm.dmub_aux_transfer_done);
@@ -4133,9 +4136,14 @@ static void amdgpu_dm_commit_planes(struct drm_atomic_commit *state,
 		}
 
 		if (acrtc_state->stream) {
-			if (acrtc_state->freesync_vrr_info_changed)
+			if (acrtc_state->freesync_vrr_info_changed) {
 				bundle->stream_update.vrr_infopacket =
 					&acrtc_state->stream->vrr_infopacket;
+				bundle->stream_update.vtem_infopacket =
+					&acrtc_state->stream->vtem_infopacket;
+				bundle->stream_update.vsp_infopacket =
+					&acrtc_state->stream->vsp_infopacket;
+			}
 		}
 	}
 
@@ -5164,14 +5172,12 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 	for_each_oldnew_connector_in_state(state, connector, old_con_state, new_con_state, i) {
 		struct dm_connector_state *dm_new_con_state = to_dm_connector_state(new_con_state);
 		struct dm_connector_state *dm_old_con_state = to_dm_connector_state(old_con_state);
-		struct amdgpu_dm_connector *dm_conn = to_amdgpu_dm_connector(connector);
 		struct amdgpu_crtc *acrtc = to_amdgpu_crtc(dm_new_con_state->base.crtc);
 		struct dc_surface_update *dummy_updates;
 		struct dc_stream_update stream_update;
 		struct dc_info_packet hdr_packet;
 		struct dc_stream_status *status = NULL;
 		bool abm_changed, hdr_changed, scaling_changed, output_color_space_changed = false;
-		bool allm_changed = false;
 
 		memset(&stream_update, 0, sizeof(stream_update));
 
@@ -5201,11 +5207,7 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		hdr_changed =
 			!drm_connector_atomic_hdr_metadata_equal(old_con_state, new_con_state);
 
-		allm_changed = dm_conn->hdmi_allm_capable &&
-			       (new_con_state->allm_mode != old_con_state->allm_mode);
-
-		if (!scaling_changed && !abm_changed && !hdr_changed &&
-		    !output_color_space_changed && !allm_changed)
+		if (!scaling_changed && !abm_changed && !hdr_changed && !output_color_space_changed)
 			continue;
 
 		stream_update.stream = dm_new_crtc_state->stream;
@@ -5233,17 +5235,6 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_commit *state)
 		if (hdr_changed) {
 			amdgpu_dm_fill_hdr_info_packet(new_con_state, &hdr_packet);
 			stream_update.hdr_static_metadata = &hdr_packet;
-		}
-
-		if (allm_changed) {
-			amdgpu_dm_update_allm_state_on_crtc_stream(dm_new_crtc_state, new_con_state);
-			mod_build_hf_vsif_infopacket(dm_new_crtc_state->stream,
-				&dm_new_crtc_state->stream->hfvsif_infopacket);
-
-			stream_update.hdmi_allm_active =
-				&dm_new_crtc_state->stream->hdmi_allm_active;
-			stream_update.hfvsif_infopacket =
-				&dm_new_crtc_state->stream->hfvsif_infopacket;
 		}
 
 		status = dc_stream_get_status(dm_new_crtc_state->stream);
@@ -5498,6 +5489,30 @@ static int do_aquire_global_lock(struct drm_device *dev,
 	}
 
 	return ret < 0 ? ret : 0;
+}
+
+/* FreeSync module gates ACTIVE_VARIABLE on this minimum refresh span (Hz). */
+#define AMDGPU_DM_VRR_MIN_REFRESH_RANGE 10
+
+static bool amdgpu_dm_is_vrr_timing_valid(const struct dc_stream_state *stream,
+		int min_vfreq, int max_vfreq)
+{
+	u64 nominal_vfreq_uhz, usable_max_vfreq_uhz;
+
+	/* Without complete timing/range data, leave the existing decision. */
+	if (!stream || !stream->timing.pix_clk_100hz ||
+	    !stream->timing.h_total || !stream->timing.v_total ||
+	    min_vfreq <= 0 || max_vfreq <= 0)
+		return true;
+
+	/* Match the FreeSync module's nominal-rate calculation. */
+	nominal_vfreq_uhz = mod_freesync_calc_nominal_field_rate(stream);
+	usable_max_vfreq_uhz = min_t(u64, (u64)max_vfreq * 1000000,
+					     nominal_vfreq_uhz);
+
+	return usable_max_vfreq_uhz >=
+		       (u64)min_vfreq * 1000000 +
+		       (u64)AMDGPU_DM_VRR_MIN_REFRESH_RANGE * 1000000;
 }
 
 static int dm_update_crtc_state(struct amdgpu_display_manager *dm,
@@ -6326,6 +6341,16 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 	}
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
 		dm_old_crtc_state = to_dm_crtc_state(old_crtc_state);
+
+		/* VRR test: trace the vrr_enabled userspace requests per commit */
+		drm_dbg_atomic(dev,
+			       "[CRTC:%d:%s] VRR test: requested vrr_enabled %d->%d (active %d->%d, modeset %d)\n",
+			       crtc->base.id, crtc->name,
+			       old_crtc_state->vrr_enabled,
+			       new_crtc_state->vrr_enabled,
+			       old_crtc_state->active,
+			       new_crtc_state->active,
+			       drm_atomic_crtc_needs_modeset(new_crtc_state));
 
 		if (!drm_atomic_crtc_needs_modeset(new_crtc_state) &&
 		    !new_crtc_state->color_mgmt_changed &&

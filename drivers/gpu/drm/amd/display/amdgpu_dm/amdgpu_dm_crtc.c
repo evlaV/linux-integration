@@ -449,6 +449,7 @@ STATIC_IFN_KUNIT struct drm_crtc_state *amdgpu_dm_crtc_duplicate_state(struct dr
 
 	state->active_planes = cur->active_planes;
 	state->vrr_infopacket = cur->vrr_infopacket;
+	state->vtem_infopacket = cur->vtem_infopacket;
 	state->abm_level = cur->abm_level;
 	state->vrr_supported = cur->vrr_supported;
 	state->freesync_config = cur->freesync_config;

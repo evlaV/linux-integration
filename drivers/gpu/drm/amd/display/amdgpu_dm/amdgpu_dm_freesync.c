@@ -57,79 +57,6 @@ struct dm_freesync_mccs_ddc_work {
 	bool freesync_enabled;
 };
 
-static void dm_freesync_mccs_ddc_worker(struct work_struct *work)
-{
-	struct dm_freesync_mccs_ddc_work *w = container_of(work,
-			struct dm_freesync_mccs_ddc_work, work);
-	struct amdgpu_dm_connector *aconn = w->aconn;
-	struct amdgpu_i2c_adapter *i2c_adap = NULL;
-	struct i2c_adapter *adap;
-	int ret = 0;
-
-	if (!aconn || !aconn->dc_link || !aconn->dc_link->ddc)
-		goto out_free;
-
-	/* For DisplayPort AUX2I2C (PCON) path */
-	if (aconn->dc_link->aux_mode) {
-		adap = &aconn->dm_dp_aux.aux.ddc;
-	} else {
-		/* Reuse cached adapter if present; else skip instead of creating a temporary one */
-		if (aconn->i2c)
-			i2c_adap = aconn->i2c;
-		else
-			DRM_ERROR("Cached i2c adapter not present\n");
-
-		if (!i2c_adap)
-			goto out_free;
-
-		adap = &i2c_adap->base;
-	}
-
-	/*
-	 * This simply exercises the DDC/CI path at 0x37.  Proper MCCS framing
-	 * requires byte count & checksum;
-	 * There are HDMI display devices require FreeSync MCCS VCP Code 230 (0xE6) from
-	 * AMD GPU to enable / disable FreeSync handling when FreeSync VRR is On / Off. Otherwise
-	 * those HDMI display devices will have issues like no video or flashing artifacts.
-	 */
-	{
-		static const u8 freesync_on[7]  =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x01, 0x5E };
-		static const u8 freesync_off[7] =  { 0x51, 0x84, 0x03, 0xE6, 0x01, 0x00, 0x5E };
-
-		u8 wr[7];
-
-		memcpy(wr, w->freesync_enabled ? freesync_on : freesync_off, sizeof(wr));
-
-		u8 rd[64] = { 0 };
-		struct i2c_msg msgs[8] = {
-		    { .addr = MCCS_SLAVE_ADDR, .flags = 0,        .len = sizeof(wr), .buf = wr },
-		    { .addr = MCCS_SLAVE_ADDR, .flags = I2C_M_RD, .len = sizeof(rd), .buf = rd }
-		};
-
-		ret = i2c_transfer(adap, msgs, 1);
-		DRM_DEBUG_KMS("FreeSync MCCS DDC poke on %s: ret=%d freesync_enabled=%d\n",
-			      aconn->base.name, ret, w->freesync_enabled);
-	}
-
-out_free:
-	kfree(w);
-}
-
-static void dm_schedule_freesync_mccs_ddc_poke(struct amdgpu_dm_connector *aconn,
-					       bool freesync_enabled)
-{
-	struct dm_freesync_mccs_ddc_work *w;
-
-	w = kzalloc(sizeof(*w), GFP_ATOMIC);
-	if (!w)
-		return;
-
-	INIT_WORK(&w->work, dm_freesync_mccs_ddc_worker);
-	w->aconn = aconn;
-	w->freesync_enabled = freesync_enabled;
-	schedule_work(&w->work);
-}
-
 bool amdgpu_dm_is_dc_timing_adjust_needed(struct dm_crtc_state *old_state,
 					  struct dm_crtc_state *new_state)
 {
@@ -198,6 +125,8 @@ void amdgpu_dm_reset_freesync_config_for_crtc(
 
 	memset(&new_crtc_state->vrr_infopacket, 0,
 	       sizeof(new_crtc_state->vrr_infopacket));
+	memset(&new_crtc_state->vtem_infopacket, 0,
+	       sizeof(new_crtc_state->vtem_infopacket));
 }
 EXPORT_IF_KUNIT(amdgpu_dm_reset_freesync_config_for_crtc);
 
@@ -210,15 +139,28 @@ void amdgpu_dm_get_freesync_config_for_crtc(
 	struct drm_display_mode *mode = &new_crtc_state->base.mode;
 	int vrefresh = drm_mode_vrefresh(mode);
 	bool fs_vid_mode = false;
+	bool vrr_timing_valid;
 
 	if (new_con_state->base.connector->connector_type == DRM_MODE_CONNECTOR_WRITEBACK)
 		return;
 
 	aconnector = to_amdgpu_dm_connector(new_con_state->base.connector);
 
+	vrr_timing_valid = amdgpu_dm_is_vrr_timing_valid(new_crtc_state->stream,
+			aconnector->min_vfreq, aconnector->max_vfreq);
+	if (!vrr_timing_valid)
+		drm_dbg_kms(new_con_state->base.connector->dev,
+				"VRR invalid %s %s %dx%d@%d %d-%d clk=%u h=%u v=%u\n",
+				new_con_state->base.connector->name, mode->name,
+				mode->hdisplay, mode->vdisplay, vrefresh,
+				aconnector->min_vfreq, aconnector->max_vfreq,
+				new_crtc_state->stream->timing.pix_clk_100hz,
+				new_crtc_state->stream->timing.h_total,
+				new_crtc_state->stream->timing.v_total);
 	new_crtc_state->vrr_supported = new_con_state->freesync_capable &&
 					vrefresh >= aconnector->min_vfreq &&
-					vrefresh <= aconnector->max_vfreq;
+					vrefresh <= aconnector->max_vfreq &&
+					vrr_timing_valid;
 
 	if (new_crtc_state->vrr_supported) {
 		new_crtc_state->stream->ignore_msa_timing_param = true;
@@ -262,6 +204,7 @@ void amdgpu_dm_update_freesync_state_on_stream(
 {
 	struct mod_vrr_params vrr_params;
 	struct dc_info_packet vrr_infopacket = {0};
+	struct dc_info_packet vtem_infopacket = {0};
 	struct amdgpu_device *adev = dm->adev;
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(new_crtc_state->base.crtc);
 	unsigned long flags;
@@ -305,44 +248,19 @@ void amdgpu_dm_update_freesync_state_on_stream(
 
 	aconn = (struct amdgpu_dm_connector *)new_stream->dm_stream_context;
 
-	if (aconn && aconn->as_type == ADAPTIVE_SYNC_TYPE_HDMI)
-	{
-		struct drm_connector *connector = &aconn->base;
-
-		/* if not HDMI VRR capable, use FreeSync SPD packet */
-		if (!connector->display_info.hdmi.vrr_cap.supported)
-			packet_type = PACKET_TYPE_VRR;
-		else
-			packet_type = PACKET_TYPE_VTEM;
-	}
-	else if (aconn && (aconn->as_type == ADAPTIVE_SYNC_TYPE_PCON_ALLOWED || aconn->vsdb_info.replay_mode))
-	{
-		struct drm_connector *connector = &aconn->base;
+	if (aconn && (aconn->as_type == FREESYNC_TYPE_PCON_IN_WHITELIST || aconn->vsdb_info.replay_mode)) {
 		pack_sdp_v1_3 = aconn->pack_sdp_v1_3;
 
-		DRM_DEBUG_KMS("PCON Type, VRR supported: = %d", connector->display_info.hdmi.vrr_cap.supported);
-
-		/* if not HDMI VRR capable, use FreeSync SPD packet */
-		if (!connector->display_info.hdmi.vrr_cap.supported)
-		{
-			if (aconn->vsdb_info.amd_vsdb_version == 1)
-				packet_type = PACKET_TYPE_FS_V1;
-			else if (aconn->vsdb_info.amd_vsdb_version == 2)
-				packet_type = PACKET_TYPE_FS_V2;
-			else if (aconn->vsdb_info.amd_vsdb_version == 3)
-				packet_type = PACKET_TYPE_FS_V3;
-		}
-		else
-		{
-			/* HDMI VRR but not FreeSync capable, use VTEM packet */
-			packet_type = PACKET_TYPE_VTEM;
-		}
+		if (aconn->vsdb_info.amd_vsdb_version == 1)
+			packet_type = PACKET_TYPE_FS_V1;
+		else if (aconn->vsdb_info.amd_vsdb_version == 2)
+			packet_type = PACKET_TYPE_FS_V2;
+		else if (aconn->vsdb_info.amd_vsdb_version == 3)
+			packet_type = PACKET_TYPE_FS_V3;
 
 		mod_build_adaptive_sync_infopacket(new_stream, aconn->as_type, NULL,
 					&new_stream->adaptive_sync_infopacket);
 	}
-
-	DRM_DEBUG_KMS("as_type = %d, packet_type = %d", aconn->as_type, packet_type);
 
 	mod_freesync_build_vrr_infopacket(
 		dm->freesync_module,
@@ -353,28 +271,69 @@ void amdgpu_dm_update_freesync_state_on_stream(
 		&vrr_infopacket,
 		pack_sdp_v1_3);
 
+	/*
+	 * If the sink does not support FreeSync, but it does support VRR,
+	 * we need to build a VTEM packet to enable VRR.
+	 */
+	if (aconn && !aconn->vsdb_info.freesync_supported &&
+	    aconn->base.display_info.hdmi.vrr_cap.supported &&
+	    (new_stream->signal == SIGNAL_TYPE_HDMI_FRL ||
+	     new_stream->signal == SIGNAL_TYPE_HDMI_TYPE_A)) {
+		mod_build_infopacket_vtem(new_stream, &vrr_params, 0, &vtem_infopacket);
+		memset(&vrr_infopacket, 0, sizeof(vrr_infopacket));
+	}
+
 	new_crtc_state->freesync_vrr_info_changed |=
 		(memcmp(&new_crtc_state->vrr_infopacket,
 			&vrr_infopacket,
 			sizeof(vrr_infopacket)) != 0);
+	new_crtc_state->freesync_vrr_info_changed |=
+		(memcmp(&new_crtc_state->vtem_infopacket,
+			&vtem_infopacket,
+			sizeof(vtem_infopacket)) != 0);
 
 	acrtc->dm_irq_params.vrr_params = vrr_params;
 	new_crtc_state->vrr_infopacket = vrr_infopacket;
+	new_crtc_state->vtem_infopacket = vtem_infopacket;
 
 	new_stream->vrr_infopacket = vrr_infopacket;
+	new_stream->vtem_infopacket = vtem_infopacket;
+	new_stream->allow_freesync = mod_freesync_get_freesync_enabled(&vrr_params);
 
-	if (new_crtc_state->freesync_vrr_info_changed) {
-		if (aconn && aconn->dc_link) {
-			drm_dbg_kms(adev_to_drm(adev), "FreeSync MCCS I2C Notify\n");
-			/* Defer the actual DDC action to a worker. */
-			dm_schedule_freesync_mccs_ddc_poke(aconn, new_crtc_state->base.vrr_enabled);
-		}
+	/*
+	 * HDMI ALLM: when Gaming-VRR is active (VRR_EN=1) and the sink
+	 * advertises ALLM in the SCDS, the Source shall transmit the HF-VSIF
+	 * with ALLM_Mode=1 (HDMI 2.1 Section 7.6.6).
+	 */
+	if (new_stream->signal == SIGNAL_TYPE_HDMI_TYPE_A ||
+	    new_stream->signal == SIGNAL_TYPE_HDMI_FRL) {
+		struct dc_info_packet vsp_infopacket = {0};
+		bool sink_allm = aconn && aconn->base.display_info.hdmi.allm;
+		bool allm = sink_allm &&
+			(vrr_params.state == VRR_STATE_ACTIVE_VARIABLE ||
+			 vrr_params.state == VRR_STATE_ACTIVE_FIXED);
+		bool allm_changed;
 
-		drm_dbg_kms(adev_to_drm(adev), "FreeSync VRR packet update: crtc=%u enabled=%d state=%d",
+		mod_build_hf_vsif_infopacket(new_stream, &vsp_infopacket, allm, allm);
+
+		allm_changed = memcmp(&new_stream->vsp_infopacket, &vsp_infopacket,
+				      sizeof(vsp_infopacket)) != 0;
+		new_crtc_state->freesync_vrr_info_changed |= allm_changed;
+		new_stream->vsp_infopacket = vsp_infopacket;
+
+		if (allm_changed)
+			drm_dbg_driver(adev_to_drm(adev),
+				       "ALLM: flip on crtc=%u: sink_allm=%d vrr_state=%d -> ALLM_Mode=%d\n",
+				    new_crtc_state->base.crtc->base.id,
+				    sink_allm,
+				    vrr_params.state, allm);
+	}
+
+	if (new_crtc_state->freesync_vrr_info_changed)
+		drm_dbg_kms(adev_to_drm(adev), "VRR packet update: crtc=%u enabled=%d state=%d",
 			      new_crtc_state->base.crtc->base.id,
 			      (int)new_crtc_state->base.vrr_enabled,
 			      (int)vrr_params.state);
-	}
 
 	spin_unlock_irqrestore(&adev_to_drm(adev)->event_lock, flags);
 }
