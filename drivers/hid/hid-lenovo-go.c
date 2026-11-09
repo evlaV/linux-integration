@@ -2448,12 +2448,7 @@ static void cfg_setup(struct work_struct *work)
 static int hid_go_cfg_probe(struct hid_device *hdev,
 			    const struct hid_device_id *_id)
 {
-	unsigned char *buf;
 	int ret;
-
-	buf = devm_kzalloc(&hdev->dev, GO_PACKET_SIZE, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
 
 	mutex_init(&drvdata.cfg_mutex);
 	hid_set_drvdata(hdev, &drvdata);
