@@ -53,7 +53,7 @@ struct hid_go_cmd {
 static struct hid_go_cfg {
 	struct delayed_work go_cfg_setup;
 	struct hid_go_cmd cmd;
-	struct led_classdev *led_cdev;
+	struct led_classdev_mc led_mc;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
 	u8 fps_mode;
@@ -638,12 +638,12 @@ static int hid_go_light_event(struct command_report *cmd_rep)
 	case USR_LIGHT_PROFILE_1:
 	case USR_LIGHT_PROFILE_2:
 	case USR_LIGHT_PROFILE_3:
-		mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
+		mc_cdev = &drvdata.led_mc;
 		drvdata.rgb_effect = cmd_rep->data[0];
 		mc_cdev->subled_info[0].intensity = cmd_rep->data[1];
 		mc_cdev->subled_info[1].intensity = cmd_rep->data[2];
 		mc_cdev->subled_info[2].intensity = cmd_rep->data[3];
-		drvdata.led_cdev->brightness = cmd_rep->data[4];
+		drvdata.led_mc.led_cdev.brightness = cmd_rep->data[4];
 		drvdata.rgb_speed = 100 - cmd_rep->data[5];
 		return 0;
 	default:
@@ -1542,7 +1542,7 @@ static ssize_t rgb_effect_store(struct device *dev,
 				struct device_attribute *attr, const char *buf,
 				size_t count)
 {
-	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
+	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
 	enum rgb_config_index index;
 	u8 effect;
 	int ret;
@@ -1557,7 +1557,7 @@ static ssize_t rgb_effect_store(struct device *dev,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
 			      mc_cdev->subled_info[2].intensity,
-			      drvdata.led_cdev->brightness,
+			      drvdata.led_mc.led_cdev.brightness,
 			      drvdata.rgb_speed };
 
 	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, index, rgb_profile, 6);
@@ -1602,7 +1602,7 @@ static ssize_t rgb_speed_store(struct device *dev,
 			       struct device_attribute *attr, const char *buf,
 			       size_t count)
 {
-	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
+	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
 	enum rgb_config_index index;
 	int val = 0;
 	int ret;
@@ -1622,7 +1622,7 @@ static ssize_t rgb_speed_store(struct device *dev,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
 			      mc_cdev->subled_info[2].intensity,
-			      drvdata.led_cdev->brightness,
+			      drvdata.led_mc.led_cdev.brightness,
 			      val };
 
 	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, index, rgb_profile, 6);
@@ -1756,7 +1756,7 @@ static ssize_t rgb_profile_range_show(struct device *dev,
 static void hid_go_brightness_set(struct led_classdev *led_cdev,
 				  enum led_brightness brightness)
 {
-	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(drvdata.led_cdev);
+	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
 	enum rgb_config_index index;
 	int ret;
 
@@ -2264,18 +2264,6 @@ static struct mc_subled go_rgb_subled_info[] = {
 	},
 };
 
-static struct led_classdev_mc go_cdev_rgb = {
-	.led_cdev = {
-		.name = "go:rgb:joystick_rings",
-		.color = LED_COLOR_ID_RGB,
-		.brightness = 0x50,
-		.max_brightness = 0x64,
-		.brightness_set = hid_go_brightness_set,
-	},
-	.num_colors = ARRAY_SIZE(go_rgb_subled_info),
-	.subled_info = go_rgb_subled_info,
-};
-
 static void cfg_setup(struct work_struct *work)
 {
 	int ret;
@@ -2454,6 +2442,18 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 	hid_set_drvdata(hdev, &drvdata);
 	drvdata.hdev = hdev;
 
+	/* Device is hardwired and name is guaranteed to be unique */
+	drvdata.led_mc.led_cdev.name = "go:rgb:joystick_rings";
+	drvdata.led_mc.led_cdev.color = LED_COLOR_ID_RGB;
+	drvdata.led_mc.led_cdev.brightness = 0x50;
+	drvdata.led_mc.led_cdev.max_brightness = 0x64;
+	drvdata.led_mc.led_cdev.brightness_set = hid_go_brightness_set;
+	drvdata.led_mc.num_colors = ARRAY_SIZE(go_rgb_subled_info);
+	drvdata.led_mc.subled_info = devm_kmemdup(&hdev->dev, go_rgb_subled_info,
+						  sizeof(go_rgb_subled_info), GFP_KERNEL);
+	if (!drvdata.led_mc.subled_info)
+		return -ENOMEM;
+
 	ret = sysfs_create_groups(&hdev->dev.kobj, top_level_attr_groups);
 	if (ret) {
 		dev_err_probe(&hdev->dev, ret,
@@ -2461,20 +2461,18 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 		return ret;
 	}
 
-	ret = devm_led_classdev_multicolor_register(&hdev->dev, &go_cdev_rgb);
+	ret = devm_led_classdev_multicolor_register(&hdev->dev, &drvdata.led_mc);
 	if (ret) {
 		dev_err_probe(&hdev->dev, ret, "Failed to create RGB device\n");
 		return ret;
 	}
 
-	ret = devm_device_add_group(go_cdev_rgb.led_cdev.dev, &rgb_attr_group);
+	ret = devm_device_add_group(drvdata.led_mc.led_cdev.dev, &rgb_attr_group);
 	if (ret) {
 		dev_err_probe(&hdev->dev, ret,
 			      "Failed to create RGB configuration attributes\n");
 		return ret;
 	}
-
-	drvdata.led_cdev = &go_cdev_rgb.led_cdev;
 
 	/* Executing calls prior to returning from probe will lock the MCU. Schedule
 	 * initial data call after probe has completed and MCU can accept calls.
