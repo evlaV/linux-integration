@@ -653,45 +653,49 @@ static int hid_go_light_event(struct command_report *cmd_rep)
 
 static int hid_go_device_status_event(struct command_report *cmd_rep)
 {
+	u8 device_type = cmd_rep->device_type;
+	u8 caldev = cmd_rep->data[0];
 	u8 status = cmd_rep->data[1];
+	const char *attr;
 
 	if (status > CAL_STAT_FAILURE)
 		status = CAL_STAT_FAILURE;
 
-	switch (cmd_rep->device_type) {
-	case LEFT_CONTROLLER:
-		switch (cmd_rep->data[0]) {
-		case CALDEV_GYROSCOPE:
+	if (device_type != LEFT_CONTROLLER && device_type != RIGHT_CONTROLLER)
+		return -EINVAL;
+
+	switch (caldev) {
+	case CALDEV_GYROSCOPE:
+		if (device_type == LEFT_CONTROLLER)
 			drvdata.gp_left_gyro_cal_status = status;
-			return 0;
-		case CALDEV_JOYSTICK:
-			drvdata.gp_left_joy_cal_status = status;
-			return 0;
-		case CALDEV_TRIGGER:
-			drvdata.gp_left_trigg_cal_status = status;
-			return 0;
-		default:
-			return -EINVAL;
-		}
-		break;
-	case RIGHT_CONTROLLER:
-		switch (cmd_rep->data[0]) {
-		case CALDEV_GYROSCOPE:
+		else
 			drvdata.gp_right_gyro_cal_status = status;
-			return 0;
-		case CALDEV_JOYSTICK:
+		attr = "calibrate_gyro_status";
+		break;
+	case CALDEV_JOYSTICK:
+		if (device_type == LEFT_CONTROLLER)
+			drvdata.gp_left_joy_cal_status = status;
+		else
 			drvdata.gp_right_joy_cal_status = status;
-			return 0;
-		case CALDEV_TRIGGER:
+		attr = "calibrate_joystick_status";
+		break;
+	case CALDEV_TRIGGER:
+		if (device_type == LEFT_CONTROLLER)
+			drvdata.gp_left_trigg_cal_status = status;
+		else
 			drvdata.gp_right_trigg_cal_status = status;
-			return 0;
-		default:
-			return -EINVAL;
-		}
+		attr = "calibrate_trigger_status";
 		break;
 	default:
 		return -EINVAL;
 	}
+
+	if (device_type == LEFT_CONTROLLER)
+		sysfs_notify(&drvdata.hdev->dev.kobj, "left_handle", attr);
+	else
+		sysfs_notify(&drvdata.hdev->dev.kobj, "right_handle", attr);
+
+	return 0;
 }
 
 static int hid_go_os_mode_cfg_event(struct command_report *cmd_rep)
