@@ -27,13 +27,12 @@
 #include <linux/sysfs.h>
 #include <linux/types.h>
 #include <linux/unaligned.h>
-#include <linux/usb.h>
 #include <linux/workqueue.h>
 #include <linux/workqueue_types.h>
 
 #include "hid-ids.h"
 
-#define GO_GP_INTF_IN		0x83
+#define GO_VENDOR_USAGE_PAGE	0xFFA0
 #define GO_INPUT_REPORT_ID	0x04
 #define GO_OUTPUT_REPORT_ID	0x05
 #define GO_GP_RESET_SUCCESS	0x01
@@ -766,16 +765,23 @@ static int hid_go_set_event_return(struct command_report *cmd_rep)
 	return 0;
 }
 
-static int get_endpoint_address(struct hid_device *hdev)
+static bool hid_go_is_config_iface(struct hid_device *hdev)
 {
-	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
-	struct usb_host_endpoint *ep;
+	struct hid_report *report;
+	int i;
 
-	ep = intf->cur_altsetting->endpoint;
-	if (!ep)
-		return -ENODEV;
+	list_for_each_entry(report, &hdev->report_enum[HID_OUTPUT_REPORT].report_list,
+			    list) {
+		if (report->id != GO_OUTPUT_REPORT_ID)
+			continue;
 
-	return ep->desc.bEndpointAddress;
+		for (i = 0; i < report->maxfield; i++) {
+			if ((report->field[i]->application >> 16) == GO_VENDOR_USAGE_PAGE)
+				return true;
+		}
+	}
+
+	return false;
 }
 
 static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
@@ -783,13 +789,9 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 {
 	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	struct command_report *cmd_rep;
-	int ep, ret;
+	int ret;
 
 	if (!drvdata || size != GO_PACKET_SIZE || data[0] != GO_INPUT_REPORT_ID)
-		goto passthrough;
-
-	ep = get_endpoint_address(hdev);
-	if (ep != GO_GP_INTF_IN)
 		goto passthrough;
 
 	cmd_rep = (struct command_report *)data;
@@ -2759,7 +2761,7 @@ static void hid_go_cfg_remove(struct hid_device *hdev)
 static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct go_cfg_drvdata *drvdata;
-	int ret, ep;
+	int ret;
 
 	if (!hid_is_usb(hdev))
 		return -EINVAL;
@@ -2772,8 +2774,7 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return ret;
 	}
 
-	ep = get_endpoint_address(hdev);
-	if (ep == GO_GP_INTF_IN) {
+	if (hid_go_is_config_iface(hdev)) {
 		drvdata = devm_kzalloc(&hdev->dev, sizeof(*drvdata), GFP_KERNEL);
 		if (!drvdata)
 			return -ENOMEM;
@@ -2799,8 +2800,8 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return ret;
 	}
 
-	if (ep != GO_GP_INTF_IN) {
-		dev_dbg(&hdev->dev, "Started interface %x as generic HID device\n", ep);
+	if (!hid_get_drvdata(hdev)) {
+		dev_dbg(&hdev->dev, "Started interface as generic HID device\n");
 		return 0;
 	}
 
@@ -2808,7 +2809,7 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (ret)
 		dev_err_probe(&hdev->dev, ret, "Failed to start configuration interface\n");
 
-	dev_dbg(&hdev->dev, "Started Legion Go HID Device: %x\n", ep);
+	dev_dbg(&hdev->dev, "Started Legion Go HID config interface\n");
 
 	return ret;
 }
@@ -2856,20 +2857,13 @@ static int hid_go_resume(struct hid_device *hdev)
 
 static void hid_go_remove(struct hid_device *hdev)
 {
-	int ep = get_endpoint_address(hdev);
-
-	if (ep <= 0)
-		return;
-
-	switch (ep) {
-	case GO_GP_INTF_IN:
+	if (hid_get_drvdata(hdev)) {
 		hid_go_cfg_remove(hdev);
-		break;
-	default:
-		hid_hw_close(hdev);
-		hid_hw_stop(hdev);
-		break;
+		return;
 	}
+
+	hid_hw_close(hdev);
+	hid_hw_stop(hdev);
 }
 
 static const struct hid_device_id hid_go_devices[] = {
