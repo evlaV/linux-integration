@@ -40,6 +40,9 @@
 #define GIP_DATA_CLASS_SHIFT 5
 #define GIP_DATA_CLASS_MASK (7u << 5)
 
+#define GIP_ACME_RETRY_TIME	(HZ / 10)
+#define GIP_ACME_MAX_RETRIES	8
+
 /* Undocumented Elite 2 vendor messages */
 #define GIP_CMD_RAW_REPORT		0x0c
 #define GIP_CMD_GUIDE_COLOR		0x0e
@@ -268,12 +271,6 @@ static const struct gip_quirks base_quirks[] = {
 	{0},
 };
 
-struct gip_audio_format_pair {
-	uint8_t inbound;
-	uint8_t outbound;
-};
-static_assert(sizeof(struct gip_audio_format_pair) == 2);
-
 struct gip_protocol_control_ack {
 	uint8_t control_code;
 	uint8_t message_type;
@@ -339,7 +336,7 @@ static int gip_decode_length(uint64_t *length, const uint8_t *bytes, int num_byt
 	*length = 0;
 	int offset;
 
-	for (offset = 0; offset < num_bytes; offset++) {
+	for (offset = 0; offset < num_bytes && offset < 9; offset++) {
 		uint8_t byte = bytes[offset];
 
 		*length |= (byte & 0x7full) << (offset * 7);
@@ -439,11 +436,11 @@ static uint8_t gip_sequence_next(struct gip_attachment *attachment,
 	return seq;
 }
 
-static unsigned gip_fragment_id(const struct gip_attachment *attachment,
+static unsigned int gip_fragment_id(const struct gip_attachment *attachment,
 	const struct gip_out_fragment *fragment)
 {
 	return BIT(attachment->attachment_index * MAX_OUT_FRAGMENTS +
-		(unsigned) (fragment - attachment->out_fragments));
+		(unsigned int) (fragment - attachment->out_fragments));
 }
 
 static void gip_handle_quirks_array(struct gip_attachment *attachment,
@@ -454,7 +451,7 @@ static void gip_handle_quirks_array(struct gip_attachment *attachment,
 	for (i = 0; quirks[i].vendor_id; i++) {
 		if (quirks[i].vendor_id != attachment->vendor_id)
 			continue;
-		if (quirks[i].product_id != attachment->product_id)
+		if (quirks[i].product_id && quirks[i].product_id != attachment->product_id)
 			continue;
 		if (quirks[i].attachment_index != attachment->attachment_index)
 			continue;
@@ -515,19 +512,22 @@ static struct gip_out_fragment *gip_find_fragment(struct gip_attachment *attachm
 
 		return &attachment->out_fragments[i];
 	}
-
-	for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
-		if (!attachment->out_fragments[i].active)
-			continue;
-		if (attachment->out_fragments[i].message != message_type)
-			continue;
-		if ((attachment->out_fragments[i].flags ^ flags) & GIP_FLAG_SYSTEM)
-			continue;
-
-
-		return &attachment->out_fragments[i];
-	}
 	return NULL;
+}
+
+static void gip_free_fragment(struct gip_out_fragment *fragment)
+{
+	cancel_delayed_work(&fragment->timeout);
+	kfree(fragment->data);
+	fragment->data = NULL;
+	fragment->active = false;
+	fragment->acked = false;
+	fragment->message = 0;
+	fragment->flags = 0;
+	fragment->seq = 0;
+	fragment->retries = 0;
+	fragment->total_length = 0;
+	fragment->fragment_offset = 0;
 }
 
 static int gip_send_raw_message(struct gip_attachment *attachment,
@@ -585,14 +585,14 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 			return -EALREADY;
 		}
 
+		fragment->data = kzalloc(num_bytes, GFP_KERNEL);
+		if (!fragment->data)
+			return -ENOMEM;
 		fragment->active = true;
 		fragment->message = message_type;
 		fragment->flags = flags & GIP_FLAG_SYSTEM;
-		fragment->acked = false;
 		fragment->seq = seq;
 		fragment->total_length = num_bytes;
-		fragment->data = devm_kmalloc(to_gip_device(attachment),
-			fragment->total_length, GFP_ATOMIC);
 		fragment->fragment_offset = 0;
 		memcpy(fragment->data, bytes, num_bytes);
 		bytes = fragment->data;
@@ -654,11 +654,13 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 	for (i = 0; i < MAX_OUT_MESSAGES && !urb; i++) {
 		if (!intf->out_queue[i].urb)
 			continue;
-		if (!intf->out_queue[i].urb->anchor)
+		if (!intf->out_queue[i].active)
 			urb = &intf->out_queue[i];
 	}
 	if (!urb) {
 		gip_err(attachment, "Output queue is full; dropping message\n");
+		if (fragment)
+			gip_free_fragment(fragment);
 		return -ENOSPC;
 	}
 
@@ -678,7 +680,11 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 			"%s - usb_submit_urb failed with result %d\n",
 			__func__, rc);
 		usb_unanchor_urb(urb->urb);
-		rc = -EIO;
+		if (fragment)
+			gip_free_fragment(fragment);
+		return -EIO;
+	} else {
+		urb->active = true;
 	}
 
 	if (fragment) {
@@ -691,15 +697,11 @@ static int gip_send_raw_message(struct gip_attachment *attachment,
 			intf->has_pending_out |= gip_fragment_id(attachment, fragment);
 		else
 			intf->has_pending_out &= ~gip_fragment_id(attachment, fragment);
+		if (flags & GIP_FLAG_ACME)
+			schedule_delayed_work(&fragment->timeout, GIP_ACME_RETRY_TIME);
 	}
 
 	return rc;
-}
-
-static void gip_free_fragment(struct device *dev, struct gip_out_fragment *fragment)
-{
-	devm_kfree(dev, fragment->data);
-	memset(fragment, 0, sizeof(*fragment));
 }
 
 static int gip_send_next_fragment(struct gip_attachment *attachment,
@@ -707,7 +709,7 @@ static int gip_send_next_fragment(struct gip_attachment *attachment,
 {
 	struct gip_interface *intf;
 	int next_bytes;
-	int flags = GIP_FLAG_FRAGMENT | fragment->flags | attachment->attachment_index;
+	int flags = fragment->flags | attachment->attachment_index;
 	int mtu;
 	int rc;
 
@@ -719,11 +721,14 @@ static int gip_send_next_fragment(struct gip_attachment *attachment,
 			intf = &attachment->device->data;
 
 		next_bytes = 0;
+		guard(spinlock_irqsave)(&intf->device->message_lock);
 		intf->has_pending_out &= ~gip_fragment_id(attachment, fragment);
 	} else if (fragment->fragment_offset + mtu >= fragment->total_length) {
 		next_bytes = fragment->total_length - fragment->fragment_offset;
 		flags |= GIP_FLAG_ACME;
 	} else {
+		if (fragment->fragment_offset == 0)
+			flags |= GIP_FLAG_INIT_FRAG | GIP_FLAG_ACME;
 		next_bytes = mtu;
 	}
 
@@ -736,9 +741,13 @@ static int gip_send_next_fragment(struct gip_attachment *attachment,
 
 	if (fragment->acked)
 		fragment->fragment_offset += next_bytes;
-	if (next_bytes == 0 && !(fragment->flags & GIP_FLAG_ACME))
+	if (next_bytes == 0 && !(fragment->flags & GIP_FLAG_ACME)) {
 		/* Finished sending the message */
-		gip_free_fragment(to_gip_device(attachment), fragment);
+		gip_free_fragment(fragment);
+	} else if (flags & GIP_FLAG_ACME) {
+		fragment->acked = false;
+		schedule_delayed_work(&fragment->timeout, GIP_ACME_RETRY_TIME);
+	}
 	return next_bytes;
 }
 
@@ -746,7 +755,7 @@ static void gip_send_fragment_work(struct work_struct *work)
 {
 	struct gip_interface *intf = container_of(work, struct gip_interface, send_fragment);
 	struct gip_out_fragment *fragment;
-	unsigned has_pending_out;
+	unsigned int has_pending_out;
 	unsigned long flags;
 	int i, j;
 
@@ -754,7 +763,11 @@ static void gip_send_fragment_work(struct work_struct *work)
 	has_pending_out = intf->has_pending_out;
 	spin_unlock_irqrestore(&intf->device->message_lock, flags);
 	for (i = 0; i < MAX_ATTACHMENTS; i++) {
-		struct gip_attachment *attachment = intf->device->attachments[i];
+		struct gip_attachment *attachment;
+
+		mutex_lock(&intf->device->attachment_lock);
+		attachment = intf->device->attachments[i];
+		mutex_unlock(&intf->device->attachment_lock);
 
 		for (j = 0; j < MAX_OUT_FRAGMENTS; j++) {
 			/* Check for pending output fragments */
@@ -825,7 +838,7 @@ static int gip_hid_ll_raw_request(struct hid_device *hdev,
 	 * but the chatpad doesn't have the LEDs it claims to support, so
 	 * it's not clear how to test we're sending them properly.
 	 */
-	return 0;
+	return -EIO;
 }
 
 static const struct hid_ll_driver gip_hid_ll_driver = {
@@ -921,8 +934,7 @@ static int gip_parse_preferred_types_metadata(struct device *dev,
 		if (buffer_offset + 2 >= length)
 			return -EINVAL;
 
-		count = bytes[buffer_offset];
-		count |= bytes[buffer_offset];
+		count = get_unaligned_le16(&bytes[buffer_offset]);
 		buffer_offset += 2;
 		if (buffer_offset + count > length)
 			return -EINVAL;
@@ -1136,7 +1148,7 @@ static int gip_parse_message_metadata(struct device *dev,
 	return 0;
 }
 
-static bool gip_parse_metadata(struct device *dev,
+static int gip_parse_metadata(struct device *dev,
 	struct gip_metadata *metadata, const uint8_t *bytes, int num_bytes)
 {
 	int header_size;
@@ -1178,8 +1190,10 @@ static bool gip_parse_metadata(struct device *dev,
 		metadata->message_metadata = devm_kcalloc(dev,
 			metadata->num_messages,
 			sizeof(*metadata->message_metadata), GFP_KERNEL);
-		if (!metadata->message_metadata)
-			return -ENOMEM;
+		if (!metadata->message_metadata) {
+			rc = -ENOMEM;
+			goto parse_err;
+		}
 
 		for (i = 0; i < metadata->num_messages; i++) {
 			rc = gip_parse_message_metadata(dev,
@@ -1214,14 +1228,19 @@ static int gip_acknowledge(struct gip_attachment *attachment,
 		header->sequence_id, (uint8_t *)&message, sizeof(message));
 }
 
+static void gip_free_in_fragment(struct gip_attachment *attachment)
+{
+	kfree(attachment->in_fragment_data);
+	attachment->in_fragment_data = NULL;
+	attachment->in_fragment_message = -1;
+}
+
 static int gip_fragment_failed(struct gip_attachment *attachment,
 	const struct gip_header *header)
 {
 	attachment->in_fragment_retries++;
 	if (attachment->in_fragment_retries > 8) {
-		devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
-		attachment->in_fragment_data = NULL;
-		attachment->in_fragment_message = -1;
+		gip_free_in_fragment(attachment);
 		return 0;
 	}
 	return gip_acknowledge(attachment, header,
@@ -1284,22 +1303,34 @@ static int gip_enable_elite_buttons(struct gip_attachment *attachment)
 }
 
 #ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
-static int gip_play_effect(struct input_dev *dev, void *data, struct ff_effect *effect)
+static void gip_rumble_work(struct work_struct *work)
 {
-	struct gip_attachment *attachment = input_get_drvdata(dev);
+	struct gip_attachment *attachment = container_of(work, struct gip_attachment,
+		rumble_work);
 	struct gip_direct_motor control = {
 		.motor_bitmap = GIP_MOTOR_LEFT_VIBRATION | GIP_MOTOR_RIGHT_VIBRATION
 	};
 
+	control.left_vibration_level = attachment->left_vibration_level;
+	control.right_vibration_level = attachment->right_vibration_level;
+	control.duration = 255;
+	guard(mutex)(&attachment->lock);
+	gip_send_vendor_message(attachment, GIP_CMD_DIRECT_MOTOR,
+		0, &control, sizeof(control));
+}
+
+static int gip_play_effect(struct input_dev *dev, void *data, struct ff_effect *effect)
+{
+	struct gip_attachment *attachment = input_get_drvdata(dev);
+
 	if (effect->type != FF_RUMBLE)
 		return 0;
 
-	control.left_vibration_level = effect->u.rumble.strong_magnitude * 100 / 0xFFFF;
-	control.right_vibration_level = effect->u.rumble.weak_magnitude * 100 / 0xFFFF;
-	control.duration = 255;
+	attachment->left_vibration_level = effect->u.rumble.strong_magnitude * 100 / 0xFFFF;
+	attachment->right_vibration_level = effect->u.rumble.weak_magnitude * 100 / 0xFFFF;
 
-	return gip_send_vendor_message(attachment, GIP_CMD_DIRECT_MOTOR,
-		0, &control, sizeof(control));
+	schedule_work(&attachment->rumble_work);
+	return 0;
 }
 #endif
 
@@ -1355,8 +1386,8 @@ static int gip_guide_color_led_set(struct led_classdev *led,
 	struct gip_attachment *attachment = container_of(mc_cdev,
 		struct gip_attachment, guide_led.color);
 
-	led_mc_calc_color_components(mc_cdev, value);
 	guard(mutex)(&attachment->lock);
+	led_mc_calc_color_components(mc_cdev, value);
 	return gip_send_guide_button_color_led(attachment,
 		mc_cdev->subled_info[0].brightness,
 		mc_cdev->subled_info[1].brightness,
@@ -1382,9 +1413,13 @@ static int gip_guide_led_probe(struct gip_attachment *attachment, struct device 
 			return -ENOMEM;
 
 		mc_led_info[0].color_index = LED_COLOR_ID_RED;
+		mc_led_info[0].intensity = 51;
 		mc_led_info[1].color_index = LED_COLOR_ID_GREEN;
+		mc_led_info[1].intensity = 51;
 		mc_led_info[2].color_index = LED_COLOR_ID_BLUE;
+		mc_led_info[2].intensity = 51;
 		mc_led_info[3].color_index = LED_COLOR_ID_WHITE;
+		mc_led_info[3].intensity = 51;
 
 		mc_cdev->subled_info = mc_led_info;
 		mc_cdev->num_colors = 4;
@@ -1430,7 +1465,7 @@ static int gip_battery_get_property(struct power_supply *psy,
 {
 	struct gip_attachment *attachment = power_supply_get_drvdata(psy);
 
-	guard(mutex)(&attachment->lock);
+	guard(spinlock_irqsave)(&attachment->battery_lock);
 	switch (psp) {
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = attachment->status.base.battery_type != GIP_BATTERY_ABSENT;
@@ -1492,26 +1527,31 @@ static int gip_battery_get_property(struct power_supply *psy,
 static int gip_battery_create(struct gip_attachment *attachment, struct device *dev)
 {
 	struct power_supply_config supply_config = { .drv_data = attachment, };
+	int rc;
 
 	attachment->battery_desc.properties = gip_battery_props;
 	attachment->battery_desc.num_properties = ARRAY_SIZE(gip_battery_props);
 	attachment->battery_desc.get_property = gip_battery_get_property;
 	attachment->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
-	attachment->battery_desc.name = devm_kasprintf(dev, GFP_KERNEL,
-		"gip-battery-%s", dev_name(dev));
+	attachment->battery_desc.name = devm_kasprintf(dev, GFP_KERNEL, "gip-%s", dev_name(dev));
 
 	if (!attachment->battery_desc.name)
 		return -ENOMEM;
 
 	attachment->battery = devm_power_supply_register(dev,
 		&attachment->battery_desc, &supply_config);
-	if (IS_ERR(attachment->battery))
-		return PTR_ERR(attachment->battery);
+	if (IS_ERR(attachment->battery)) {
+		rc = PTR_ERR(attachment->battery);
+		attachment->battery = NULL;
+		devm_kfree(dev, attachment->battery_desc.name);
+		return rc;
+	}
 
-	return power_supply_powers(attachment->battery, dev);
+	power_supply_powers(attachment->battery, dev);
+	return 0;
 }
 
-static bool gip_send_set_device_state(struct gip_attachment *attachment, uint8_t state)
+static int gip_send_set_device_state(struct gip_attachment *attachment, uint8_t state)
 {
 	uint8_t buffer[] = { state };
 
@@ -1616,6 +1656,7 @@ int gip_setup_input_device(struct gip_attachment *attachment)
 
 	input_set_drvdata(input, attachment);
 	rcu_assign_pointer(attachment->input, input);
+	synchronize_rcu();
 	rc = input_register_device(input);
 	if (rc)
 		goto err_free_device;
@@ -1630,6 +1671,9 @@ int gip_setup_input_device(struct gip_attachment *attachment)
 	return 0;
 
 err_free_device:
+	rcu_assign_pointer(attachment->input, NULL);
+	synchronize_rcu();
+
 	input_free_device(input);
 	return rc;
 }
@@ -1658,6 +1702,76 @@ static int gip_init_input_device(struct gip_attachment *attachment)
 		if (rc)
 			return rc;
 	}
+
+	return rc;
+}
+
+static int gip_create_hdev(struct gip_attachment *attachment)
+{
+	struct hid_device *hdev;
+	int rc;
+
+	if (!attachment->metadata.device.hid_descriptor)
+		return 0;
+
+	rcu_read_lock();
+	hdev = rcu_dereference(attachment->hdev);
+	rcu_read_unlock();
+	if (hdev)
+		return 0;
+
+	hdev = hid_allocate_device();
+
+	if (IS_ERR(hdev))
+		return PTR_ERR(hdev);
+
+	hdev->ll_driver = &gip_hid_ll_driver;
+	hdev->bus = BUS_GIP;
+	hdev->vendor = attachment->vendor_id;
+	hdev->product = attachment->product_id;
+	hdev->version = 0x0100;
+	hdev->country = 0;
+	hdev->dev.parent = to_gip_device(attachment);
+	hdev->driver_data = attachment;
+	if (attachment->name)
+		strscpy(hdev->name, attachment->name);
+	else
+		strscpy(hdev->name, "Xbox Chatpad");
+	strscpy(hdev->phys, attachment->phys);
+	strscpy(hdev->uniq, attachment->uniq);
+	rc = hid_add_device(hdev);
+	if (rc) {
+		gip_err(attachment, "HID device add failed: %d\n", rc);
+		hid_destroy_device(hdev);
+	} else {
+		rcu_assign_pointer(attachment->hdev, hdev);
+		synchronize_rcu();
+	}
+
+	return rc;
+}
+
+static int gip_init_security(struct gip_attachment *attachment)
+{
+	int rc;
+
+	if (attachment->security.status != GIP_SECURITY_PENDING)
+		return 0;
+
+	cancel_delayed_work(&attachment->early_security);
+
+	if (attachment->quirks & GIP_QUIRK_SKIP_SECURITY)
+		/*
+		 * Some BDA/PowerA Xbox One controllers have a security
+		 * handshake implementation that is very sensitive to
+		 * the precise message ordering. It's very hard to get
+		 * this just right, so for now we just skip it. Most
+		 * wired controllers don't need the security flow to
+		 * work anyway.
+		 */
+		rc = gip_security_skip_handshake(&attachment->security);
+	else
+		rc = gip_security_start_handshake(&attachment->security);
 
 	return rc;
 }
@@ -1698,6 +1812,8 @@ static int gip_send_init_sequence(struct gip_attachment *attachment)
 		attachment->device_state = GIP_STATE_STOP;
 	}
 
+	schedule_delayed_work(&attachment->early_security, 6 * HZ / 100);
+
 	rc = gip_send_guide_button_led(attachment,
 		GIP_LED_GUIDE_ON,
 		GIP_LED_GUIDE_INIT_BRIGHTNESS);
@@ -1716,34 +1832,20 @@ static int gip_send_init_sequence(struct gip_attachment *attachment)
 	if (rc)
 		return rc;
 
-	if (attachment->metadata.device.hid_descriptor) {
-		struct hid_device *hdev = hid_allocate_device();
-
-		if (IS_ERR(hdev))
-			return PTR_ERR(hdev);
-
-		hdev->ll_driver = &gip_hid_ll_driver;
-		hdev->bus = BUS_USB;
-		hdev->vendor = attachment->vendor_id;
-		hdev->product = attachment->product_id;
-		hdev->dev.parent = to_gip_device(attachment);
-		hdev->driver_data = attachment;
-		if (attachment->name)
-			strscpy(hdev->name, attachment->name);
-		else
-			strscpy(hdev->name, "Xbox Chatpad");
-		strscpy(hdev->phys, attachment->phys);
-		rc = hid_add_device(hdev);
-		if (rc) {
-			gip_err(attachment, "HID device add failed: %d\n", rc);
-			hid_destroy_device(hdev);
-		} else {
-			rcu_assign_pointer(attachment->hdev, hdev);
-			synchronize_rcu();
-		}
-	}
+	rc = gip_create_hdev(attachment);
+	if (rc)
+		return rc;
 
 	return rc;
+}
+
+static void gip_early_security(struct work_struct *work)
+{
+	struct gip_attachment *attachment = container_of(to_delayed_work(work),
+		struct gip_attachment, early_security);
+
+	guard(mutex)(&attachment->lock);
+	gip_init_security(attachment);
 }
 
 static void gip_fragment_timeout(struct work_struct *work)
@@ -1752,27 +1854,66 @@ static void gip_fragment_timeout(struct work_struct *work)
 		struct gip_attachment, in_fragment_timeout);
 
 	guard(mutex)(&attachment->lock);
-	devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
-	attachment->in_fragment_data = NULL;
-	attachment->in_fragment_message = -1;
+	if (!attachment->in_fragment_data)
+		return;
+
+	gip_free_in_fragment(attachment);
+}
+
+static void gip_out_fragment_timeout(struct work_struct *work)
+{
+	struct gip_out_fragment *fragment = container_of(to_delayed_work(work),
+		struct gip_out_fragment, timeout);
+	struct gip_attachment *attachment = fragment->attachment;
+
+	guard(mutex)(&attachment->lock);
+	if (!fragment->active || !fragment->data || fragment->acked)
+		return;
+
+	fragment->retries++;
+	if (fragment->retries >= GIP_ACME_MAX_RETRIES) {
+		gip_free_fragment(fragment);
+		gip_warn(attachment, "Reliable message transmission failed\n");
+		return;
+	}
+	gip_send_next_fragment(attachment, fragment);
+}
+
+static void gip_free_devices(struct gip_attachment *attachment)
+{
+	struct input_dev *input;
+	struct hid_device *hdev;
+
+	gip_security_release(&attachment->security);
+
+	if (attachment->driver && attachment->driver->remove)
+		attachment->driver->remove(attachment);
+
+	rcu_read_lock();
+	input = rcu_dereference(attachment->input);
+	hdev = rcu_dereference(attachment->hdev);
+	rcu_read_unlock();
+
+	rcu_assign_pointer(attachment->input, NULL);
+	rcu_assign_pointer(attachment->hdev, NULL);
+	/* The following are freed by devres */
+	attachment->battery = NULL;
+	synchronize_rcu();
+
+	if (input)
+		input_unregister_device(input);
+
+	if (hdev)
+		hid_destroy_device(hdev);
 }
 
 static void gip_reset_metadata(struct gip_attachment *attachment)
 {
-	struct input_dev *input;
-
 	if (attachment->got_metadata != GIP_METADATA_GOT)
 		return;
 
+	gip_free_devices(attachment);
 	gip_metadata_free(to_gip_device(attachment), &attachment->metadata);
-	rcu_read_lock();
-	input = rcu_dereference(attachment->input);
-	rcu_read_unlock();
-	if (input) {
-		rcu_assign_pointer(attachment->input, NULL);
-		synchronize_rcu();
-		input_unregister_device(input);
-	}
 	attachment->got_metadata = GIP_METADATA_NONE;
 }
 
@@ -1782,6 +1923,9 @@ static void gip_retry_metadata(struct work_struct *work)
 		struct gip_attachment, metadata_next);
 
 	guard(mutex)(&attachment->lock);
+	if (attachment->got_metadata == GIP_METADATA_GOT)
+		return;
+
 	if (attachment->metadata_retries < 4) {
 		attachment->metadata_retries++;
 		schedule_delayed_work(&attachment->metadata_next, HZ / 2);
@@ -1795,58 +1939,43 @@ static void gip_retry_metadata(struct work_struct *work)
 
 static int gip_ensure_metadata(struct gip_attachment *attachment)
 {
-	switch (attachment->got_metadata) {
-	case GIP_METADATA_GOT:
-	case GIP_METADATA_FAKED:
-		return 0;
-	case GIP_METADATA_NONE:
-		attachment->got_metadata = GIP_METADATA_PENDING;
-		cancel_delayed_work_sync(&attachment->metadata_next);
-		schedule_delayed_work(&attachment->metadata_next, HZ / 2);
-		attachment->metadata_retries = 0;
-		return gip_send_system_message(attachment, GIP_CMD_METADATA, 0, NULL, 0);
-	default:
-		return 0;
-	}
-}
-
-static void gip_set_metadata_defaults(struct gip_attachment *attachment)
-{
 	if (attachment->got_metadata != GIP_METADATA_NONE)
-		gip_reset_metadata(attachment);
+		return 0;
 
-	attachment->metadata.device.in_system_messages[0] =
-		GIP_DEFAULT_IN_SYSTEM_MESSAGES;
-	attachment->metadata.device.out_system_messages[0] =
-		GIP_DEFAULT_OUT_SYSTEM_MESSAGES;
-	if (attachment->attachment_index == 0) {
-		/* Some decent default settings */
-		attachment->features |= GIP_FEATURE_CONTROLLER;
-		attachment->metadata.device.in_system_messages[0] |= BIT(GIP_CMD_GUIDE_BUTTON);
-	}
-
-	gip_handle_quirks(attachment);
-	if (attachment->quirks & GIP_QUIRK_NO_HELLO)
-		gip_ensure_metadata(attachment);
-
-	attachment->got_metadata = GIP_METADATA_FAKED;
+	attachment->got_metadata = GIP_METADATA_PENDING;
+	cancel_delayed_work(&attachment->metadata_next);
+	schedule_delayed_work(&attachment->metadata_next, HZ / 2);
+	attachment->metadata_retries = 0;
+	return gip_send_system_message(attachment, GIP_CMD_METADATA, 0, NULL, 0);
 }
 
 static void gip_reset_attachment(struct gip_attachment *attachment)
 {
 	int i;
+	int pending_out_bits =
+		BIT((attachment->attachment_index + 1) * MAX_OUT_FRAGMENTS) -
+		BIT(attachment->attachment_index * MAX_OUT_FRAGMENTS);
+	unsigned long flags;
 
-	devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
-	attachment->in_fragment_data = NULL;
-	attachment->in_fragment_message = -1;
+	cancel_delayed_work(&attachment->metadata_next);
+	cancel_delayed_work(&attachment->in_fragment_timeout);
+	cancel_delayed_work(&attachment->early_security);
+	cancel_work(&attachment->rumble_work);
+
+	if (attachment->in_fragment_data)
+		gip_free_in_fragment(attachment);
+
+	spin_lock_irqsave(&attachment->device->message_lock, flags);
+	attachment->device->data.has_pending_out &= ~pending_out_bits;
+	attachment->device->audio.has_pending_out &= ~pending_out_bits;
+	spin_unlock_irqrestore(&attachment->device->message_lock, flags);
 
 	for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
 		if (attachment->out_fragments[i].active)
-			gip_free_fragment(to_gip_device(attachment),
-				&attachment->out_fragments[i]);
+			gip_free_fragment(&attachment->out_fragments[i]);
 	}
 
-	gip_reset_metadata(attachment);
+	gip_free_devices(attachment);
 }
 
 static int gip_handle_command_protocol_control(struct gip_attachment *attachment,
@@ -1864,8 +1993,9 @@ static int gip_handle_command_protocol_control(struct gip_attachment *attachment
 		return -EINVAL;
 
 	if (bytes[0] != GIP_CONTROL_CODE_ACK) {
-		gip_warn(attachment, "Unimplemented Protocol Control code %i message\n", bytes[0]);
-		return -ENOTSUPP;
+		gip_warn_ratelimited(attachment,
+			"Unimplemented Protocol Control code %i message\n", bytes[0]);
+		return -EOPNOTSUPP;
 	}
 
 	if (num_bytes < sizeof(*ack))
@@ -1877,8 +2007,7 @@ static int gip_handle_command_protocol_control(struct gip_attachment *attachment
 		header->sequence_id, false);
 	if (!fragment) {
 		gip_warn(attachment, "Received ACK for unknown message\n");
-		rc = -EINVAL;
-		goto resend;
+		return -EINVAL;
 	}
 
 
@@ -1897,31 +2026,32 @@ static int gip_handle_command_protocol_control(struct gip_attachment *attachment
 		goto resend;
 	} else if ((fragment->flags & GIP_FLAG_FRAGMENT) &&
 		(fragment->fragment_offset > fragment_offset ||
-		fragment->fragment_offset + mtu < fragment_offset))
-	{
+		fragment->fragment_offset + mtu < fragment_offset)) {
 		gip_warn(attachment, "Received unexpected buffer offset in ACK, "
 			"got offset=%u, expected offset=%u\n",
 			fragment_offset, fragment->fragment_offset + mtu);
 	}
 
 	fragment->acked = true;
+	fragment->retries = 0;
+	cancel_delayed_work(&fragment->timeout);
 	if (fragment->flags & GIP_FLAG_FRAGMENT) {
 		fragment->fragment_offset = fragment_offset;
 		rc = gip_send_next_fragment(attachment, fragment);
 		if (rc < 0)
 			return rc;
 	} else {
-		gip_free_fragment(to_gip_device(attachment), fragment);
+		gip_free_fragment(fragment);
 	}
 
 	return 0;
 
 resend:
-	// TODO
+	gip_send_next_fragment(attachment, fragment);
 	return rc;
 }
 
-static bool gip_handle_command_hello_device(struct gip_attachment *attachment,
+static int gip_handle_command_hello_device(struct gip_attachment *attachment,
 	const struct gip_header *header, const uint8_t *bytes, int num_bytes)
 {
 	const struct gip_hello_device *message;
@@ -1961,15 +2091,16 @@ static bool gip_handle_command_hello_device(struct gip_attachment *attachment,
 	attachment->firmware_minor_version = le16_to_cpu(message->firmware_minor_version);
 	attachment->vendor_id = le16_to_cpu(message->vendor_id);
 	attachment->product_id = le16_to_cpu(message->product_id);
-	attachment->uniq = devm_kasprintf(to_gip_device(attachment),
-		GFP_KERNEL, "%llx", le64_to_cpu(message->device_id));
+	if (!attachment->uniq)
+		attachment->uniq = devm_kasprintf(to_gip_device(attachment),
+			GFP_KERNEL, "%llx", le64_to_cpu(message->device_id));
+	if (!attachment->uniq)
+		return -ENOMEM;
 
 	if (header->flags & GIP_FLAG_ATTACHMENT_MASK)
 		return gip_send_system_message(attachment, GIP_CMD_METADATA, 0, NULL, 0);
 	if (attachment->got_metadata == GIP_METADATA_FAKED)
 		attachment->got_metadata = GIP_METADATA_NONE;
-	if (attachment->got_metadata == GIP_METADATA_GOT)
-		gip_set_metadata_defaults(attachment);
 
 	gip_reset_attachment(attachment);
 	return gip_ensure_metadata(attachment);
@@ -1984,10 +2115,14 @@ static int gip_handle_command_status_device(struct gip_attachment *attachment,
 	if (num_bytes < 1)
 		return -EINVAL;
 
-	attachment->status.base.battery_level = bytes[0] & 3;
-	attachment->status.base.battery_type = (bytes[0] >> 2) & 3;
-	attachment->status.base.charge = (bytes[0] >> 4) & 3;
-	attachment->status.base.power_level = (bytes[0] >> 6) & 3;
+	scoped_guard(spinlock_irqsave, &attachment->battery_lock) {
+		attachment->status.base.battery_level = bytes[0] & 3;
+		attachment->status.base.battery_type = (bytes[0] >> 2) & 3;
+		attachment->status.base.charge = (bytes[0] >> 4) & 3;
+		attachment->status.base.power_level = (bytes[0] >> 6) & 3;
+	}
+	if (attachment->battery)
+		power_supply_changed(attachment->battery);
 
 	if (num_bytes >= 4) {
 		attachment->status.device_active = bytes[1] & 1;
@@ -2023,25 +2158,9 @@ static int gip_handle_command_status_device(struct gip_attachment *attachment,
 		}
 	}
 
-	if (!attachment->security_sent) {
-		if (attachment->quirks & GIP_QUIRK_SKIP_SECURITY)
-			/*
-			 * Some BDA/PowerA Xbox One controllers have a security
-			 * handshake implementation that is very sensitive to
-			 * the precise message ordering. It's very hard to get
-			 * this just right, so for now we just skip it. Most
-			 * wired controllers don't need the security flow to
-			 * work anyway.
-			 */
-			rc = gip_security_skip_handshake(&attachment->security);
-		else
-			rc = gip_security_start_handshake(&attachment->security);
-
-		if (rc)
-			return rc;
-
-		attachment->security_sent = true;
-	}
+	rc = gip_init_security(attachment);
+	if (rc)
+		return rc;
 
 	rc = gip_init_input_device(attachment);
 	if (rc)
@@ -2069,7 +2188,7 @@ static int gip_handle_command_metadata_respose(struct gip_attachment *attachment
 	attachment->metadata = metadata;
 	attachment->got_metadata = GIP_METADATA_GOT;
 	attachment->features = 0;
-	cancel_delayed_work_sync(&attachment->metadata_next);
+	cancel_delayed_work(&attachment->metadata_next);
 
 	for (i = 0; i < metadata.device.num_preferred_types; i++) {
 		const char *type = metadata.device.preferred_types[i];
@@ -2162,10 +2281,12 @@ static int gip_handle_command_metadata_respose(struct gip_attachment *attachment
 
 	if (!gip_supports_system_message(attachment, GIP_CMD_SECURITY, false) ||
 		(attachment->features & GIP_FEATURE_SECURITY_OPT_OUT))
-		attachment->security_sent = true;
+		attachment->security.status = GIP_SECURITY_SKIPPED;
 
 	gip_dbg(attachment, "Attachment %i has features: %02x\n",
 		attachment->attachment_index, attachment->features);
+	gip_dbg(attachment, "Attachment %i has quirks: %02x\n",
+		attachment->attachment_index, attachment->quirks);
 
 	return gip_send_init_sequence(attachment);
 }
@@ -2195,7 +2316,7 @@ static int gip_handle_command_audio_control(struct gip_attachment *attachment,
 	const struct gip_header *header, const uint8_t *bytes, int num_bytes)
 {
 	/* TODO: Needed for audio */
-	gip_warn(attachment, "Unimplemented Audio Control message\n");
+	gip_warn_ratelimited(attachment, "Unimplemented Audio Control message\n");
 	return -EOPNOTSUPP;
 }
 
@@ -2231,7 +2352,7 @@ static int gip_handle_command_firmware(struct gip_attachment *attachment,
 		return 0;
 	}
 
-	gip_warn(attachment, "Unimplemented Firmware message\n");
+	gip_warn_ratelimited(attachment, "Unimplemented Firmware message\n");
 
 	return -EOPNOTSUPP;
 }
@@ -2271,7 +2392,7 @@ static int gip_handle_command_extended(struct gip_attachment *attachment,
 		break;
 	default:
 		/* TODO */
-		gip_dbg(attachment, "Unimplemented extended message type %02x\n",
+		gip_dbg_ratelimited(attachment, "Unimplemented extended message type %02x\n",
 			bytes[0]);
 		return -EOPNOTSUPP;
 	}
@@ -2303,7 +2424,11 @@ static int gip_handle_elite_buttons(struct gip_attachment *attachment,
 			profile_offset = 15;
 		else
 			profile_offset = 20;
-		profile = bytes[profile_offset] & 3;
+
+		if (num_bytes > profile_offset)
+			profile = bytes[profile_offset] & 3;
+		else
+			profile = 0;
 
 		if (!profile) {
 			grip[0] = bytes[GIP_BTN_OFFSET_XBE2] & BIT(2);
@@ -2415,7 +2540,7 @@ static int gip_handle_audio_data(struct gip_attachment *attachment,
 	const struct gip_header *header, const uint8_t *bytes, int num_bytes)
 {
 	/* TODO: Needed for audio support */
-	gip_dbg(attachment, "Unimplemented Audio Data message\n");
+	gip_dbg_ratelimited(attachment, "Unimplemented Audio Data message\n");
 	return -EOPNOTSUPP;
 }
 
@@ -2472,9 +2597,11 @@ static int gip_handle_system_message(struct gip_attachment *attachment,
 static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 	uint8_t attachment_index)
 {
-	struct gip_attachment *attachment = device->attachments[attachment_index];
+	struct gip_attachment *attachment;
 	int i;
 
+	guard(mutex)(&device->attachment_lock);
+	attachment = device->attachments[attachment_index];
 	if (!attachment) {
 		attachment = devm_kzalloc(to_gip_device(device), sizeof(*attachment), GFP_KERNEL);
 		if (!attachment)
@@ -2489,16 +2616,41 @@ static struct gip_attachment *gip_ensure_attachment(struct gip_device *device,
 			attachment->product_id = device->udev->descriptor.idProduct;
 		}
 
-		for (i = 0; i < MAX_OUT_FRAGMENTS; i++)
-			attachment->out_fragments[i].message = -1;
-
-		device->attachments[attachment_index] = attachment;
+		for (i = 0; i < MAX_OUT_FRAGMENTS; i++) {
+			attachment->out_fragments[i].attachment = attachment;
+			INIT_DELAYED_WORK(&attachment->out_fragments[i].timeout, gip_out_fragment_timeout);
+		}
 
 		mutex_init(&attachment->lock);
+		guard(mutex)(&attachment->lock);
+		device->attachments[attachment_index] = attachment;
+		spin_lock_init(&attachment->battery_lock);
 		INIT_DELAYED_WORK(&attachment->in_fragment_timeout, gip_fragment_timeout);
 		INIT_DELAYED_WORK(&attachment->metadata_next, gip_retry_metadata);
+		INIT_DELAYED_WORK(&attachment->early_security, gip_early_security);
+#ifdef CONFIG_JOYSTICK_XBOX_GIP_FF
+		INIT_WORK(&attachment->rumble_work, gip_rumble_work);
+#endif
 
-		gip_set_metadata_defaults(attachment);
+		attachment->metadata.device.in_system_messages[0] =
+			GIP_DEFAULT_IN_SYSTEM_MESSAGES;
+		attachment->metadata.device.out_system_messages[0] =
+			GIP_DEFAULT_OUT_SYSTEM_MESSAGES;
+		if (attachment->attachment_index == 0) {
+			/* Some decent default settings */
+			attachment->features |= GIP_FEATURE_CONTROLLER;
+			attachment->metadata.device.in_system_messages[0] |=
+				BIT(GIP_CMD_GUIDE_BUTTON);
+		}
+
+		gip_handle_quirks(attachment);
+		if (attachment->quirks & GIP_QUIRK_NO_HELLO) {
+			gip_ensure_metadata(attachment);
+			attachment->uniq = devm_kstrdup(to_gip_device(attachment),
+				"N/A", GFP_KERNEL);
+		}
+
+		attachment->got_metadata = GIP_METADATA_FAKED;
 	}
 	return attachment;
 }
@@ -2535,25 +2687,23 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 {
 	int rc = 0;
 
+	cancel_delayed_work_sync(&attachment->in_fragment_timeout);
 	if (header->flags & GIP_FLAG_INIT_FRAG) {
 		uint64_t total_length;
 
-		if (attachment->in_fragment_message >= 0) {
+		guard(mutex)(&attachment->lock);
+		if (attachment->in_fragment_message >= 0)
 			/*
 			 * Reset fragment buffer if we get a new initial
 			 * fragment before finishing the last message.
 			 * TODO: Is this the correct behavior?
 			 */
-			devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
-			attachment->in_fragment_data = NULL;
-		}
+			gip_free_in_fragment(attachment);
 		offset += gip_decode_length(&total_length, &bytes[offset],
 			num_bytes - offset);
 		if (total_length > MAX_MESSAGE_LENGTH)
 			return -EINVAL;
 
-		attachment->in_total_length = total_length;
-		attachment->in_fragment_message = header->message_type;
 		if (header->length > num_bytes - offset) {
 			gip_warn(attachment,
 				"Received fragment that claims to be %llu bytes, expected %i\n",
@@ -2562,14 +2712,15 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 		}
 		if (header->length > total_length) {
 			gip_warn(attachment,
-				"Received too long fragment, %llu bytes, exceeds %d\n",
-				header->length, attachment->in_total_length);
+				"Received too long fragment, %llu bytes, exceeds %lld\n",
+				header->length, total_length);
 			return -EINVAL;
 		}
-		attachment->in_fragment_data = devm_kmalloc(to_gip_device(attachment),
-			attachment->in_total_length, GFP_KERNEL);
+		attachment->in_fragment_data = kzalloc(total_length, GFP_KERNEL);
 		if (!attachment->in_fragment_data)
 			return -ENOMEM;
+		attachment->in_total_length = total_length;
+		attachment->in_fragment_message = header->message_type;
 		memcpy(attachment->in_fragment_data, &bytes[offset],
 			header->length);
 		*fragment_offset = header->length;
@@ -2578,6 +2729,7 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 		if (header->flags & GIP_FLAG_ACME)
 			gip_acknowledge(attachment, header, *fragment_offset, *bytes_remaining);
 	} else {
+		guard(mutex)(&attachment->lock);
 		if (attachment->in_fragment_message < 0) {
 			gip_warn_ratelimited(attachment,
 				"Received unexpected fragment of message type %02x\n",
@@ -2594,6 +2746,13 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 
 		offset += gip_decode_length(fragment_offset, &bytes[offset],
 			num_bytes - offset);
+
+		if (header->length > num_bytes - offset) {
+			gip_warn(attachment,
+				"Received fragment that claims to be %llu bytes, expected %i\n",
+				header->length, num_bytes - offset);
+			return -EPROTO;
+		}
 		if (*fragment_offset != attachment->in_fragment_offset) {
 			/*
 			 * While this is theoretically always an issue, for
@@ -2614,7 +2773,8 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 			gip_dbg_ratelimited(attachment,
 				"Received erroneous final fragment offset, proceeding anyway\n");
 			*bytes_remaining = 0;
-		} else if (*fragment_offset + header->length > attachment->in_total_length) {
+		}
+		if (*fragment_offset + header->length > attachment->in_total_length) {
 			gip_warn(attachment,
 				"Received too long fragment, %llu exceeds %d\n",
 				*fragment_offset + header->length, attachment->in_total_length);
@@ -2636,12 +2796,9 @@ static int gip_receive_fragment(struct gip_attachment *attachment,
 			rc = gip_handle_message(attachment, header,
 				attachment->in_fragment_data,
 				attachment->in_total_length);
-			devm_kfree(to_gip_device(attachment), attachment->in_fragment_data);
-			attachment->in_fragment_data = NULL;
-			attachment->in_fragment_message = -1;
+			gip_free_in_fragment(attachment);
 		}
 	}
-	cancel_delayed_work_sync(&attachment->in_fragment_timeout);
 	schedule_delayed_work(&attachment->in_fragment_timeout, HZ);
 
 	return rc;
@@ -2670,11 +2827,12 @@ static int gip_receive_message(struct gip_device *device, uint8_t *bytes,
 	is_fragment = header.flags & GIP_FLAG_FRAGMENT;
 	attachment_index = header.flags & GIP_FLAG_ATTACHMENT_MASK;
 	attachment = gip_ensure_attachment(device, attachment_index);
+	if (IS_ERR(attachment))
+		return PTR_ERR(attachment);
 
 	print_hex_dump_debug(KBUILD_MODNAME ": Received message: ",
 		DUMP_PREFIX_OFFSET, 16, 1, bytes, num_bytes, false);
 
-	guard(mutex)(&attachment->lock);
 	/* Handle coalescing fragmented messages */
 	if (is_fragment) {
 		rc = gip_receive_fragment(attachment, &header, offset,
@@ -2685,6 +2843,7 @@ static int gip_receive_message(struct gip_device *device, uint8_t *bytes,
 			header.length + offset, num_bytes);
 		rc = -EPROTO;
 	} else {
+		guard(mutex)(&attachment->lock);
 		num_bytes -= offset;
 		bytes += offset;
 		fragment_offset = header.length;
@@ -2756,8 +2915,8 @@ static void gip_urb_in(struct urb *urb)
 		message_id = (gip->next_in_message + gip->pending_in_messages) % MAX_IN_MESSAGES;
 		message = &gip->in_queue[message_id];
 		gip->pending_in_messages++;
-		memcpy(message->bytes, intf->in_data, urb->actual_length);
-		message->num_bytes = urb->actual_length;
+		message->num_bytes = umin(urb->actual_length, sizeof(message->bytes));
+		memcpy(message->bytes, intf->in_data, message->num_bytes);
 	}
 	spin_unlock_irqrestore(&gip->message_lock, flags);
 	schedule_work(&gip->receive_message);
@@ -2774,6 +2933,14 @@ static void gip_urb_out(struct urb *urb)
 	struct gip_interface *intf = urb->context;
 	struct device *dev = &intf->intf->dev;
 	int status = urb->status;
+	int i;
+
+	scoped_guard(spinlock_irqsave, &intf->device->message_lock) {
+		for (i = 0; i < MAX_OUT_MESSAGES; i++) {
+			if (intf->out_queue[i].urb == urb)
+				intf->out_queue[i].active = false;
+		}
+	}
 
 	switch (status) {
 	case 0:
@@ -2810,7 +2977,7 @@ static int gip_init_input(struct gip_interface *intf,
 		&intf->urb_in->transfer_dma);
 
 	if (!intf->in_data) {
-		return -ENOMEM;
+		error = -ENOMEM;
 		goto err_free_urb;
 	}
 
@@ -2866,7 +3033,7 @@ static int gip_init_output(struct gip_interface *intf,
 			&intf->out_queue[i].urb->transfer_dma);
 
 		if (!intf->out_queue[i].data) {
-			return -ENOMEM;
+			error = -ENOMEM;
 			goto err_free_urbs;
 		}
 
@@ -2910,6 +3077,7 @@ static void gip_deinit_output(struct gip_interface *intf)
 
 static void gip_deinit_input(struct gip_interface *intf)
 {
+	usb_kill_urb(intf->urb_in);
 	usb_free_coherent(interface_to_usbdev(intf->intf), intf->mtu,
 		intf->in_data, intf->urb_in->transfer_dma);
 	usb_free_urb(intf->urb_in);
@@ -2967,7 +3135,7 @@ static int gip_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		return 0;
 	}
 
-	gip = devm_kzalloc(&udev->dev, sizeof(*gip), GFP_KERNEL);
+	gip = devm_kzalloc(&intf->dev, sizeof(*gip), GFP_KERNEL);
 	if (!gip)
 		return -ENOMEM;
 
@@ -2983,102 +3151,120 @@ static int gip_probe(struct usb_interface *intf, const struct usb_device_id *id)
 
 	INIT_WORK(&gip->receive_message, gip_receive_work);
 	spin_lock_init(&gip->message_lock);
+	mutex_init(&gip->attachment_lock);
 
 	rc = gip_interface_init(&gip->data);
-	if (rc) {
-		devm_kfree(to_gip_device(gip), gip);
-		return rc;
-	}
-	/* Don't init audio interface -- we aren't using it yet */
-
-	usb_set_intfdata(intf, gip);
+	if (rc)
+		goto err_cleanup;
 
 	/* Pre-create the first attachment, as it should always exist */
 	attachment = gip_ensure_attachment(gip, 0);
-	if (IS_ERR(attachment))
-		return PTR_ERR(attachment);
+	if (IS_ERR(attachment)) {
+		gip_deinit_input(&gip->data);
+		gip_deinit_output(&gip->data);
+		if (gip->audio.intf) {
+			gip_deinit_input(&gip->audio);
+			gip_deinit_output(&gip->audio);
+		}
+		rc = PTR_ERR(attachment);
+		goto err_cleanup;
+	}
 
+	/* Don't init audio interface -- we aren't using it yet */
+
+	usb_set_intfdata(intf, gip);
 	return 0;
+
+err_cleanup:
+	cancel_work_sync(&gip->receive_message);
+	devm_kfree(to_gip_device(gip), gip);
+
+	return rc;
 }
 
-static int gip_shutdown(struct gip_device *device)
+static void gip_shutdown(struct gip_device *gip)
 {
-	int i;
+	int i, j;
+	unsigned long flags;
 
-	cancel_work_sync(&device->receive_message);
+	usb_kill_urb(gip->data.urb_in);
+
+	if (gip->audio.intf)
+		usb_kill_urb(gip->audio.urb_in);
+
+	cancel_work_sync(&gip->receive_message);
+	cancel_work_sync(&gip->data.send_fragment);
+	if (gip->audio.intf)
+		cancel_work_sync(&gip->data.send_fragment);
+
+	usb_kill_anchored_urbs(&gip->data.out_anchor);
+	if (gip->audio.intf)
+		usb_kill_anchored_urbs(&gip->audio.out_anchor);
+
+	spin_lock_irqsave(&gip->message_lock, flags);
+	gip->data.has_pending_out = 0;
+	gip->audio.has_pending_out = 0;
+	spin_unlock_irqrestore(&gip->message_lock, flags);
 
 	for (i = 0; i < MAX_ATTACHMENTS; i++) {
-		struct gip_attachment *attachment = device->attachments[i];
-		struct input_dev *input;
-		struct hid_device *hdev;
+		struct gip_attachment *attachment;
+
+		mutex_lock(&gip->attachment_lock);
+		attachment = gip->attachments[i];
+		mutex_unlock(&gip->attachment_lock);
 
 		if (!attachment)
 			continue;
 
-		scoped_guard (mutex, &attachment->lock) {
-			cancel_delayed_work_sync(&attachment->metadata_next);
-			cancel_delayed_work_sync(&attachment->in_fragment_timeout);
+		cancel_delayed_work_sync(&attachment->metadata_next);
+		cancel_delayed_work_sync(&attachment->in_fragment_timeout);
+		cancel_delayed_work_sync(&attachment->early_security);
 
-			rcu_read_lock();
-			input = rcu_dereference(attachment->input);
-			hdev = rcu_dereference(attachment->hdev);
-			rcu_read_unlock();
+		for (j = 0; j < MAX_OUT_FRAGMENTS; j++)
+			cancel_delayed_work_sync(&attachment->out_fragments[j].timeout);
 
-			attachment->battery = NULL;
-			rcu_assign_pointer(attachment->input, NULL);
-			rcu_assign_pointer(attachment->hdev, NULL);
-			synchronize_rcu();
-		}
+		mutex_lock(&attachment->lock);
+		gip_reset_attachment(attachment);
+		gip_reset_metadata(attachment);
+		mutex_unlock(&attachment->lock);
 
-		gip_security_release(&attachment->security);
-
-		if (input)
-			input_unregister_device(input);
-
-		if (hdev)
-			hid_destroy_device(hdev);
+		cancel_work_sync(&attachment->rumble_work);
 	}
-
-	return 0;
 }
 
 static void gip_disconnect(struct usb_interface *intf)
 {
 	struct gip_device *gip = usb_get_intfdata(intf);
-	unsigned long flags;
-	int i;
+	int i, j;
 
 	if (!gip)
 		return;
 
-	usb_kill_urb(gip->data.urb_in);
-	if (gip->audio.intf)
-		usb_kill_urb(gip->audio.urb_in);
-
 	gip_shutdown(gip);
 
-	spin_lock_irqsave(&gip->message_lock, flags);
 	gip_deinit_input(&gip->data);
 	gip_deinit_output(&gip->data);
 	if (gip->audio.intf) {
 		gip_deinit_input(&gip->audio);
 		gip_deinit_output(&gip->audio);
 	}
-	spin_unlock_irqrestore(&gip->message_lock, flags);
 
 	usb_set_intfdata(intf, NULL);
 
+	mutex_lock(&gip->attachment_lock);
 	for (i = 0; i < MAX_ATTACHMENTS; i++) {
 		struct gip_attachment *attachment = gip->attachments[i];
 
 		if (!attachment)
 			continue;
 
-		gip_reset_attachment(attachment);
-
+		for (j = 0; j < MAX_OUT_FRAGMENTS; j++)
+			cancel_delayed_work_sync(&attachment->out_fragments[j].timeout);
 		devm_kfree(to_gip_device(attachment), attachment->uniq);
 		devm_kfree(to_gip_device(attachment), attachment);
+		gip->attachments[i] = NULL;
 	}
+	mutex_unlock(&gip->attachment_lock);
 
 	devm_kfree(to_gip_device(gip), gip);
 }
@@ -3090,10 +3276,7 @@ static int gip_suspend(struct usb_interface *intf, pm_message_t message)
 	if (!gip)
 		return 0;
 
-	usb_kill_urb(gip->data.urb_in);
-	if (gip->audio.intf)
-		usb_kill_urb(gip->audio.urb_in);
-
+	mutex_lock(&gip->attachment_lock);
 	if (gip->attachments[0]) {
 		struct gip_attachment *attachment = gip->attachments[0];
 
@@ -3101,8 +3284,11 @@ static int gip_suspend(struct usb_interface *intf, pm_message_t message)
 		gip_send_set_device_state(attachment, GIP_STATE_OFF);
 		attachment->device_state = GIP_STATE_OFF;
 	}
+	mutex_unlock(&gip->attachment_lock);
 
-	return gip_shutdown(gip);
+	gip_shutdown(gip);
+
+	return 0;
 }
 
 static int gip_resume(struct usb_interface *intf)

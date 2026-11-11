@@ -178,77 +178,44 @@ struct gip_security2_client_finish {
 	u8 unknown[32];
 } __packed;
 
-static struct shash_desc *gip_security_alloc_shash(const char *alg)
+static void gip_security_get_transcript(struct sha256_ctx *ctx, void *transcript)
 {
-	struct crypto_shash *tfm;
-	struct shash_desc *desc;
+	struct sha256_ctx state;
 
-	tfm = crypto_alloc_shash(alg, 0, 0);
-	if (IS_ERR(tfm))
-		return ERR_CAST(tfm);
-
-	desc = kzalloc(sizeof(*desc) + crypto_shash_descsize(tfm), GFP_KERNEL);
-	if (!desc) {
-		crypto_free_shash(tfm);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	desc->tfm = tfm;
-	crypto_shash_init(desc);
-
-	return desc;
+	memcpy(&state, ctx, sizeof(state));
+	sha256_final(&state, transcript);
 }
 
-static int gip_security_get_transcript(struct shash_desc *desc, void *transcript)
-{
-	void *state = kzalloc(crypto_shash_descsize(desc->tfm), GFP_KERNEL);
-	int err;
-
-	err = crypto_shash_export(desc, state);
-	if (err)
-		goto get_transcript_error;
-
-	err = crypto_shash_final(desc, transcript);
-	if (err)
-		goto get_transcript_error;
-
-	err = crypto_shash_import(desc, state);
-
-get_transcript_error:
-	kfree(state);
-	return err;
-}
-
-static int gip_security_compute_prf(struct shash_desc *desc, const char *label,
-	u8 *key, int key_len, u8 *seed, int seed_len, u8 *out, int out_len)
+static void gip_security_compute_prf(const char *label,
+	u8 *raw_key, int key_len, u8 *seed, int seed_len, u8 *out, int out_len)
 {
 	u8 hash[SHA256_DIGEST_SIZE], hash_out[SHA256_DIGEST_SIZE];
-	int err;
+	struct hmac_sha256_ctx ctx;
+	struct hmac_sha256_key key;
 
-	err = crypto_shash_setkey(desc->tfm, key, key_len);
-	if (err)
-		return err;
+	hmac_sha256_preparekey(&key, raw_key, key_len);
 
-	crypto_shash_init(desc);
-	crypto_shash_update(desc, label, strlen(label));
-	crypto_shash_update(desc, seed, seed_len);
-	crypto_shash_final(desc, hash);
+	hmac_sha256_init(&ctx, &key);
+	hmac_sha256_update(&ctx, label, strlen(label));
+	hmac_sha256_update(&ctx, seed, seed_len);
+	hmac_sha256_final(&ctx, hash);
 
 	while (out_len > 0) {
-		crypto_shash_init(desc);
-		crypto_shash_update(desc, hash, sizeof(hash));
-		crypto_shash_update(desc, label, strlen(label));
-		crypto_shash_update(desc, seed, seed_len);
-		crypto_shash_final(desc, hash_out);
+		hmac_sha256_init(&ctx, &key);
+		hmac_sha256_update(&ctx, hash, sizeof(hash));
+		hmac_sha256_update(&ctx, label, strlen(label));
+		hmac_sha256_update(&ctx, seed, seed_len);
+		hmac_sha256_final(&ctx, hash_out);
 
 		memcpy(out, hash_out, min_t(int, out_len, sizeof(hash)));
 		out += sizeof(hash);
 		out_len -= sizeof(hash);
 
-		crypto_shash_digest(desc, hash, sizeof(hash), hash);
+		hmac_sha256(&key, hash, sizeof(hash), hash);
 	}
 
-	return 0;
+	memzero_explicit(&ctx, sizeof(ctx));
+	memzero_explicit(&key, sizeof(key));
 }
 
 static int gip_security_encrypt_rsa(u8 *key, int key_len, u8 *in, int in_len, u8 *out, int out_len)
@@ -323,22 +290,37 @@ static int gip_security_ecdh_get_pubkey(struct crypto_kpp *tfm, u8 *out, int len
 err_free_pubkey:
 	kfree(pubkey);
 err_free_privkey:
+	memzero_explicit(privkey, privkey_len);
 	kfree(privkey);
 
 	return err;
 }
 
-static int gip_security_ecdh_get_secret(struct crypto_kpp *tfm, u8 *pubkey,
-	int pubkey_len, u8 *secret, int secret_len)
+static int gip_security_ecdh_get_secret(struct crypto_kpp *tfm, u8 *pubkey_in,
+	int pubkey_len, u8 *secret_out, int secret_len)
 {
 	struct kpp_request *req;
 	struct scatterlist src, dest;
 	DECLARE_CRYPTO_WAIT(wait);
+	u8 *pubkey, *secret;
 	int err;
 
-	req = kpp_request_alloc(tfm, GFP_KERNEL);
-	if (!req)
+	pubkey = kzalloc(pubkey_len, GFP_KERNEL);
+	if (!pubkey)
 		return -ENOMEM;
+	memcpy(pubkey, pubkey_in, pubkey_len);
+
+	secret = kzalloc(secret_len, GFP_KERNEL);
+	if (!secret) {
+		err = -ENOMEM;
+		goto err_free_pubkey;
+	}
+
+	req = kpp_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		err = -ENOMEM;
+		goto err_free_secret;
+	}
 
 	sg_init_one(&src, pubkey, pubkey_len);
 	sg_init_one(&dest, secret, secret_len);
@@ -348,8 +330,13 @@ static int gip_security_ecdh_get_secret(struct crypto_kpp *tfm, u8 *pubkey,
 	kpp_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
 				 crypto_req_done, &wait);
 	err = crypto_wait_req(crypto_kpp_compute_shared_secret(req), &wait);
+	memcpy(secret_out, secret, secret_len);
 
 	kpp_request_free(req);
+err_free_secret:
+	kfree_sensitive(secret);
+err_free_pubkey:
+	kfree(pubkey);
 
 	return err;
 }
@@ -357,7 +344,6 @@ static int gip_security_ecdh_get_secret(struct crypto_kpp *tfm, u8 *pubkey,
 static int gip_security_compute_ecdh(u8 *pubkey_in, u8 *pubkey_out, int pubkey_len, u8 *secret_hash)
 {
 	struct crypto_kpp *tfm_ecdh;
-	struct crypto_shash *tfm_sha;
 	u8 *secret;
 	int err;
 
@@ -371,29 +357,21 @@ static int gip_security_compute_ecdh(u8 *pubkey_in, u8 *pubkey_out, int pubkey_l
 		goto err_free_secret;
 	}
 
-	tfm_sha = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(tfm_sha)) {
-		err = PTR_ERR(tfm_sha);
-		goto err_free_ecdh;
-	}
-
 	err = gip_security_ecdh_get_pubkey(tfm_ecdh, pubkey_out, pubkey_len);
 	if (err)
-		goto err_free_sha;
+		goto err_free_ecdh;
 
 	err = gip_security_ecdh_get_secret(tfm_ecdh, pubkey_in, pubkey_len,
 		secret, GIP_SECURITY_ECDH_SECRET_LEN);
 	if (err)
-		goto err_free_sha;
+		goto err_free_ecdh;
 
-	crypto_shash_tfm_digest(tfm_sha, secret, GIP_SECURITY_ECDH_SECRET_LEN, secret_hash);
+	sha256(secret, GIP_SECURITY_ECDH_SECRET_LEN, secret_hash);
 
-err_free_sha:
-	crypto_free_shash(tfm_sha);
 err_free_ecdh:
 	crypto_free_kpp(tfm_ecdh);
 err_free_secret:
-	kfree(secret);
+	kfree_sensitive(secret);
 
 	return err;
 }
@@ -415,7 +393,7 @@ static int gip_security_send_message(struct gip_security *security,
 	hdr->data.length = cpu_to_be16(data_len - sizeof(hdr->data));
 
 	security->last_sent_command = cmd;
-	crypto_shash_update(security->shash_transcript, message + sizeof(hdr->handshake), data_len);
+	sha256_update(&security->transcript, message + sizeof(hdr->handshake), data_len);
 
 	return gip_send_system_message(attachment, GIP_CMD_SECURITY, GIP_FLAG_ACME, message, len);
 }
@@ -497,10 +475,15 @@ static int gip_security2_handle_pubkey(struct gip_security *security,
 static void gip_security2_exchange_ecdh(struct work_struct *work)
 {
 	struct gip_security *security = container_of(work, typeof(*security), work_exchange_ecdh);
+	struct gip_attachment *attachment = container_of(security, struct gip_attachment, security);
 	struct gip_security2_host_pubkey message = {};
 	u8 random[GIP_SECURITY_RANDOM_LEN * 2];
 	u8 secret[GIP_SECURITY2_SECRET_LEN];
 	int err;
+
+	guard(mutex)(&attachment->lock);
+	if (security->status != GIP_SECURITY_SENT)
+		return;
 
 	memcpy(random, security->random_host, sizeof(security->random_host));
 	memcpy(random + sizeof(security->random_host), security->random_client,
@@ -513,13 +496,10 @@ static void gip_security2_exchange_ecdh(struct work_struct *work)
 		return;
 	}
 
-	err = gip_security_compute_prf(security->shash_prf, "Master Secret",
-		secret, sizeof(secret), random, sizeof(random),
-		security->master_secret, sizeof(security->master_secret));
-	if (err) {
-		gip_err(security, "%s: compute PRF failed: %d\n", __func__, err);
-		return;
-	}
+	gip_security_compute_prf("Master Secret", secret, sizeof(secret),
+		random, sizeof(random), security->master_secret,
+		sizeof(security->master_secret));
+	memzero_explicit(secret, sizeof(secret));
 
 	err = gip_security_send_message(security, GIP_SECURITY2_CMD_HOST_PUBKEY,
 		&message, sizeof(message));
@@ -543,22 +523,11 @@ static int gip_security_send_finish(struct gip_security *security,
 {
 	struct gip_security_host_finish message = {};
 	u8 transcript[GIP_SECURITY_TRANSCRIPT_LEN];
-	int err;
 
-	err = gip_security_get_transcript(security->shash_transcript, transcript);
-	if (err) {
-		gip_err(security, "%s: get transcript failed: %d\n", __func__, err);
-		return err;
-	}
-
-	err = gip_security_compute_prf(security->shash_prf, "Host Finished",
-		security->master_secret, sizeof(security->master_secret),
-		transcript, sizeof(transcript), message.transcript,
-		sizeof(message.transcript));
-	if (err) {
-		gip_err(security, "%s: compute PRF failed: %d\n", __func__, err);
-		return err;
-	}
+	gip_security_get_transcript(&security->transcript, transcript);
+	gip_security_compute_prf("Host Finished", security->master_secret,
+		sizeof(security->master_secret), transcript, sizeof(transcript),
+		message.transcript, sizeof(message.transcript));
 
 	return gip_security_send_message(security, cmd, &message, sizeof(message));
 }
@@ -641,24 +610,14 @@ static int gip_security_handle_finish(struct gip_security *security, const void 
 	const struct gip_security_client_finish *message = data;
 	u8 transcript[GIP_SECURITY_TRANSCRIPT_LEN];
 	u8 finished[GIP_SECURITY_TRANSCRIPT_LEN];
-	int err;
 
 	if (len < sizeof(*message))
 		return -EINVAL;
 
-	err = gip_security_get_transcript(security->shash_transcript, transcript);
-	if (err) {
-		gip_err(security, "%s: get transcript failed: %d\n", __func__, err);
-		return err;
-	}
-
-	err = gip_security_compute_prf(security->shash_prf, "Device Finished",
+	gip_security_get_transcript(&security->transcript, transcript);
+	gip_security_compute_prf("Device Finished",
 		security->master_secret, sizeof(security->master_secret),
 		transcript, sizeof(transcript), finished, sizeof(finished));
-	if (err) {
-		gip_err(security, "%s: compute PRF failed: %d\n", __func__, err);
-		return err;
-	}
 
 	if (memcmp(message->transcript, finished, sizeof(finished))) {
 		gip_err(security, "%s: transcript mismatch\n", __func__);
@@ -673,9 +632,14 @@ static int gip_security_handle_finish(struct gip_security *security, const void 
 static void gip_security_exchange_rsa(struct work_struct *work)
 {
 	struct gip_security *security = container_of(work, typeof(*security), work_exchange_rsa);
+	struct gip_attachment *attachment = container_of(security, struct gip_attachment, security);
 	struct gip_security_host_secret message = {};
 	u8 random[GIP_SECURITY_RANDOM_LEN * 2];
 	int err;
+
+	guard(mutex)(&attachment->lock);
+	if (security->status != GIP_SECURITY_SENT)
+		return;
 
 	memcpy(random, security->random_host, sizeof(security->random_host));
 	memcpy(random + sizeof(security->random_host), security->random_client,
@@ -693,13 +657,9 @@ static void gip_security_exchange_rsa(struct work_struct *work)
 		return;
 	}
 
-	err = gip_security_compute_prf(security->shash_prf, "Master Secret",
-		security->pms, sizeof(security->pms), random, sizeof(random),
+	gip_security_compute_prf("Master Secret", security->pms,
+		sizeof(security->pms), random, sizeof(random),
 		security->master_secret, sizeof(security->master_secret));
-	if (err) {
-		gip_err(security, "%s: compute PRF failed: %d\n", __func__, err);
-		return;
-	}
 
 	err = gip_security_send_message(security, GIP_SECURITY_CMD_HOST_SECRET,
 		&message, sizeof(message));
@@ -719,25 +679,29 @@ static void gip_security_complete_handshake(struct work_struct *work)
 	u8 key[GIP_SECURITY_SESSION_KEY_LEN];
 	int err;
 
+	guard(mutex)(&attachment->lock);
+	if (security->status != GIP_SECURITY_SENT)
+		return;
+
 	memcpy(random, security->random_host, sizeof(security->random_host));
 	memcpy(random + sizeof(security->random_host), security->random_client,
 		sizeof(security->random_client));
 
-	err = gip_security_compute_prf(security->shash_prf,
+	gip_security_compute_prf(
 		"EXPORTER DAWN data channel session key for controller",
 		security->master_secret, sizeof(security->master_secret),
 		random, sizeof(random), key, sizeof(key));
-	if (err) {
-		gip_err(security, "%s: compute PRF failed: %d\n", __func__, err);
-		return;
-	}
 
 	gip_dbg(security, "%s: key=%*phD\n", __func__, (int)sizeof(key), key);
 
 	err = gip_send_system_message(attachment, GIP_CMD_SECURITY,
 		0, &hdr, sizeof(hdr));
-	if (err)
+	if (err) {
 		gip_err(security, "%s: send complete failed: %d\n", __func__, err);
+		return;
+	}
+
+	security->status = GIP_SECURITY_DONE;
 }
 
 static int gip_security_dispatch_message(struct gip_security *security,
@@ -772,6 +736,12 @@ int gip_security_handle_message(struct gip_security *security, const void *bytes
 	if (num_bytes < sizeof(*handshake))
 		return -EINVAL;
 
+	if (security->status != GIP_SECURITY_SENT) {
+		gip_err(security, "%s: security message received when none expected: 0x%02x\n",
+			__func__, handshake->command);
+		return -EPROTO;
+	}
+
 	if (handshake->error)
 		return -EPROTO;
 
@@ -789,10 +759,10 @@ int gip_security_handle_message(struct gip_security *security, const void *bytes
 
 	hdr = bytes;
 	/* client uses v2 */
-	if (handshake->command != hdr->data.command) {
+	if (num_bytes < sizeof(*hdr) || handshake->command != hdr->data.command) {
 		/* reset transcript hash and restart handshake */
 		gip_dbg(security, "%s: protocol upgrade\n", __func__);
-		crypto_shash_init(security->shash_transcript);
+		sha256_init(&security->transcript);
 		return gip_security2_send_hello(security);
 	}
 
@@ -801,58 +771,44 @@ int gip_security_handle_message(struct gip_security *security, const void *bytes
 	if (err)
 		return err;
 
-	return crypto_shash_update(security->shash_transcript,
-		bytes + sizeof(hdr->handshake),
+	sha256_update(&security->transcript, bytes + sizeof(hdr->handshake),
 		num_bytes - sizeof(hdr->handshake));
+
+	return 0;
 }
 
 void gip_security_release(struct gip_security *security)
 {
-	if (!security->shash_transcript || !security->shash_prf)
+	if (security->status < GIP_SECURITY_SENT)
 		return;
 
-	cancel_work_sync(&security->work_exchange_rsa);
-	cancel_work_sync(&security->work_exchange_ecdh);
-	cancel_work_sync(&security->work_complete);
+	cancel_work(&security->work_exchange_rsa);
+	cancel_work(&security->work_exchange_ecdh);
+	cancel_work(&security->work_complete);
 
-	crypto_free_shash(security->shash_transcript->tfm);
-	crypto_free_shash(security->shash_prf->tfm);
-	kfree(security->shash_transcript);
-	kfree(security->shash_prf);
+	memzero_explicit(&security->transcript, sizeof(security->transcript));
+	memzero_explicit(&security->pms, sizeof(security->pms));
+	memzero_explicit(&security->master_secret, sizeof(security->master_secret));
 
-	security->shash_transcript = NULL;
-	security->shash_prf = NULL;
+	security->status = GIP_SECURITY_PENDING;
 }
 
 int gip_security_start_handshake(struct gip_security *security)
 {
-	struct shash_desc *shash_transcript, *shash_prf;
+	int err;
 
-	if (!security->shash_transcript) {
-		shash_transcript = gip_security_alloc_shash("sha256");
-		if (IS_ERR(shash_transcript))
-			return PTR_ERR(shash_transcript);
-
-		security->shash_transcript = shash_transcript;
-	}
-
-	if (!security->shash_prf) {
-		shash_prf = gip_security_alloc_shash("hmac(sha256)");
-		if (IS_ERR(shash_prf)) {
-			crypto_free_shash(shash_transcript->tfm);
-			kfree(shash_transcript);
-			security->shash_transcript = NULL;
-			return PTR_ERR(shash_prf);
-		}
-
-		security->shash_prf = shash_prf;
-	}
+	sha256_init(&security->transcript);
 
 	INIT_WORK(&security->work_exchange_rsa, gip_security_exchange_rsa);
 	INIT_WORK(&security->work_exchange_ecdh, gip_security2_exchange_ecdh);
 	INIT_WORK(&security->work_complete, gip_security_complete_handshake);
 
-	return gip_security_send_hello(security);
+	err = gip_security_send_hello(security);
+	if (err < 0)
+		return err;
+
+	security->status = GIP_SECURITY_SENT;
+	return 0;
 }
 
 int gip_security_skip_handshake(struct gip_security *security)
@@ -862,6 +818,12 @@ int gip_security_skip_handshake(struct gip_security *security)
 		.context = GIP_SECURITY_CTX_CONTROL,
 		.control = GIP_SECURITY_CTRL_COMPLETE,
 	};
+	int err;
 
-	return gip_send_system_message(attachment, GIP_CMD_SECURITY, 0, &hdr, sizeof(hdr));
+	err = gip_send_system_message(attachment, GIP_CMD_SECURITY, 0, &hdr, sizeof(hdr));
+	if (err < 0)
+		return err;
+
+	security->status = GIP_SECURITY_SKIPPED;
+	return 0;
 }
