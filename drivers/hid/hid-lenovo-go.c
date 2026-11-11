@@ -40,11 +40,25 @@
 #define GO_PACKET_SIZE		64
 #define GO_COMMAND_TIMEOUT_MS	50
 
+/*
+ * Fields of an armed command a reply must agree with. Gen1 replies carry
+ * a length byte instead of a request id, and some commands echo a pad
+ * device rather than the requested one, so the comparisons are opt-in
+ * per call.
+ */
+enum cmd_match {
+	CMD_MATCH_ID	= BIT(0),
+	CMD_MATCH_CMD	= BIT(1),
+	CMD_MATCH_SUB	= BIT(2),
+	CMD_MATCH_DEV	= BIT(3),
+};
+
 /* Lenovo replies identify a command and a sub-command, but have no sequence. */
 struct hid_go_cmd {
 	struct completion done;
 	spinlock_t lock; /* protects fields below */
 	bool pending;
+	unsigned int match;
 	u8 id;
 	u8 command;
 	u8 sub_command;
@@ -357,13 +371,32 @@ static const char *const os_mode_text[] = {
 	[LINUX] = "linux",
 };
 
+static bool hid_go_cmd_matches(const struct hid_go_cmd *cmd,
+			       const struct command_report *rep)
+{
+	if ((cmd->match & CMD_MATCH_ID) && rep->id != cmd->id)
+		return false;
+
+	if ((cmd->match & CMD_MATCH_CMD) && rep->cmd != cmd->command)
+		return false;
+
+	if ((cmd->match & CMD_MATCH_SUB) && rep->sub_cmd != cmd->sub_command)
+		return false;
+
+	if ((cmd->match & CMD_MATCH_DEV) && rep->device_type != cmd->device)
+		return false;
+
+	return true;
+}
+
 static void hid_go_cmd_arm(struct go_cfg_drvdata *drvdata, u8 id, u8 command,
-			   u8 sub_command, u8 device)
+			   u8 sub_command, u8 device, unsigned int match)
 {
 	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
 	reinit_completion(&drvdata->cmd.done);
 	drvdata->cmd.pending = true;
+	drvdata->cmd.match = match;
 	drvdata->cmd.id = id;
 	drvdata->cmd.command = command;
 	drvdata->cmd.sub_command = sub_command;
@@ -375,10 +408,7 @@ static void hid_go_cmd_consume(struct go_cfg_drvdata *drvdata,
 {
 	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
-	if (drvdata->cmd.pending && cmd_rep->id == drvdata->cmd.id &&
-	    cmd_rep->cmd == drvdata->cmd.command &&
-	    cmd_rep->sub_cmd == drvdata->cmd.sub_command &&
-	    cmd_rep->device_type == drvdata->cmd.device) {
+	if (drvdata->cmd.pending && hid_go_cmd_matches(&drvdata->cmd, cmd_rep)) {
 		drvdata->cmd.pending = false;
 		drvdata->cmd.result = result;
 		complete(&drvdata->cmd.done);
@@ -824,6 +854,8 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	unsigned char *dmabuf __free(kfree) = NULL;
 	u8 header[] = { GO_OUTPUT_REPORT_ID, id, command, index, device };
 	size_t header_size = ARRAY_SIZE(header);
+	unsigned int match = CMD_MATCH_ID | CMD_MATCH_CMD | CMD_MATCH_SUB |
+			     CMD_MATCH_DEV;
 	unsigned long timeout = msecs_to_jiffies(GO_COMMAND_TIMEOUT_MS);
 	long wait_result;
 	int ret;
@@ -846,7 +878,7 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	dev_dbg(&hdev->dev, "Send data as raw output report: [%*ph]\n",
 		GO_PACKET_SIZE, dmabuf);
 
-	hid_go_cmd_arm(drvdata, id, command, index, device);
+	hid_go_cmd_arm(drvdata, id, command, index, device, match);
 	ret = hid_go_send_output_report(hdev, dmabuf);
 	if (ret)
 		return hid_go_cmd_cancel(drvdata, ret);
