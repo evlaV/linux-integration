@@ -850,7 +850,8 @@ passthrough:
 }
 
 static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
-			    u8 index, enum dev_type device, u8 *data, size_t len)
+			    u8 index, enum dev_type device, u8 *data, size_t len,
+			    unsigned int timeout_ms)
 {
 	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	unsigned char *dmabuf __free(kfree) = NULL;
@@ -858,7 +859,7 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	size_t header_size = ARRAY_SIZE(header);
 	unsigned int match = CMD_MATCH_ID | CMD_MATCH_CMD | CMD_MATCH_SUB |
 			     CMD_MATCH_DEV;
-	unsigned long timeout = msecs_to_jiffies(GO_COMMAND_TIMEOUT_MS);
+	unsigned long timeout = msecs_to_jiffies(timeout_ms);
 	long wait_result;
 	int ret;
 
@@ -903,7 +904,8 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		return -ENODEV;
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       index, device_type, NULL, 0);
+			       index, device_type, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret)
 		return ret;
 
@@ -1088,7 +1090,8 @@ static ssize_t feature_status_store(struct device *dev,
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
 			       SET_FEATURE_STATUS, index, device_type, &val,
-			       size);
+			       size,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1124,7 +1127,8 @@ static ssize_t feature_status_show(struct device *dev,
 		return -ENODEV;
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
-			       GET_FEATURE_STATUS, index, device_type, NULL, 0);
+			       GET_FEATURE_STATUS, index, device_type, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret)
 		return ret;
 
@@ -1297,7 +1301,8 @@ static ssize_t motor_config_store(struct device *dev,
 		size = 0;
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, SET_MOTOR_CFG,
-			       index, device_type, &val, size);
+			       index, device_type, &val, size,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1319,7 +1324,8 @@ static ssize_t motor_config_show(struct device *dev,
 		return -ENODEV;
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_MOTOR_CFG,
-			       index, device_type, NULL, 0);
+			       index, device_type, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret)
 		return ret;
 
@@ -1447,7 +1453,8 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 	put_unaligned_le32(value, val);
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, SET_DPI_CFG,
-			       FPS_MODE_DPI, UNSPECIFIED, val, size);
+			       FPS_MODE_DPI, UNSPECIFIED, val, size,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1465,7 +1472,8 @@ static ssize_t fps_mode_dpi_show(struct device *dev,
 		return -ENODEV;
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
-			       FPS_MODE_DPI, UNSPECIFIED, NULL, 0);
+			       FPS_MODE_DPI, UNSPECIFIED, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1600,7 +1608,8 @@ static ssize_t calibrate_config_store(struct device *dev,
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, cmd, sub_cmd,
-			       device_type, &val, sizeof(val));
+			       device_type, &val, sizeof(val),
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1640,7 +1649,8 @@ static ssize_t os_mode_store(struct device *dev, struct device_attribute *attr,
 
 	val = ret;
 	ret = mcu_property_out(drvdata->hdev, OS_MODE_DATA, FEATURE_OS_MODE,
-			       SET_OS_MODE, USB_MCU, &val, size);
+			       SET_OS_MODE, USB_MCU, &val, size,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
@@ -1662,7 +1672,8 @@ static ssize_t os_mode_show(struct device *dev, struct device_attribute *attr,
 		return -ENODEV;
 
 	ret = mcu_property_out(drvdata->hdev, OS_MODE_DATA, FEATURE_OS_MODE,
-			       GET_OS_MODE, USB_MCU, NULL, 0);
+			       GET_OS_MODE, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret)
 		return ret;
 
@@ -1700,7 +1711,8 @@ static int rgb_cfg_call(struct hid_device *hdev, enum mcu_command_index cmd,
 		return -EINVAL;
 
 	return mcu_property_out(hdev, MCU_CONFIG_DATA, cmd, index, UNSPECIFIED,
-				val, size);
+				val, size,
+				GO_COMMAND_TIMEOUT_MS);
 }
 
 static int rgb_attr_show(struct go_cfg_drvdata *drvdata)
@@ -2492,7 +2504,8 @@ static void cfg_setup(struct work_struct *work)
 
 	/* MCU Version Attrs */
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PRODUCT_VERSION, USB_MCU, NULL, 0);
+			       PRODUCT_VERSION, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Product Version: %i\n", ret);
@@ -2500,7 +2513,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PROTOCOL_VERSION, USB_MCU, NULL, 0);
+			       PROTOCOL_VERSION, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Protocol Version: %i\n", ret);
@@ -2508,7 +2522,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       FIRMWARE_VERSION, USB_MCU, NULL, 0);
+			       FIRMWARE_VERSION, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Firmware Version: %i\n", ret);
@@ -2516,7 +2531,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_VERSION, USB_MCU, NULL, 0);
+			       HARDWARE_VERSION, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Hardware Version: %i\n", ret);
@@ -2524,7 +2540,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_GENERATION, USB_MCU, NULL, 0);
+			       HARDWARE_GENERATION, USB_MCU, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Hardware Generation: %i\n", ret);
@@ -2533,7 +2550,8 @@ static void cfg_setup(struct work_struct *work)
 
 	/* TX Dongle Version Attrs */
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PRODUCT_VERSION, TX_DONGLE, NULL, 0);
+			       PRODUCT_VERSION, TX_DONGLE, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Product Version: %i\n", ret);
@@ -2541,7 +2559,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PROTOCOL_VERSION, TX_DONGLE, NULL, 0);
+			       PROTOCOL_VERSION, TX_DONGLE, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Protocol Version: %i\n", ret);
@@ -2549,7 +2568,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       FIRMWARE_VERSION, TX_DONGLE, NULL, 0);
+			       FIRMWARE_VERSION, TX_DONGLE, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Firmware Version: %i\n", ret);
@@ -2557,7 +2577,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_VERSION, TX_DONGLE, NULL, 0);
+			       HARDWARE_VERSION, TX_DONGLE, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Hardware Version: %i\n", ret);
@@ -2565,7 +2586,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_GENERATION, TX_DONGLE, NULL, 0);
+			       HARDWARE_GENERATION, TX_DONGLE, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Hardware Generation: %i\n", ret);
@@ -2574,7 +2596,8 @@ static void cfg_setup(struct work_struct *work)
 
 	/* Left Handle Version Attrs */
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PRODUCT_VERSION, LEFT_CONTROLLER, NULL, 0);
+			       PRODUCT_VERSION, LEFT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Product Version: %i\n", ret);
@@ -2582,7 +2605,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PROTOCOL_VERSION, LEFT_CONTROLLER, NULL, 0);
+			       PROTOCOL_VERSION, LEFT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Protocol Version: %i\n", ret);
@@ -2590,7 +2614,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       FIRMWARE_VERSION, LEFT_CONTROLLER, NULL, 0);
+			       FIRMWARE_VERSION, LEFT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Firmware Version: %i\n", ret);
@@ -2598,7 +2623,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_VERSION, LEFT_CONTROLLER, NULL, 0);
+			       HARDWARE_VERSION, LEFT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Hardware Version: %i\n", ret);
@@ -2606,7 +2632,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_GENERATION, LEFT_CONTROLLER, NULL, 0);
+			       HARDWARE_GENERATION, LEFT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Hardware Generation: %i\n", ret);
@@ -2615,7 +2642,8 @@ static void cfg_setup(struct work_struct *work)
 
 	/* Right Handle Version Attrs */
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PRODUCT_VERSION, RIGHT_CONTROLLER, NULL, 0);
+			       PRODUCT_VERSION, RIGHT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Product Version: %i\n", ret);
@@ -2623,7 +2651,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       PROTOCOL_VERSION, RIGHT_CONTROLLER, NULL, 0);
+			       PROTOCOL_VERSION, RIGHT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Protocol Version: %i\n", ret);
@@ -2631,7 +2660,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       FIRMWARE_VERSION, RIGHT_CONTROLLER, NULL, 0);
+			       FIRMWARE_VERSION, RIGHT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Firmware Version: %i\n", ret);
@@ -2639,7 +2669,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_VERSION, RIGHT_CONTROLLER, NULL, 0);
+			       HARDWARE_VERSION, RIGHT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Hardware Version: %i\n", ret);
@@ -2647,7 +2678,8 @@ static void cfg_setup(struct work_struct *work)
 	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       HARDWARE_GENERATION, RIGHT_CONTROLLER, NULL, 0);
+			       HARDWARE_GENERATION, RIGHT_CONTROLLER, NULL, 0,
+			       GO_COMMAND_TIMEOUT_MS);
 	if (ret < 0) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Hardware Generation: %i\n", ret);
