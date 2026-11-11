@@ -21,6 +21,7 @@
 #include <linux/kstrtox.h>
 #include <linux/led-class-multicolor.h>
 #include <linux/mutex.h>
+#include <linux/pm.h>
 #include <linux/printk.h>
 #include <linux/spinlock.h>
 #include <linux/sysfs.h>
@@ -2716,6 +2717,7 @@ static void hid_go_cfg_remove(struct hid_device *hdev)
 	cancel_delayed_work_sync(&drvdata->go_cfg_setup);
 
 	guard(mutex)(&drvdata->cfg_mutex);
+
 	sysfs_remove_groups(&hdev->dev.kobj, top_level_attr_groups);
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
@@ -2779,6 +2781,47 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	return ret;
 }
 
+static int hid_go_suspend(struct hid_device *hdev, pm_message_t msg)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
+
+	/* Interfaces without config state need no suspend handling */
+	if (!drvdata)
+		return 0;
+
+	cancel_delayed_work_sync(&drvdata->go_cfg_setup);
+
+	return 0;
+}
+
+static int hid_go_resume(struct hid_device *hdev)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
+	bool gp_registered, rgb_registered;
+	int ret;
+
+	/* Interfaces without config state need no resume handling */
+	if (!drvdata)
+		return 0;
+
+	/* Pairs with smp_store_release from cfg_setup */
+	gp_registered = smp_load_acquire(&drvdata->gp_registered);
+	/* Pairs with smp_store_release from cfg_setup */
+	rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
+
+	if (gp_registered && rgb_registered)
+		return 0;
+
+	/* Setup was interrupted before it could finish; retry it */
+	ret = schedule_delayed_work(&drvdata->go_cfg_setup, msecs_to_jiffies(2));
+	if (!ret) {
+		dev_err(&hdev->dev, "Failed to schedule startup delayed work\n");
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
 static void hid_go_remove(struct hid_device *hdev)
 {
 	int ep = get_endpoint_address(hdev);
@@ -2815,6 +2858,9 @@ static struct hid_driver hid_lenovo_go = {
 	.id_table = hid_go_devices,
 	.probe = hid_go_probe,
 	.remove = hid_go_remove,
+	.suspend = pm_ptr(hid_go_suspend),
+	.resume = pm_ptr(hid_go_resume),
+	.reset_resume = pm_ptr(hid_go_resume),
 	.raw_event = hid_go_raw_event,
 };
 module_hid_driver(hid_lenovo_go);
