@@ -121,6 +121,8 @@ struct go_cfg_drvdata {
 	u32 mouse_dpi;
 	u8 os_mode;
 	u8 rgb_effect;
+	u8 gen1_rgb_quick_en;
+	u8 gen1_rgb_quick_id;
 	u8 rgb_en;
 	u8 rgb_mode;
 	u8 rgb_profile;
@@ -153,11 +155,14 @@ enum go_support {
 	SUP_CAL_GYRO,
 	SUP_CAL_TRIGGER,
 	SUP_RGB,
+	SUP_RGB_USR,
+	SUP_RGB_QUICK,
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
 			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI) | \
-			 BIT(SUP_TOUCHPAD))
+			 BIT(SUP_TOUCHPAD) | BIT(SUP_RGB) | \
+			 BIT(SUP_RGB_QUICK))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -166,7 +171,7 @@ enum go_support {
 			 BIT(SUP_RESET) | BIT(SUP_RUMBLE) | \
 			 BIT(SUP_TOUCHPAD) | BIT(SUP_CAL_JOYSTICK) | \
 			 BIT(SUP_CAL_GYRO) | BIT(SUP_CAL_TRIGGER) | \
-			 BIT(SUP_RGB))
+			 BIT(SUP_RGB) | BIT(SUP_RGB_USR))
 
 struct go_cfg_attr {
 	u8 index;
@@ -225,6 +230,10 @@ enum gen1_command_id {
 	GEN1_DPI			= 0x68,
 	GEN1_GYRO			= 0x6A,
 	GEN1_TOUCHPAD			= 0x6B,
+	GEN1_RGB_ENABLE			= 0x70,
+	GEN1_RGB_PROFILE		= 0x71,
+	GEN1_RGB_SET			= 0x72,
+	GEN1_RGB_QUICK			= 0x73,
 	GEN1_VERSION			= 0x79,
 };
 
@@ -232,6 +241,21 @@ enum gen1_dpi_op {
 	GEN1_DPI_GET_CURRENT		= 0x01,
 	GEN1_DPI_GET_LIST		= 0x02,
 	GEN1_DPI_SET			= 0x03,
+};
+
+/*
+ * Lighting sub commands are scoped to their command; the same value
+ * names a different action across the four lighting commands.
+ */
+enum gen1_rgb_sub {
+	GEN1_RGB_ENABLE_GET		= 0x01,
+	GEN1_RGB_ENABLE_SET		= 0x02,
+	GEN1_RGB_QUICK_EN_SET		= 0x03,
+	GEN1_RGB_QUICK_EN_GET		= 0x04,
+	GEN1_RGB_PROFILE_GET		= 0x01,
+	GEN1_RGB_PROFILE_SET		= 0x01,
+	GEN1_RGB_QUICK_GET		= 0x01,
+	GEN1_RGB_QUICK_SET		= 0x02,
 };
 
 #define GEN1_ACK_OK			0x01
@@ -654,6 +678,55 @@ static int hid_go_gen1_touchpad_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_rgb_enable_event(struct go_cfg_drvdata *drvdata,
+					struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	switch (cmd_rep->sub_cmd) {
+	case GEN1_RGB_ENABLE_GET:
+		drvdata->rgb_en = cmd_rep->data[0];
+		return 0;
+	case GEN1_RGB_QUICK_EN_GET:
+		drvdata->gen1_rgb_quick_en = cmd_rep->data[0];
+		return 0;
+	default:
+		return hid_go_gen1_ack(cmd_rep);
+	}
+}
+
+static int hid_go_gen1_rgb_profile_event(struct go_cfg_drvdata *drvdata,
+					 struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 12)
+		return -EBADMSG;
+
+	drvdata->rgb_effect = cmd_rep->data[0];
+	drvdata->led_mc.subled_info[0].intensity = cmd_rep->data[1];
+	drvdata->led_mc.subled_info[1].intensity = cmd_rep->data[2];
+	drvdata->led_mc.subled_info[2].intensity = cmd_rep->data[3];
+	drvdata->led_mc.led_cdev.brightness = cmd_rep->data[4];
+	drvdata->rgb_speed = cmd_rep->data[5];
+	drvdata->rgb_profile = cmd_rep->data[6];
+	return 0;
+}
+
+static int hid_go_gen1_rgb_quick_event(struct go_cfg_drvdata *drvdata,
+				       struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	switch (cmd_rep->sub_cmd) {
+	case GEN1_RGB_QUICK_GET:
+		drvdata->gen1_rgb_quick_id = cmd_rep->data[0];
+		return 0;
+	default:
+		return hid_go_gen1_ack(cmd_rep);
+	}
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -670,6 +743,14 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
 		return hid_go_gen1_touchpad_event(drvdata, cmd_rep);
+	case GEN1_RGB_ENABLE:
+		return hid_go_gen1_rgb_enable_event(drvdata, cmd_rep);
+	case GEN1_RGB_PROFILE:
+		return hid_go_gen1_rgb_profile_event(drvdata, cmd_rep);
+	case GEN1_RGB_SET:
+		return hid_go_gen1_ack(cmd_rep);
+	case GEN1_RGB_QUICK:
+		return hid_go_gen1_rgb_quick_event(drvdata, cmd_rep);
 	case GEN1_VERSION:
 		return hid_go_gen1_version_event(drvdata, cmd_rep);
 	default:
@@ -1372,6 +1453,26 @@ static ssize_t hid_go_gen1_feature_status_store(struct go_cfg_drvdata *drvdata,
 
 		return count;
 	}
+	case FEATURE_LIGHT_ENABLE: {
+		u8 content[2] = { UNSPECIFIED };
+
+		ret = sysfs_match_string(enabled_status_text, buf);
+		if (ret < 0)
+			return ret;
+
+		content[1] = ret;
+
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_ENABLE,
+				       GEN1_RGB_ENABLE_SET, UNSPECIFIED,
+				       content, sizeof(content),
+				       GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		drvdata->rgb_en = content[1];
+
+		return count;
+	}
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -1424,6 +1525,20 @@ static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
 			return ret;
 
 		i = drvdata->tp_en;
+		if (i >= ARRAY_SIZE(enabled_status_text))
+			return -EINVAL;
+
+		return sysfs_emit(buf, "%s\n", enabled_status_text[i]);
+	case FEATURE_LIGHT_ENABLE:
+		dev_byte = UNSPECIFIED;
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_ENABLE,
+				       GEN1_RGB_ENABLE_GET, UNSPECIFIED,
+				       &dev_byte, sizeof(dev_byte),
+				       GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		i = drvdata->rgb_en;
 		if (i >= ARRAY_SIZE(enabled_status_text))
 			return -EINVAL;
 
@@ -2241,6 +2356,152 @@ static ssize_t os_mode_index_show(struct device *dev,
 	return count;
 }
 
+static ssize_t rgb_quick_enable_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						     struct go_cfg_drvdata,
+						     led_mc);
+	u8 dev_byte = UNSPECIFIED;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_ENABLE,
+			       GEN1_RGB_QUICK_EN_GET, UNSPECIFIED,
+			       &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	if (drvdata->gen1_rgb_quick_en > 1)
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%s\n",
+			  enabled_status_text[drvdata->gen1_rgb_quick_en]);
+}
+
+static ssize_t rgb_quick_enable_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						     struct go_cfg_drvdata,
+						     led_mc);
+	u8 content[2] = { UNSPECIFIED };
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = sysfs_match_string(enabled_status_text, buf);
+	if (ret < 0)
+		return ret;
+
+	content[1] = ret;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_ENABLE,
+			       GEN1_RGB_QUICK_EN_SET, UNSPECIFIED, content,
+			       sizeof(content), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	drvdata->gen1_rgb_quick_en = content[1];
+
+	return count;
+}
+
+static ssize_t rgb_quick_enable_index_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	ssize_t count = 0;
+	unsigned int i;
+
+	for (i = 1; i < ARRAY_SIZE(enabled_status_text); i++)
+		count += sysfs_emit_at(buf, count, "%s ",
+				       enabled_status_text[i]);
+
+	if (count)
+		buf[count - 1] = '\n';
+
+	return count;
+}
+
+static ssize_t rgb_quick_effect_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						     struct go_cfg_drvdata,
+						     led_mc);
+	u8 dev_byte = UNSPECIFIED;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_QUICK,
+			       GEN1_RGB_QUICK_GET, UNSPECIFIED,
+			       &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "profile %u\n", drvdata->gen1_rgb_quick_id);
+}
+
+static ssize_t rgb_quick_effect_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						     struct go_cfg_drvdata,
+						     led_mc);
+	u8 content[2] = { UNSPECIFIED };
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = kstrtou8(buf, 10, &content[1]);
+	if (ret)
+		return ret;
+
+	/* The firmware accepts stored profiles one and two */
+	if (content[1] < 1 || content[1] > 2)
+		return -EINVAL;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_QUICK,
+			       GEN1_RGB_QUICK_SET, UNSPECIFIED, content,
+			       sizeof(content), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	drvdata->gen1_rgb_quick_id = content[1];
+
+	return count;
+}
+
+static ssize_t rgb_quick_effect_index_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	return sysfs_emit(buf, "1-2\n");
+}
+
 static int rgb_cfg_call(struct hid_device *hdev, enum mcu_command_index cmd,
 			enum rgb_config_index index, u8 *val, size_t size)
 {
@@ -2249,6 +2510,31 @@ static int rgb_cfg_call(struct hid_device *hdev, enum mcu_command_index cmd,
 
 	if (index < LIGHT_CFG_ALL || index > USR_LIGHT_PROFILE_3)
 		return -EINVAL;
+
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
+
+	if (drvdata->gen == GO_GEN1) {
+		u8 dev_byte = UNSPECIFIED;
+		u8 content[8] = { UNSPECIFIED };
+
+		if (cmd == GET_RGB_CFG)
+			return mcu_property_out(hdev, 0, GEN1_RGB_PROFILE,
+						GEN1_RGB_PROFILE_GET,
+						UNSPECIFIED, &dev_byte,
+						sizeof(dev_byte),
+						GO_GEN1_TIMEOUT_MS);
+
+		if (size != 6)
+			return -EOPNOTSUPP;
+
+		memcpy(&content[1], val, 6);
+		content[7] = index - USR_LIGHT_PROFILE_1 + 1;
+
+		return mcu_property_out(hdev, 0, GEN1_RGB_SET,
+					GEN1_RGB_PROFILE_SET, UNSPECIFIED,
+					content, sizeof(content),
+					GO_GEN1_TIMEOUT_MS);
+	}
 
 	return mcu_property_out(hdev, MCU_CONFIG_DATA, cmd, index, UNSPECIFIED,
 				val, size,
@@ -2285,6 +2571,11 @@ static ssize_t rgb_effect_store(struct device *dev,
 		return ret;
 
 	effect = ret;
+
+	/* Gen1 wire effect values are the shared enum indices plus one */
+	if (drvdata->gen == GO_GEN1)
+		effect++;
+
 	index = drvdata->rgb_profile + 3;
 	u8 rgb_profile[6] = { effect,
 			      mc_cdev->subled_info[0].intensity,
@@ -2317,6 +2608,15 @@ static ssize_t rgb_effect_show(struct device *dev,
 	ret = rgb_attr_show(drvdata);
 	if (ret)
 		return ret;
+
+	if (drvdata->gen == GO_GEN1) {
+		if (drvdata->rgb_effect < 1 ||
+		    drvdata->rgb_effect - 1 >= ARRAY_SIZE(rgb_effect_text))
+			return -EINVAL;
+
+		return sysfs_emit(buf, "%s\n",
+				  rgb_effect_text[drvdata->rgb_effect - 1]);
+	}
 
 	if (drvdata->rgb_effect >= ARRAY_SIZE(rgb_effect_text))
 		return -EINVAL;
@@ -2750,6 +3050,28 @@ static umode_t hid_go_attr_is_visible(struct kobject *kobj,
 	return 0;
 }
 
+/* The lighting attributes hang off the led class device, not the hid device */
+static umode_t hid_go_rgb_attr_is_visible(struct kobject *kobj,
+					  struct attribute *attr, int idx)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						     struct go_cfg_drvdata,
+						     led_mc);
+	const struct device_attribute *dattr;
+	const struct go_cfg_attr *gattr;
+
+	dattr = container_of_const(attr, struct device_attribute, attr);
+	gattr = container_of_const(dattr, struct go_cfg_attr, dev_attr);
+
+	if (gattr->support & drvdata->support)
+		return attr->mode;
+
+	return 0;
+}
+
 static const struct attribute_group mcu_attr_group = {
 	.attrs = mcu_attrs,
 	.is_visible = hid_go_attr_is_visible,
@@ -3027,13 +3349,17 @@ LEGO_DEVICE_ATTR_RW(rgb_enabled, "enabled", UNSPECIFIED, index, feature_status,
 		    FEATURE_LIGHT_ENABLE, SUP_RGB);
 LEGO_ATTR_RO(rgb_effect_index, "effect_index", SUP_RGB);
 LEGO_ATTR_RO(rgb_enabled_index, "enabled_index", SUP_RGB);
-LEGO_ATTR_RO(rgb_mode_index, "mode_index", SUP_RGB);
-LEGO_ATTR_RO(rgb_profile_range, "profile_range", SUP_RGB);
-LEGO_ATTR_RO(rgb_speed_range, "speed_range", SUP_RGB);
+LEGO_ATTR_RO(rgb_mode_index, "mode_index", SUP_RGB_USR);
+LEGO_ATTR_RO(rgb_profile_range, "profile_range", SUP_RGB_USR);
+LEGO_ATTR_RO(rgb_speed_range, "speed_range", SUP_RGB_USR);
 LEGO_ATTR_RW(rgb_effect, "effect", SUP_RGB);
-LEGO_ATTR_RW(rgb_mode, "mode", SUP_RGB);
-LEGO_ATTR_RW(rgb_profile, "profile", SUP_RGB);
-LEGO_ATTR_RW(rgb_speed, "speed", SUP_RGB);
+LEGO_ATTR_RW(rgb_mode, "mode", SUP_RGB_USR);
+LEGO_ATTR_RW(rgb_profile, "profile", SUP_RGB_USR);
+LEGO_ATTR_RW(rgb_speed, "speed", SUP_RGB_USR);
+LEGO_ATTR_RW(rgb_quick_enable, "quick_enable", SUP_RGB_QUICK);
+LEGO_ATTR_RO(rgb_quick_enable_index, "quick_enable_index", SUP_RGB_QUICK);
+LEGO_ATTR_RW(rgb_quick_effect, "quick_effect", SUP_RGB_QUICK);
+LEGO_ATTR_RO(rgb_quick_effect_index, "quick_effect_index", SUP_RGB_QUICK);
 
 static struct attribute *go_rgb_attrs[] = {
 	&rgb_effect.dev_attr.attr,
@@ -3046,11 +3372,16 @@ static struct attribute *go_rgb_attrs[] = {
 	&rgb_profile_range.dev_attr.attr,
 	&rgb_speed.dev_attr.attr,
 	&rgb_speed_range.dev_attr.attr,
+	&rgb_quick_enable.dev_attr.attr,
+	&rgb_quick_enable_index.dev_attr.attr,
+	&rgb_quick_effect.dev_attr.attr,
+	&rgb_quick_effect_index.dev_attr.attr,
 	NULL,
 };
 
 static struct attribute_group rgb_attr_group = {
 	.attrs = go_rgb_attrs,
+	.is_visible = hid_go_rgb_attr_is_visible,
 };
 
 static struct mc_subled go_rgb_subled_info[] = {
@@ -3299,12 +3630,6 @@ try_gp:
 	gp_registered = true;
 
 try_rgb:
-	/* Gen1 has no LED surface until RGB support binds it */
-	if (drvdata->gen == GO_GEN1) {
-		rgb_registered = false;
-		goto update_kobjects;
-	}
-
 	/* Pairs with the smp_store_release later in this function */
 	rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
 	if (rgb_registered)
