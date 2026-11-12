@@ -72,6 +72,14 @@ enum go_hw_gen {
 	GO_GEN2,
 };
 
+enum dev_type {
+	UNSPECIFIED,
+	USB_MCU,
+	TX_DONGLE,
+	LEFT_CONTROLLER,
+	RIGHT_CONTROLLER,
+};
+
 struct go_cfg_drvdata {
 	enum go_hw_gen gen;
 	unsigned long support;
@@ -82,6 +90,8 @@ struct go_cfg_drvdata {
 	struct led_classdev_mc led_mc;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
+	u8 gen1_battery[RIGHT_CONTROLLER + 1];
+	u8 gen1_link[RIGHT_CONTROLLER + 1];
 	u32 gen1_dpi_current;
 	u32 gen1_dpi_values[4];
 	u8 fps_mode;
@@ -156,13 +166,16 @@ enum go_support {
 	SUP_CAL_TRIGGER,
 	SUP_RGB,
 	SUP_RGB_USR,
+	SUP_BATTERY,
+	SUP_CONNECTION,
 	SUP_RGB_QUICK,
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
 			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI) | \
 			 BIT(SUP_TOUCHPAD) | BIT(SUP_RGB) | \
-			 BIT(SUP_RGB_QUICK))
+			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
+			 BIT(SUP_CONNECTION))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -234,6 +247,7 @@ enum gen1_command_id {
 	GEN1_RGB_PROFILE		= 0x71,
 	GEN1_RGB_SET			= 0x72,
 	GEN1_RGB_QUICK			= 0x73,
+	GEN1_DEVICE_STATE		= 0x74,
 	GEN1_VERSION			= 0x79,
 };
 
@@ -262,14 +276,6 @@ enum gen1_rgb_sub {
 #define GEN1_VAL_INVALID		0x04
 #define GEN1_OP_QUERY			0x01
 #define GEN1_OP_SET		0x02
-
-enum dev_type {
-	UNSPECIFIED,
-	USB_MCU,
-	TX_DONGLE,
-	LEFT_CONTROLLER,
-	RIGHT_CONTROLLER,
-};
 
 enum enabled_status_index {
 	FEATURE_UNKNOWN,
@@ -727,6 +733,31 @@ static int hid_go_gen1_rgb_quick_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
+static int hid_go_gen1_device_state_event(struct go_cfg_drvdata *drvdata,
+					  struct command_report *cmd_rep)
+{
+	/* Link query reply: two trailing bytes, no content echo */
+	if (cmd_rep->sub_cmd == GEN1_OP_SET) {
+		if (cmd_rep->id < 6)
+			return -EBADMSG;
+
+		drvdata->gen1_link[LEFT_CONTROLLER] = cmd_rep->data[0];
+		drvdata->gen1_link[RIGHT_CONTROLLER] = cmd_rep->data[1];
+		return 0;
+	}
+
+	/* Periodic state report: battery levels and link states */
+	if (cmd_rep->id < 14)
+		return -EBADMSG;
+
+	drvdata->gen1_battery[LEFT_CONTROLLER] = cmd_rep->data[0];
+	drvdata->gen1_battery[RIGHT_CONTROLLER] = cmd_rep->data[2];
+	drvdata->gen1_link[LEFT_CONTROLLER] = cmd_rep->data[7];
+	drvdata->gen1_link[RIGHT_CONTROLLER] = cmd_rep->data[8];
+
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -743,6 +774,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
 		return hid_go_gen1_touchpad_event(drvdata, cmd_rep);
+	case GEN1_DEVICE_STATE:
+		return hid_go_gen1_device_state_event(drvdata, cmd_rep);
 	case GEN1_RGB_ENABLE:
 		return hid_go_gen1_rgb_enable_event(drvdata, cmd_rep);
 	case GEN1_RGB_PROFILE:
@@ -1243,6 +1276,40 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	}
 
 	return hid_go_cmd_finish(drvdata, wait_result);
+}
+
+enum gen1_state_index {
+	GEN1_STATE_BATTERY,
+	GEN1_STATE_CONNECTION,
+};
+
+static ssize_t gen1_state_show(struct device *dev,
+			       struct device_attribute *attr, char *buf,
+			       enum gen1_state_index index,
+			       enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	if (index == GEN1_STATE_CONNECTION) {
+		u8 dev_byte = UNSPECIFIED;
+		int ret;
+
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_DEVICE_STATE,
+				       GEN1_OP_SET, UNSPECIFIED, &dev_byte,
+				       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+	}
+
+	if (index == GEN1_STATE_BATTERY)
+		return sysfs_emit(buf, "%u\n",
+				  drvdata->gen1_battery[device_type]);
+
+	return sysfs_emit(buf, "%u\n", drvdata->gen1_link[device_type]);
 }
 
 static ssize_t version_show(struct device *dev, struct device_attribute *attr,
@@ -3133,6 +3200,10 @@ LEGO_DEVICE_ATTR_RW(auto_sleep_time_left, "auto_sleep_time", LEFT_CONTROLLER, ra
 LEGO_ATTR_RO(auto_sleep_time_left_range, "auto_sleep_time_range",
 		   SUP_AUTO_SLEEP);
 
+LEGO_DEVICE_ATTR_RO(battery_left, "battery", LEFT_CONTROLLER, gen1_state,
+		    GEN1_STATE_BATTERY, SUP_BATTERY);
+LEGO_DEVICE_ATTR_RO(connection_left, "connection", LEFT_CONTROLLER,
+		    gen1_state, GEN1_STATE_CONNECTION, SUP_CONNECTION);
 LEGO_DEVICE_ATTR_RW(imu_bypass_left, "imu_bypass_enabled", LEFT_CONTROLLER, index, feature_status,
 		    FEATURE_IMU_BYPASS, SUP_IMU_BYPASS);
 LEGO_ATTR_RO(imu_bypass_left_index, "imu_bypass_enabled_index", SUP_IMU_BYPASS);
@@ -3177,6 +3248,7 @@ LEGO_DEVICE_STATUS_ATTR(cal_gyro_left_status, "calibrate_gyro_status", LEFT_CONT
 static struct attribute *left_gamepad_attrs[] = {
 	&auto_sleep_time_left.dev_attr.attr,
 	&auto_sleep_time_left_range.dev_attr.attr,
+	&battery_left.dev_attr.attr,
 	&cal_gyro_left.dev_attr.attr,
 	&cal_gyro_left_index.dev_attr.attr,
 	&cal_gyro_left_status.dev_attr.attr,
@@ -3186,6 +3258,7 @@ static struct attribute *left_gamepad_attrs[] = {
 	&cal_trigg_left.dev_attr.attr,
 	&cal_trigg_left_index.dev_attr.attr,
 	&cal_trigg_left_status.dev_attr.attr,
+	&connection_left.dev_attr.attr,
 	&imu_bypass_left.dev_attr.attr,
 	&imu_bypass_left_index.dev_attr.attr,
 	&imu_enabled_left.dev_attr.attr,
@@ -3230,6 +3303,10 @@ LEGO_DEVICE_ATTR_RW(auto_sleep_time_right, "auto_sleep_time", RIGHT_CONTROLLER, 
 LEGO_ATTR_RO(auto_sleep_time_right_range, "auto_sleep_time_range",
 		   SUP_AUTO_SLEEP);
 
+LEGO_DEVICE_ATTR_RO(battery_right, "battery", RIGHT_CONTROLLER, gen1_state,
+		    GEN1_STATE_BATTERY, SUP_BATTERY);
+LEGO_DEVICE_ATTR_RO(connection_right, "connection", RIGHT_CONTROLLER,
+		    gen1_state, GEN1_STATE_CONNECTION, SUP_CONNECTION);
 LEGO_DEVICE_ATTR_RW(imu_bypass_right, "imu_bypass_enabled", RIGHT_CONTROLLER, index, feature_status,
 		    FEATURE_IMU_BYPASS, SUP_IMU_BYPASS);
 LEGO_ATTR_RO(imu_bypass_right_index, "imu_bypass_enabled_index",
@@ -3275,6 +3352,7 @@ LEGO_DEVICE_STATUS_ATTR(cal_gyro_right_status, "calibrate_gyro_status", RIGHT_CO
 static struct attribute *right_gamepad_attrs[] = {
 	&auto_sleep_time_right.dev_attr.attr,
 	&auto_sleep_time_right_range.dev_attr.attr,
+	&battery_right.dev_attr.attr,
 	&cal_gyro_right.dev_attr.attr,
 	&cal_gyro_right_index.dev_attr.attr,
 	&cal_gyro_right_status.dev_attr.attr,
@@ -3284,6 +3362,7 @@ static struct attribute *right_gamepad_attrs[] = {
 	&cal_trigg_right.dev_attr.attr,
 	&cal_trigg_right_index.dev_attr.attr,
 	&cal_trigg_right_status.dev_attr.attr,
+	&connection_right.dev_attr.attr,
 	&imu_bypass_right.dev_attr.attr,
 	&imu_bypass_right_index.dev_attr.attr,
 	&imu_enabled_right.dev_attr.attr,
