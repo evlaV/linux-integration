@@ -11,6 +11,7 @@
 #include <linux/array_size.h>
 #include <linux/cleanup.h>
 #include <linux/completion.h>
+#include <linux/container_of.h>
 #include <linux/delay.h>
 #include <linux/dev_printk.h>
 #include <linux/device.h>
@@ -50,7 +51,7 @@ struct hid_go_cmd {
 	int result;
 };
 
-static struct hid_go_cfg {
+struct go_cfg_drvdata {
 	struct delayed_work go_cfg_setup;
 	struct hid_go_cmd cmd;
 	bool gp_registered;
@@ -107,7 +108,9 @@ static struct hid_go_cfg {
 	u32 tx_dongle_version_hardware;
 	u32 tx_dongle_version_product;
 	u32 tx_dongle_version_protocol;
-} drvdata;
+};
+
+static struct go_cfg_drvdata *drvdata;
 
 struct go_cfg_attr {
 	u8 index;
@@ -115,7 +118,7 @@ struct go_cfg_attr {
 
 struct go_cal_cfg_attr {
 	u8 index;
-	u8 *status;
+	u8 cal_type;
 };
 
 struct command_report {
@@ -353,49 +356,51 @@ static const char *const os_mode_text[] = {
 	[LINUX] = "linux",
 };
 
-static void hid_go_cmd_arm(u8 id, u8 command, u8 sub_command, u8 device)
+static void hid_go_cmd_arm(struct go_cfg_drvdata *drvdata, u8 id, u8 command,
+			   u8 sub_command, u8 device)
 {
-	guard(spinlock_irqsave)(&drvdata.cmd.lock);
+	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
-	reinit_completion(&drvdata.cmd.done);
-	drvdata.cmd.pending = true;
-	drvdata.cmd.id = id;
-	drvdata.cmd.command = command;
-	drvdata.cmd.sub_command = sub_command;
-	drvdata.cmd.device = device;
+	reinit_completion(&drvdata->cmd.done);
+	drvdata->cmd.pending = true;
+	drvdata->cmd.id = id;
+	drvdata->cmd.command = command;
+	drvdata->cmd.sub_command = sub_command;
+	drvdata->cmd.device = device;
 }
 
-static void hid_go_cmd_consume(const struct command_report *cmd_rep, int result)
+static void hid_go_cmd_consume(struct go_cfg_drvdata *drvdata,
+			       const struct command_report *cmd_rep, int result)
 {
-	guard(spinlock_irqsave)(&drvdata.cmd.lock);
+	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
-	if (drvdata.cmd.pending && cmd_rep->id == drvdata.cmd.id &&
-	    cmd_rep->cmd == drvdata.cmd.command &&
-	    cmd_rep->sub_cmd == drvdata.cmd.sub_command &&
-	    cmd_rep->device_type == drvdata.cmd.device) {
-		drvdata.cmd.pending = false;
-		drvdata.cmd.result = result;
-		complete(&drvdata.cmd.done);
+	if (drvdata->cmd.pending && cmd_rep->id == drvdata->cmd.id &&
+	    cmd_rep->cmd == drvdata->cmd.command &&
+	    cmd_rep->sub_cmd == drvdata->cmd.sub_command &&
+	    cmd_rep->device_type == drvdata->cmd.device) {
+		drvdata->cmd.pending = false;
+		drvdata->cmd.result = result;
+		complete(&drvdata->cmd.done);
 	}
 }
 
-static int hid_go_cmd_finish(long wait_result)
+static int hid_go_cmd_finish(struct go_cfg_drvdata *drvdata, long wait_result)
 {
-	guard(spinlock_irqsave)(&drvdata.cmd.lock);
+	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
 	if (wait_result <= 0) {
-		drvdata.cmd.pending = false;
+		drvdata->cmd.pending = false;
 		return wait_result < 0 ? wait_result : -ETIMEDOUT;
 	}
 
-	return drvdata.cmd.result;
+	return drvdata->cmd.result;
 }
 
-static int hid_go_cmd_cancel(int result)
+static int hid_go_cmd_cancel(struct go_cfg_drvdata *drvdata, int result)
 {
-	guard(spinlock_irqsave)(&drvdata.cmd.lock);
+	guard(spinlock_irqsave)(&drvdata->cmd.lock);
 
-	drvdata.cmd.pending = false;
+	drvdata->cmd.pending = false;
 	return result;
 }
 
@@ -409,25 +414,26 @@ static int hid_go_send_output_report(struct hid_device *hdev, u8 *packet)
 	return ret == GO_PACKET_SIZE ? 0 : -EINVAL;
 }
 
-static int hid_go_version_event(struct command_report *cmd_rep)
+static int hid_go_version_event(struct go_cfg_drvdata *drvdata,
+				struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case PRODUCT_VERSION:
 		switch (cmd_rep->device_type) {
 		case USB_MCU:
-			drvdata.mcu_version_product =
+			drvdata->mcu_version_product =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case TX_DONGLE:
-			drvdata.tx_dongle_version_product =
+			drvdata->tx_dongle_version_product =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_version_product =
+			drvdata->gp_left_version_product =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_version_product =
+			drvdata->gp_right_version_product =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		default:
@@ -436,19 +442,19 @@ static int hid_go_version_event(struct command_report *cmd_rep)
 	case PROTOCOL_VERSION:
 		switch (cmd_rep->device_type) {
 		case USB_MCU:
-			drvdata.mcu_version_protocol =
+			drvdata->mcu_version_protocol =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case TX_DONGLE:
-			drvdata.tx_dongle_version_protocol =
+			drvdata->tx_dongle_version_protocol =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_version_protocol =
+			drvdata->gp_left_version_protocol =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_version_protocol =
+			drvdata->gp_right_version_protocol =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		default:
@@ -457,19 +463,19 @@ static int hid_go_version_event(struct command_report *cmd_rep)
 	case FIRMWARE_VERSION:
 		switch (cmd_rep->device_type) {
 		case USB_MCU:
-			drvdata.mcu_version_firmware =
+			drvdata->mcu_version_firmware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case TX_DONGLE:
-			drvdata.tx_dongle_version_firmware =
+			drvdata->tx_dongle_version_firmware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_version_firmware =
+			drvdata->gp_left_version_firmware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_version_firmware =
+			drvdata->gp_right_version_firmware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		default:
@@ -478,19 +484,19 @@ static int hid_go_version_event(struct command_report *cmd_rep)
 	case HARDWARE_VERSION:
 		switch (cmd_rep->device_type) {
 		case USB_MCU:
-			drvdata.mcu_version_hardware =
+			drvdata->mcu_version_hardware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case TX_DONGLE:
-			drvdata.tx_dongle_version_hardware =
+			drvdata->tx_dongle_version_hardware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_version_hardware =
+			drvdata->gp_left_version_hardware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_version_hardware =
+			drvdata->gp_right_version_hardware =
 				get_unaligned_be32(cmd_rep->data);
 			return 0;
 		default:
@@ -499,16 +505,16 @@ static int hid_go_version_event(struct command_report *cmd_rep)
 	case HARDWARE_GENERATION:
 		switch (cmd_rep->device_type) {
 		case USB_MCU:
-			drvdata.mcu_version_gen = cmd_rep->data[0];
+			drvdata->mcu_version_gen = cmd_rep->data[0];
 			return 0;
 		case TX_DONGLE:
-			drvdata.tx_dongle_version_gen = cmd_rep->data[0];
+			drvdata->tx_dongle_version_gen = cmd_rep->data[0];
 			return 0;
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_version_gen = cmd_rep->data[0];
+			drvdata->gp_left_version_gen = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_version_gen = cmd_rep->data[0];
+			drvdata->gp_right_version_gen = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
@@ -518,7 +524,8 @@ static int hid_go_version_event(struct command_report *cmd_rep)
 	}
 }
 
-static int hid_go_feature_status_event(struct command_report *cmd_rep)
+static int hid_go_feature_status_event(struct go_cfg_drvdata *drvdata,
+				       struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case FEATURE_RESET_GAMEPAD:
@@ -526,10 +533,10 @@ static int hid_go_feature_status_event(struct command_report *cmd_rep)
 	case FEATURE_IMU_ENABLE:
 		switch (cmd_rep->device_type) {
 		case LEFT_CONTROLLER:
-			drvdata.imu_left_sensor_en = cmd_rep->data[0];
+			drvdata->imu_left_sensor_en = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.imu_right_sensor_en = cmd_rep->data[0];
+			drvdata->imu_right_sensor_en = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
@@ -537,59 +544,60 @@ static int hid_go_feature_status_event(struct command_report *cmd_rep)
 	case FEATURE_IMU_BYPASS:
 		switch (cmd_rep->device_type) {
 		case LEFT_CONTROLLER:
-			drvdata.imu_left_bypass_en = cmd_rep->data[0];
+			drvdata->imu_left_bypass_en = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.imu_right_bypass_en = cmd_rep->data[0];
+			drvdata->imu_right_bypass_en = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
 		}
 		break;
 	case FEATURE_LIGHT_ENABLE:
-		drvdata.rgb_en = cmd_rep->data[0];
+		drvdata->rgb_en = cmd_rep->data[0];
 		return 0;
 	case FEATURE_AUTO_SLEEP_TIME:
 		switch (cmd_rep->device_type) {
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_auto_sleep_time = cmd_rep->data[0];
+			drvdata->gp_left_auto_sleep_time = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_auto_sleep_time = cmd_rep->data[0];
+			drvdata->gp_right_auto_sleep_time = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
 		}
 		break;
 	case FEATURE_TOUCHPAD_ENABLE:
-		drvdata.tp_en = cmd_rep->data[0];
+		drvdata->tp_en = cmd_rep->data[0];
 		return 0;
 	case FEATURE_GAMEPAD_MODE:
-		drvdata.gp_mode = cmd_rep->data[0];
+		drvdata->gp_mode = cmd_rep->data[0];
 		return 0;
 	case FEATURE_FPS_SWITCH_STATUS:
-		drvdata.fps_mode = cmd_rep->data[0];
+		drvdata->fps_mode = cmd_rep->data[0];
 		return 0;
 	default:
 		return -EINVAL;
 	}
 }
 
-static int hid_go_motor_event(struct command_report *cmd_rep)
+static int hid_go_motor_event(struct go_cfg_drvdata *drvdata,
+			      struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case MOTOR_CFG_ALL:
 		return -EINVAL;
 	case MOTOR_INTENSITY:
-		drvdata.gp_rumble_intensity = cmd_rep->data[0];
+		drvdata->gp_rumble_intensity = cmd_rep->data[0];
 		return 0;
 	case VIBRATION_NOTIFY_ENABLE:
 		switch (cmd_rep->device_type) {
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_notify_en = cmd_rep->data[0];
+			drvdata->gp_left_notify_en = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_notify_en = cmd_rep->data[0];
+			drvdata->gp_right_notify_en = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
@@ -598,62 +606,65 @@ static int hid_go_motor_event(struct command_report *cmd_rep)
 	case RUMBLE_MODE:
 		switch (cmd_rep->device_type) {
 		case LEFT_CONTROLLER:
-			drvdata.gp_left_rumble_mode = cmd_rep->data[0];
+			drvdata->gp_left_rumble_mode = cmd_rep->data[0];
 			return 0;
 		case RIGHT_CONTROLLER:
-			drvdata.gp_right_rumble_mode = cmd_rep->data[0];
+			drvdata->gp_right_rumble_mode = cmd_rep->data[0];
 			return 0;
 		default:
 			return -EINVAL;
 		}
 	case TP_VIBRATION_ENABLE:
-		drvdata.tp_vibration_en = cmd_rep->data[0];
+		drvdata->tp_vibration_en = cmd_rep->data[0];
 		return 0;
 	case TP_VIBRATION_INTENSITY:
-		drvdata.tp_vibration_intensity = cmd_rep->data[0];
+		drvdata->tp_vibration_intensity = cmd_rep->data[0];
 		return 0;
 	}
 	return -EINVAL;
 }
 
-static int hid_go_fps_dpi_event(struct command_report *cmd_rep)
+static int hid_go_fps_dpi_event(struct go_cfg_drvdata *drvdata,
+				struct command_report *cmd_rep)
 {
 	if (cmd_rep->sub_cmd != FPS_MODE_DPI)
 		return -EINVAL;
 
-	drvdata.mouse_dpi = get_unaligned_le32(cmd_rep->data);
+	drvdata->mouse_dpi = get_unaligned_le32(cmd_rep->data);
 
 	return 0;
 }
 
-static int hid_go_light_event(struct command_report *cmd_rep)
+static int hid_go_light_event(struct go_cfg_drvdata *drvdata,
+			      struct command_report *cmd_rep)
 {
 	struct led_classdev_mc *mc_cdev;
 
 	switch (cmd_rep->sub_cmd) {
 	case LIGHT_MODE_SEL:
-		drvdata.rgb_mode = cmd_rep->data[0];
+		drvdata->rgb_mode = cmd_rep->data[0];
 		return 0;
 	case LIGHT_PROFILE_SEL:
-		drvdata.rgb_profile = cmd_rep->data[0];
+		drvdata->rgb_profile = cmd_rep->data[0];
 		return 0;
 	case USR_LIGHT_PROFILE_1:
 	case USR_LIGHT_PROFILE_2:
 	case USR_LIGHT_PROFILE_3:
-		mc_cdev = &drvdata.led_mc;
-		drvdata.rgb_effect = cmd_rep->data[0];
+		mc_cdev = &drvdata->led_mc;
+		drvdata->rgb_effect = cmd_rep->data[0];
 		mc_cdev->subled_info[0].intensity = cmd_rep->data[1];
 		mc_cdev->subled_info[1].intensity = cmd_rep->data[2];
 		mc_cdev->subled_info[2].intensity = cmd_rep->data[3];
-		drvdata.led_mc.led_cdev.brightness = cmd_rep->data[4];
-		drvdata.rgb_speed = 100 - cmd_rep->data[5];
+		drvdata->led_mc.led_cdev.brightness = cmd_rep->data[4];
+		drvdata->rgb_speed = 100 - cmd_rep->data[5];
 		return 0;
 	default:
 		return -EINVAL;
 	}
 }
 
-static int hid_go_device_status_event(struct command_report *cmd_rep)
+static int hid_go_device_status_event(struct go_cfg_drvdata *drvdata,
+				      struct command_report *cmd_rep)
 {
 	u8 device_type = cmd_rep->device_type;
 	u8 caldev = cmd_rep->data[0];
@@ -669,23 +680,23 @@ static int hid_go_device_status_event(struct command_report *cmd_rep)
 	switch (caldev) {
 	case CALDEV_GYROSCOPE:
 		if (device_type == LEFT_CONTROLLER)
-			drvdata.gp_left_gyro_cal_status = status;
+			drvdata->gp_left_gyro_cal_status = status;
 		else
-			drvdata.gp_right_gyro_cal_status = status;
+			drvdata->gp_right_gyro_cal_status = status;
 		attr = "calibrate_gyro_status";
 		break;
 	case CALDEV_JOYSTICK:
 		if (device_type == LEFT_CONTROLLER)
-			drvdata.gp_left_joy_cal_status = status;
+			drvdata->gp_left_joy_cal_status = status;
 		else
-			drvdata.gp_right_joy_cal_status = status;
+			drvdata->gp_right_joy_cal_status = status;
 		attr = "calibrate_joystick_status";
 		break;
 	case CALDEV_TRIGGER:
 		if (device_type == LEFT_CONTROLLER)
-			drvdata.gp_left_trigg_cal_status = status;
+			drvdata->gp_left_trigg_cal_status = status;
 		else
-			drvdata.gp_right_trigg_cal_status = status;
+			drvdata->gp_right_trigg_cal_status = status;
 		attr = "calibrate_trigger_status";
 		break;
 	default:
@@ -693,14 +704,15 @@ static int hid_go_device_status_event(struct command_report *cmd_rep)
 	}
 
 	if (device_type == LEFT_CONTROLLER)
-		sysfs_notify(&drvdata.hdev->dev.kobj, "left_handle", attr);
+		sysfs_notify(&drvdata->hdev->dev.kobj, "left_handle", attr);
 	else
-		sysfs_notify(&drvdata.hdev->dev.kobj, "right_handle", attr);
+		sysfs_notify(&drvdata->hdev->dev.kobj, "right_handle", attr);
 
 	return 0;
 }
 
-static int hid_go_os_mode_cfg_event(struct command_report *cmd_rep)
+static int hid_go_os_mode_cfg_event(struct go_cfg_drvdata *drvdata,
+				    struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case SET_OS_MODE:
@@ -708,7 +720,7 @@ static int hid_go_os_mode_cfg_event(struct command_report *cmd_rep)
 			return -EIO;
 		return 0;
 	case GET_OS_MODE:
-		drvdata.os_mode = cmd_rep->data[0];
+		drvdata->os_mode = cmd_rep->data[0];
 		return 0;
 	default:
 		return -EINVAL;
@@ -738,10 +750,11 @@ static int get_endpoint_address(struct hid_device *hdev)
 static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 			    u8 *data, int size)
 {
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	struct command_report *cmd_rep;
 	int ep, ret;
 
-	if (size != GO_PACKET_SIZE || data[0] != GO_INPUT_REPORT_ID)
+	if (!drvdata || size != GO_PACKET_SIZE || data[0] != GO_INPUT_REPORT_ID)
 		goto passthrough;
 
 	ep = get_endpoint_address(hdev);
@@ -754,22 +767,22 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 	case MCU_CONFIG_DATA:
 		switch (cmd_rep->cmd) {
 		case GET_VERSION_DATA:
-			ret = hid_go_version_event(cmd_rep);
+			ret = hid_go_version_event(drvdata, cmd_rep);
 			break;
 		case GET_FEATURE_STATUS:
-			ret = hid_go_feature_status_event(cmd_rep);
+			ret = hid_go_feature_status_event(drvdata, cmd_rep);
 			break;
 		case GET_MOTOR_CFG:
-			ret = hid_go_motor_event(cmd_rep);
+			ret = hid_go_motor_event(drvdata, cmd_rep);
 			break;
 		case GET_DPI_CFG:
-			ret = hid_go_fps_dpi_event(cmd_rep);
+			ret = hid_go_fps_dpi_event(drvdata, cmd_rep);
 			break;
 		case GET_RGB_CFG:
-			ret = hid_go_light_event(cmd_rep);
+			ret = hid_go_light_event(drvdata, cmd_rep);
 			break;
 		case GET_DEVICE_STATUS:
-			ret = hid_go_device_status_event(cmd_rep);
+			ret = hid_go_device_status_event(drvdata, cmd_rep);
 			break;
 		case SET_FEATURE_STATUS:
 		case SET_MOTOR_CFG:
@@ -786,7 +799,7 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 		}
 		break;
 	case OS_MODE_DATA:
-		ret = hid_go_os_mode_cfg_event(cmd_rep);
+		ret = hid_go_os_mode_cfg_event(drvdata, cmd_rep);
 		break;
 	default:
 		goto passthrough;
@@ -794,7 +807,7 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 	dev_dbg(&hdev->dev, "Rx data as raw input report: [%*ph]\n",
 		GO_PACKET_SIZE, data);
 
-	hid_go_cmd_consume(cmd_rep, ret);
+	hid_go_cmd_consume(drvdata, cmd_rep, ret);
 	return ret;
 
 passthrough:
@@ -806,6 +819,7 @@ passthrough:
 static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 			    u8 index, enum dev_type device, u8 *data, size_t len)
 {
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	unsigned char *dmabuf __free(kfree) = NULL;
 	u8 header[] = { GO_OUTPUT_REPORT_ID, id, command, index, device };
 	size_t header_size = ARRAY_SIZE(header);
@@ -813,10 +827,13 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	long wait_result;
 	int ret;
 
+	if (!drvdata)
+		return -ENODEV;
+
 	if (header_size + len > GO_PACKET_SIZE)
 		return -EINVAL;
 
-	guard(mutex)(&drvdata.cfg_mutex);
+	guard(mutex)(&drvdata->cfg_mutex);
 	/* We can't use a devm_alloc reusable buffer without side effects during suspend */
 	dmabuf = kzalloc(GO_PACKET_SIZE, GFP_KERNEL);
 	if (!dmabuf)
@@ -828,28 +845,29 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	dev_dbg(&hdev->dev, "Send data as raw output report: [%*ph]\n",
 		GO_PACKET_SIZE, dmabuf);
 
-	hid_go_cmd_arm(id, command, index, device);
+	hid_go_cmd_arm(drvdata, id, command, index, device);
 	ret = hid_go_send_output_report(hdev, dmabuf);
 	if (ret)
-		return hid_go_cmd_cancel(ret);
+		return hid_go_cmd_cancel(drvdata, ret);
 
-	wait_result = wait_for_completion_interruptible_timeout(&drvdata.cmd.done,
+	wait_result = wait_for_completion_interruptible_timeout(&drvdata->cmd.done,
 								timeout);
-	return hid_go_cmd_finish(wait_result);
+	return hid_go_cmd_finish(drvdata, wait_result);
 }
 
 static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 			    char *buf, enum version_data_index index,
 			    enum dev_type device_type)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	ssize_t count = 0;
 	int ret;
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       index, device_type, NULL, 0);
 	if (ret)
 		return ret;
@@ -859,19 +877,19 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		switch (device_type) {
 		case USB_MCU:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.mcu_version_product);
+					   drvdata->mcu_version_product);
 			break;
 		case TX_DONGLE:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.tx_dongle_version_product);
+					   drvdata->tx_dongle_version_product);
 			break;
 		case LEFT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_left_version_product);
+					   drvdata->gp_left_version_product);
 			break;
 		case RIGHT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_right_version_product);
+					   drvdata->gp_right_version_product);
 			break;
 		default:
 			return -EINVAL;
@@ -881,19 +899,19 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		switch (device_type) {
 		case USB_MCU:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.mcu_version_protocol);
+					   drvdata->mcu_version_protocol);
 			break;
 		case TX_DONGLE:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.tx_dongle_version_protocol);
+					   drvdata->tx_dongle_version_protocol);
 			break;
 		case LEFT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_left_version_protocol);
+					   drvdata->gp_left_version_protocol);
 			break;
 		case RIGHT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_right_version_protocol);
+					   drvdata->gp_right_version_protocol);
 			break;
 		default:
 			return -EINVAL;
@@ -903,19 +921,19 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		switch (device_type) {
 		case USB_MCU:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.mcu_version_firmware);
+					   drvdata->mcu_version_firmware);
 			break;
 		case TX_DONGLE:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.tx_dongle_version_firmware);
+					   drvdata->tx_dongle_version_firmware);
 			break;
 		case LEFT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_left_version_firmware);
+					   drvdata->gp_left_version_firmware);
 			break;
 		case RIGHT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_right_version_firmware);
+					   drvdata->gp_right_version_firmware);
 			break;
 		default:
 			return -EINVAL;
@@ -925,19 +943,19 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		switch (device_type) {
 		case USB_MCU:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.mcu_version_hardware);
+					   drvdata->mcu_version_hardware);
 			break;
 		case TX_DONGLE:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.tx_dongle_version_hardware);
+					   drvdata->tx_dongle_version_hardware);
 			break;
 		case LEFT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_left_version_hardware);
+					   drvdata->gp_left_version_hardware);
 			break;
 		case RIGHT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_right_version_hardware);
+					   drvdata->gp_right_version_hardware);
 			break;
 		default:
 			return -EINVAL;
@@ -947,19 +965,19 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 		switch (device_type) {
 		case USB_MCU:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.mcu_version_gen);
+					   drvdata->mcu_version_gen);
 			break;
 		case TX_DONGLE:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.tx_dongle_version_gen);
+					   drvdata->tx_dongle_version_gen);
 			break;
 		case LEFT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_left_version_gen);
+					   drvdata->gp_left_version_gen);
 			break;
 		case RIGHT_CONTROLLER:
 			count = sysfs_emit(buf, "%x\n",
-					   drvdata.gp_right_version_gen);
+					   drvdata->gp_right_version_gen);
 			break;
 		default:
 			return -EINVAL;
@@ -976,22 +994,28 @@ static ssize_t feature_status_store(struct device *dev,
 				    enum feature_status_index index,
 				    enum dev_type device_type)
 {
+	struct go_cfg_drvdata *drvdata;
 	bool dev_registered;
+	size_t size = 1;
+	u8 val = 0;
+	int ret;
 
+	/* rgb_enabled is attached to the led_classdev, not the hid_device */
 	if (index == FEATURE_LIGHT_ENABLE) {
-		/* Pairs with smp_store_release from cfg_setup */
-		dev_registered = smp_load_acquire(&drvdata.rgb_registered);
+		struct led_classdev *led_cdev = dev_get_drvdata(dev);
+		struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+
+		drvdata = container_of(mc_cdev, struct go_cfg_drvdata, led_mc);
+		/* Pairs with smp_store_release in the config setup path */
+		dev_registered = smp_load_acquire(&drvdata->rgb_registered);
 	} else {
-		/* Pairs with smp_store_release from cfg_setup */
-		dev_registered = smp_load_acquire(&drvdata.gp_registered);
+		drvdata = hid_get_drvdata(to_hid_device(dev));
+		/* Pairs with smp_store_release in the config setup path */
+		dev_registered = smp_load_acquire(&drvdata->gp_registered);
 	}
 
 	if (!dev_registered)
 		return -ENODEV;
-
-	size_t size = 1;
-	u8 val = 0;
-	int ret;
 
 	switch (index) {
 	case FEATURE_IMU_ENABLE:
@@ -1027,7 +1051,7 @@ static ssize_t feature_status_store(struct device *dev,
 	if (!val)
 		size = 0;
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
 			       SET_FEATURE_STATUS, index, device_type, &val,
 			       size);
 	if (ret < 0)
@@ -1041,24 +1065,30 @@ static ssize_t feature_status_show(struct device *dev,
 				   enum feature_status_index index,
 				   enum dev_type device_type)
 {
+	struct go_cfg_drvdata *drvdata;
 	bool dev_registered;
+	ssize_t count = 0;
+	int ret;
+	u8 i;
 
+	/* rgb_enabled is attached to the led_classdev, not the hid_device */
 	if (index == FEATURE_LIGHT_ENABLE) {
-		/* Pairs with smp_store_release from cfg_setup */
-		dev_registered = smp_load_acquire(&drvdata.rgb_registered);
+		struct led_classdev *led_cdev = dev_get_drvdata(dev);
+		struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+
+		drvdata = container_of(mc_cdev, struct go_cfg_drvdata, led_mc);
+		/* Pairs with smp_store_release in the config setup path */
+		dev_registered = smp_load_acquire(&drvdata->rgb_registered);
 	} else {
-		/* Pairs with smp_store_release from cfg_setup */
-		dev_registered = smp_load_acquire(&drvdata.gp_registered);
+		drvdata = hid_get_drvdata(to_hid_device(dev));
+		/* Pairs with smp_store_release in the config setup path */
+		dev_registered = smp_load_acquire(&drvdata->gp_registered);
 	}
 
 	if (!dev_registered)
 		return -ENODEV;
 
-	ssize_t count = 0;
-	int ret;
-	u8 i;
-
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
 			       GET_FEATURE_STATUS, index, device_type, NULL, 0);
 	if (ret)
 		return ret;
@@ -1067,10 +1097,10 @@ static ssize_t feature_status_show(struct device *dev,
 	case FEATURE_IMU_ENABLE:
 		switch (device_type) {
 		case LEFT_CONTROLLER:
-			i = drvdata.imu_left_sensor_en;
+			i = drvdata->imu_left_sensor_en;
 			break;
 		case RIGHT_CONTROLLER:
-			i = drvdata.imu_right_sensor_en;
+			i = drvdata->imu_right_sensor_en;
 			break;
 		default:
 			return -EINVAL;
@@ -1083,10 +1113,10 @@ static ssize_t feature_status_show(struct device *dev,
 	case FEATURE_IMU_BYPASS:
 		switch (device_type) {
 		case LEFT_CONTROLLER:
-			i = drvdata.imu_left_bypass_en;
+			i = drvdata->imu_left_bypass_en;
 			break;
 		case RIGHT_CONTROLLER:
-			i = drvdata.imu_right_bypass_en;
+			i = drvdata->imu_right_bypass_en;
 			break;
 		default:
 			return -EINVAL;
@@ -1097,14 +1127,14 @@ static ssize_t feature_status_show(struct device *dev,
 		count = sysfs_emit(buf, "%s\n", enabled_status_text[i]);
 		break;
 	case FEATURE_LIGHT_ENABLE:
-		i = drvdata.rgb_en;
+		i = drvdata->rgb_en;
 		if (i >= ARRAY_SIZE(enabled_status_text))
 			return -EINVAL;
 
 		count = sysfs_emit(buf, "%s\n", enabled_status_text[i]);
 		break;
 	case FEATURE_TOUCHPAD_ENABLE:
-		i = drvdata.tp_en;
+		i = drvdata->tp_en;
 		if (i >= ARRAY_SIZE(enabled_status_text))
 			return -EINVAL;
 
@@ -1113,10 +1143,10 @@ static ssize_t feature_status_show(struct device *dev,
 	case FEATURE_AUTO_SLEEP_TIME:
 		switch (device_type) {
 		case LEFT_CONTROLLER:
-			i = drvdata.gp_left_auto_sleep_time;
+			i = drvdata->gp_left_auto_sleep_time;
 			break;
 		case RIGHT_CONTROLLER:
-			i = drvdata.gp_right_auto_sleep_time;
+			i = drvdata->gp_right_auto_sleep_time;
 			break;
 		default:
 			return -EINVAL;
@@ -1124,14 +1154,14 @@ static ssize_t feature_status_show(struct device *dev,
 		count = sysfs_emit(buf, "%u\n", i);
 		break;
 	case FEATURE_FPS_SWITCH_STATUS:
-		i = drvdata.fps_mode;
+		i = drvdata->fps_mode;
 		if (i >= ARRAY_SIZE(fps_switch_text))
 			return -EINVAL;
 
 		count = sysfs_emit(buf, "%s\n", fps_switch_text[i]);
 		break;
 	case FEATURE_GAMEPAD_MODE:
-		i = drvdata.gp_mode;
+		i = drvdata->gp_mode;
 		if (i >= ARRAY_SIZE(gamepad_mode_text))
 			return -EINVAL;
 
@@ -1191,13 +1221,14 @@ static ssize_t motor_config_store(struct device *dev,
 				  enum motor_cfg_index index,
 				  enum dev_type device_type)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	size_t size = 1;
 	u8 val = 0;
 	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
 
 	switch (index) {
 	case MOTOR_CFG_ALL:
@@ -1230,7 +1261,7 @@ static ssize_t motor_config_store(struct device *dev,
 	if (!val)
 		size = 0;
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, SET_MOTOR_CFG,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, SET_MOTOR_CFG,
 			       index, device_type, &val, size);
 	if (ret < 0)
 		return ret;
@@ -1243,15 +1274,16 @@ static ssize_t motor_config_show(struct device *dev,
 				 enum motor_cfg_index index,
 				 enum dev_type device_type)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	ssize_t count = 0;
 	int ret;
 	u8 i;
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_MOTOR_CFG,
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_MOTOR_CFG,
 			       index, device_type, NULL, 0);
 	if (ret)
 		return ret;
@@ -1260,7 +1292,7 @@ static ssize_t motor_config_show(struct device *dev,
 	case MOTOR_CFG_ALL:
 		return -EINVAL;
 	case MOTOR_INTENSITY:
-		i = drvdata.gp_rumble_intensity;
+		i = drvdata->gp_rumble_intensity;
 		if (i >= ARRAY_SIZE(intensity_text))
 			return -EINVAL;
 
@@ -1269,10 +1301,10 @@ static ssize_t motor_config_show(struct device *dev,
 	case VIBRATION_NOTIFY_ENABLE:
 		switch (device_type) {
 		case LEFT_CONTROLLER:
-			i = drvdata.gp_left_notify_en;
+			i = drvdata->gp_left_notify_en;
 			break;
 		case RIGHT_CONTROLLER:
-			i = drvdata.gp_right_notify_en;
+			i = drvdata->gp_right_notify_en;
 			break;
 		default:
 			return -EINVAL;
@@ -1285,10 +1317,10 @@ static ssize_t motor_config_show(struct device *dev,
 	case RUMBLE_MODE:
 		switch (device_type) {
 		case LEFT_CONTROLLER:
-			i = drvdata.gp_left_rumble_mode;
+			i = drvdata->gp_left_rumble_mode;
 			break;
 		case RIGHT_CONTROLLER:
-			i = drvdata.gp_right_rumble_mode;
+			i = drvdata->gp_right_rumble_mode;
 			break;
 		default:
 			return -EINVAL;
@@ -1299,14 +1331,14 @@ static ssize_t motor_config_show(struct device *dev,
 		count = sysfs_emit(buf, "%s\n", rumble_mode_text[i]);
 		break;
 	case TP_VIBRATION_ENABLE:
-		i = drvdata.tp_vibration_en;
+		i = drvdata->tp_vibration_en;
 		if (i >= ARRAY_SIZE(enabled_status_text))
 			return -EINVAL;
 
 		count = sysfs_emit(buf, "%s\n", enabled_status_text[i]);
 		break;
 	case TP_VIBRATION_INTENSITY:
-		i = drvdata.tp_vibration_intensity;
+		i = drvdata->tp_vibration_intensity;
 		if (i >= ARRAY_SIZE(intensity_text))
 			return -EINVAL;
 
@@ -1360,14 +1392,15 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 				  const char *buf, size_t count)
 
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	size_t size = 4;
 	u32 value;
 	u8 val[4];
 	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
 
 	ret = kstrtou32(buf, 10, &value);
 	if (ret)
@@ -1378,7 +1411,7 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 
 	put_unaligned_le32(value, val);
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, SET_DPI_CFG,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, SET_DPI_CFG,
 			       FPS_MODE_DPI, UNSPECIFIED, val, size);
 	if (ret < 0)
 		return ret;
@@ -1389,18 +1422,19 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 static ssize_t fps_mode_dpi_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	int ret;
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
 			       FPS_MODE_DPI, UNSPECIFIED, NULL, 0);
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%u\n", drvdata.mouse_dpi);
+	return sysfs_emit(buf, "%u\n", drvdata->mouse_dpi);
 }
 
 static ssize_t fps_mode_dpi_index_show(struct device *dev,
@@ -1409,17 +1443,49 @@ static ssize_t fps_mode_dpi_index_show(struct device *dev,
 	return sysfs_emit(buf, "500 800 1200 1800\n");
 }
 
+static u8 *go_cal_status_ptr(struct go_cfg_drvdata *drvdata, enum dev_type device_type,
+			     enum cal_device_type cal_type)
+{
+	switch (device_type) {
+	case LEFT_CONTROLLER:
+		switch (cal_type) {
+		case CALDEV_GYROSCOPE:
+			return &drvdata->gp_left_gyro_cal_status;
+		case CALDEV_JOYSTICK:
+			return &drvdata->gp_left_joy_cal_status;
+		case CALDEV_TRIGGER:
+			return &drvdata->gp_left_trigg_cal_status;
+		default:
+			return NULL;
+		}
+	case RIGHT_CONTROLLER:
+		switch (cal_type) {
+		case CALDEV_GYROSCOPE:
+			return &drvdata->gp_right_gyro_cal_status;
+		case CALDEV_JOYSTICK:
+			return &drvdata->gp_right_joy_cal_status;
+		case CALDEV_TRIGGER:
+			return &drvdata->gp_right_trigg_cal_status;
+		default:
+			return NULL;
+		}
+	default:
+		return NULL;
+	}
+}
+
 static ssize_t device_status_show(struct device *dev,
 				  struct device_attribute *attr, char *buf,
 				  enum device_status_index index,
 				  enum dev_type device_type,
 				  enum cal_device_type cal_type)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	u8 i;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
 
 	switch (index) {
 	case GET_CAL_STATUS:
@@ -1427,13 +1493,13 @@ static ssize_t device_status_show(struct device *dev,
 		case LEFT_CONTROLLER:
 			switch (cal_type) {
 			case CALDEV_GYROSCOPE:
-				i = drvdata.gp_left_gyro_cal_status;
+				i = drvdata->gp_left_gyro_cal_status;
 				break;
 			case CALDEV_JOYSTICK:
-				i = drvdata.gp_left_joy_cal_status;
+				i = drvdata->gp_left_joy_cal_status;
 				break;
 			case CALDEV_TRIGGER:
-				i = drvdata.gp_left_trigg_cal_status;
+				i = drvdata->gp_left_trigg_cal_status;
 				break;
 			default:
 				return -EINVAL;
@@ -1442,13 +1508,13 @@ static ssize_t device_status_show(struct device *dev,
 		case RIGHT_CONTROLLER:
 			switch (cal_type) {
 			case CALDEV_GYROSCOPE:
-				i = drvdata.gp_right_gyro_cal_status;
+				i = drvdata->gp_right_gyro_cal_status;
 				break;
 			case CALDEV_JOYSTICK:
-				i = drvdata.gp_right_joy_cal_status;
+				i = drvdata->gp_right_joy_cal_status;
 				break;
 			case CALDEV_TRIGGER:
-				i = drvdata.gp_right_trigg_cal_status;
+				i = drvdata->gp_right_trigg_cal_status;
 				break;
 			default:
 				return -EINVAL;
@@ -1472,14 +1538,15 @@ static ssize_t calibrate_config_store(struct device *dev,
 				      struct device_attribute *attr,
 				      const char *buf, u8 cmd, u8 sub_cmd,
 				      size_t count, enum dev_type device_type,
-				      u8 *cal_status)
+				      u8 cal_type)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	u8 val;
 	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
 
 	ret = sysfs_match_string(cal_enabled_text, buf);
 	if (ret < 0)
@@ -1488,10 +1555,16 @@ static ssize_t calibrate_config_store(struct device *dev,
 		return -EINVAL;
 
 	val = ret;
-	if (val == CAL_START)
-		*cal_status = CAL_STAT_UNKNOWN;
+	if (val == CAL_START) {
+		u8 *cal_status = go_cal_status_ptr(drvdata, device_type, cal_type);
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, cmd, sub_cmd,
+		if (!cal_status)
+			return -EINVAL;
+
+		*cal_status = CAL_STAT_UNKNOWN;
+	}
+
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, cmd, sub_cmd,
 			       device_type, &val, sizeof(val));
 	if (ret < 0)
 		return ret;
@@ -1517,25 +1590,26 @@ static ssize_t calibrate_config_options(struct device *dev,
 static ssize_t os_mode_store(struct device *dev, struct device_attribute *attr,
 			     const char *buf, size_t count)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	size_t size = 1;
 	int ret;
 	u8 val;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
 
 	ret = sysfs_match_string(os_mode_text, buf);
 	if (ret <= 0)
 		return ret;
 
 	val = ret;
-	ret = mcu_property_out(drvdata.hdev, OS_MODE_DATA, FEATURE_OS_MODE,
+	ret = mcu_property_out(drvdata->hdev, OS_MODE_DATA, FEATURE_OS_MODE,
 			       SET_OS_MODE, USB_MCU, &val, size);
 	if (ret < 0)
 		return ret;
 
-	drvdata.os_mode = val;
+	drvdata->os_mode = val;
 
 	return count;
 }
@@ -1543,20 +1617,21 @@ static ssize_t os_mode_store(struct device *dev, struct device_attribute *attr,
 static ssize_t os_mode_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.gp_registered))
-		return -ENODEV;
-
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
 	ssize_t count = 0;
 	int ret;
 	u8 i;
 
-	ret = mcu_property_out(drvdata.hdev, OS_MODE_DATA, FEATURE_OS_MODE,
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, OS_MODE_DATA, FEATURE_OS_MODE,
 			       GET_OS_MODE, USB_MCU, NULL, 0);
 	if (ret)
 		return ret;
 
-	i = drvdata.os_mode;
+	i = drvdata->os_mode;
 	if (i >= ARRAY_SIZE(os_mode_text))
 		return -EINVAL;
 
@@ -1593,66 +1668,73 @@ static int rgb_cfg_call(struct hid_device *hdev, enum mcu_command_index cmd,
 				val, size);
 }
 
-static int rgb_attr_show(void)
+static int rgb_attr_show(struct go_cfg_drvdata *drvdata)
 {
 	enum rgb_config_index index;
 
-	index = drvdata.rgb_profile + 3;
+	index = drvdata->rgb_profile + 3;
 
-	return rgb_cfg_call(drvdata.hdev, GET_RGB_CFG, index, NULL, 0);
+	return rgb_cfg_call(drvdata->hdev, GET_RGB_CFG, index, NULL, 0);
 }
 
 static ssize_t rgb_effect_store(struct device *dev,
 				struct device_attribute *attr, const char *buf,
 				size_t count)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
-	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	enum rgb_config_index index;
 	u8 effect;
 	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
 
 	ret = sysfs_match_string(rgb_effect_text, buf);
 	if (ret < 0)
 		return ret;
 
 	effect = ret;
-	index = drvdata.rgb_profile + 3;
+	index = drvdata->rgb_profile + 3;
 	u8 rgb_profile[6] = { effect,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
 			      mc_cdev->subled_info[2].intensity,
-			      drvdata.led_mc.led_cdev.brightness,
-			      drvdata.rgb_speed };
+			      drvdata->led_mc.led_cdev.brightness,
+			      drvdata->rgb_speed };
 
-	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, index, rgb_profile, 6);
+	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
 	if (ret)
 		return ret;
 
-	drvdata.rgb_effect = effect;
+	drvdata->rgb_effect = effect;
 	return count;
 }
 
 static ssize_t rgb_effect_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	int ret;
 
-	ret = rgb_attr_show();
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = rgb_attr_show(drvdata);
 	if (ret)
 		return ret;
 
-	if (drvdata.rgb_effect >= ARRAY_SIZE(rgb_effect_text))
+	if (drvdata->rgb_effect >= ARRAY_SIZE(rgb_effect_text))
 		return -EINVAL;
 
-	return sysfs_emit(buf, "%s\n", rgb_effect_text[drvdata.rgb_effect]);
+	return sysfs_emit(buf, "%s\n", rgb_effect_text[drvdata->rgb_effect]);
 }
 
 static ssize_t rgb_effect_index_show(struct device *dev,
@@ -1674,14 +1756,17 @@ static ssize_t rgb_speed_store(struct device *dev,
 			       struct device_attribute *attr, const char *buf,
 			       size_t count)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
-	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	enum rgb_config_index index;
 	int val = 0;
 	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
 
 	ret = kstrtoint(buf, 10, &val);
 	if (ret)
@@ -1693,19 +1778,19 @@ static ssize_t rgb_speed_store(struct device *dev,
 	/* This is a delay setting, invert logic for consistency with other drivers */
 	val = 100 - val;
 
-	index = drvdata.rgb_profile + 3;
-	u8 rgb_profile[6] = { drvdata.rgb_effect,
+	index = drvdata->rgb_profile + 3;
+	u8 rgb_profile[6] = { drvdata->rgb_effect,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
 			      mc_cdev->subled_info[2].intensity,
-			      drvdata.led_mc.led_cdev.brightness,
+			      drvdata->led_mc.led_cdev.brightness,
 			      val };
 
-	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, index, rgb_profile, 6);
+	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
 	if (ret)
 		return ret;
 
-	drvdata.rgb_speed = val;
+	drvdata->rgb_speed = val;
 
 	return count;
 }
@@ -1713,20 +1798,24 @@ static ssize_t rgb_speed_store(struct device *dev,
 static ssize_t rgb_speed_show(struct device *dev, struct device_attribute *attr,
 			      char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	int ret, val;
 
-	ret = rgb_attr_show();
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = rgb_attr_show(drvdata);
 	if (ret)
 		return ret;
 
-	if (drvdata.rgb_speed > 100)
+	if (drvdata->rgb_speed > 100)
 		return -EINVAL;
 
-	val = drvdata.rgb_speed;
+	val = drvdata->rgb_speed;
 
 	return sysfs_emit(buf, "%hhu\n", val);
 }
@@ -1740,12 +1829,16 @@ static ssize_t rgb_speed_range_show(struct device *dev,
 static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	int ret;
 	u8 val;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
 
 	ret = sysfs_match_string(rgb_mode_text, buf);
 	if (ret <= 0)
@@ -1753,11 +1846,11 @@ static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 
 	val = ret;
 
-	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, LIGHT_MODE_SEL, &val, 1);
+	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, LIGHT_MODE_SEL, &val, 1);
 	if (ret)
 		return ret;
 
-	drvdata.rgb_mode = val;
+	drvdata->rgb_mode = val;
 
 	return count;
 }
@@ -1765,20 +1858,24 @@ static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 static ssize_t rgb_mode_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	int ret;
 
-	ret = rgb_cfg_call(drvdata.hdev, GET_RGB_CFG, LIGHT_MODE_SEL, NULL, 0);
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = rgb_cfg_call(drvdata->hdev, GET_RGB_CFG, LIGHT_MODE_SEL, NULL, 0);
 	if (ret)
 		return ret;
 
-	if (drvdata.rgb_mode >= ARRAY_SIZE(rgb_mode_text))
+	if (drvdata->rgb_mode >= ARRAY_SIZE(rgb_mode_text))
 		return -EINVAL;
 
-	return sysfs_emit(buf, "%s\n", rgb_mode_text[drvdata.rgb_mode]);
+	return sysfs_emit(buf, "%s\n", rgb_mode_text[drvdata->rgb_mode]);
 }
 
 static ssize_t rgb_mode_index_show(struct device *dev,
@@ -1800,13 +1897,17 @@ static ssize_t rgb_profile_store(struct device *dev,
 				 struct device_attribute *attr, const char *buf,
 				 size_t count)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	size_t size = 1;
 	int ret;
 	u8 val;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
 
 	ret = kstrtou8(buf, 10, &val);
 	if (ret < 0)
@@ -1815,11 +1916,11 @@ static ssize_t rgb_profile_store(struct device *dev,
 	if (val < 1 || val > 3)
 		return -EINVAL;
 
-	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, LIGHT_PROFILE_SEL, &val, size);
+	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, LIGHT_PROFILE_SEL, &val, size);
 	if (ret)
 		return ret;
 
-	drvdata.rgb_profile = val;
+	drvdata->rgb_profile = val;
 
 	return count;
 }
@@ -1827,20 +1928,24 @@ static ssize_t rgb_profile_store(struct device *dev,
 static ssize_t rgb_profile_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	/* Pairs with smp_store_release from cfg_setup */
-	if (!smp_load_acquire(&drvdata.rgb_registered))
-		return -ENODEV;
-
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+					     struct go_cfg_drvdata, led_mc);
 	int ret;
 
-	ret = rgb_cfg_call(drvdata.hdev, GET_RGB_CFG, LIGHT_PROFILE_SEL, NULL, 0);
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->rgb_registered))
+		return -ENODEV;
+
+	ret = rgb_cfg_call(drvdata->hdev, GET_RGB_CFG, LIGHT_PROFILE_SEL, NULL, 0);
 	if (ret)
 		return ret;
 
-	if (drvdata.rgb_profile < 1 || drvdata.rgb_profile > 3)
+	if (drvdata->rgb_profile < 1 || drvdata->rgb_profile > 3)
 		return -EINVAL;
 
-	return sysfs_emit(buf, "%hhu\n", drvdata.rgb_profile);
+	return sysfs_emit(buf, "%hhu\n", drvdata->rgb_profile);
 }
 
 static ssize_t rgb_profile_range_show(struct device *dev,
@@ -1852,7 +1957,9 @@ static ssize_t rgb_profile_range_show(struct device *dev,
 static void hid_go_brightness_set(struct led_classdev *led_cdev,
 				  enum led_brightness brightness)
 {
-	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
+	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
+						      struct go_cfg_drvdata, led_mc);
 	enum rgb_config_index index;
 	int ret;
 
@@ -1861,15 +1968,15 @@ static void hid_go_brightness_set(struct led_classdev *led_cdev,
 		return;
 	}
 
-	index = drvdata.rgb_profile + 3;
-	u8 rgb_profile[6] = { drvdata.rgb_effect,
+	index = drvdata->rgb_profile + 3;
+	u8 rgb_profile[6] = { drvdata->rgb_effect,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
 			      mc_cdev->subled_info[2].intensity,
 			      brightness,
-			      drvdata.rgb_speed };
+			      drvdata->rgb_speed };
 
-	ret = rgb_cfg_call(drvdata.hdev, SET_RGB_CFG, index, rgb_profile, 6);
+	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
 	switch (ret) {
 	case 0:
 		led_cdev->brightness = brightness;
@@ -1928,7 +2035,7 @@ static void hid_go_brightness_set(struct led_classdev *led_cdev,
 	{                                                                     \
 		return calibrate_config_store(dev, attr, buf, _name.index,    \
 					      _scmd, count, _dtype,           \
-					      _name.status);                   \
+					      _name.cal_type);                   \
 	}                                                                     \
 	static ssize_t _name##_##_rtype##_show(                               \
 		struct device *dev, struct device_attribute *attr, char *buf) \
@@ -2089,21 +2196,21 @@ static DEVICE_ATTR_RO_NAMED(rumble_notification_left_index,
 			    "rumble_notification_index");
 
 static struct go_cal_cfg_attr cal_trigg_left = {
-	SET_TRIGGER_CFG, &drvdata.gp_left_trigg_cal_status
+	SET_TRIGGER_CFG, CALDEV_TRIGGER
 };
 LEGO_CAL_DEVICE_ATTR(cal_trigg_left, "calibrate_trigger", TRIGGER_CALIBRATE,
 		     LEFT_CONTROLLER, index);
 static DEVICE_ATTR_RO_NAMED(cal_trigg_left_index, "calibrate_trigger_index");
 
 static struct go_cal_cfg_attr cal_joy_left = {
-	SET_JOYSTICK_CFG, &drvdata.gp_left_joy_cal_status
+	SET_JOYSTICK_CFG, CALDEV_JOYSTICK
 };
 LEGO_CAL_DEVICE_ATTR(cal_joy_left, "calibrate_joystick", JOYSTICK_CALIBRATE,
 		     LEFT_CONTROLLER, index);
 static DEVICE_ATTR_RO_NAMED(cal_joy_left_index, "calibrate_joystick_index");
 
 static struct go_cal_cfg_attr cal_gyro_left = {
-	SET_GYRO_CFG, &drvdata.gp_left_gyro_cal_status
+	SET_GYRO_CFG, CALDEV_GYROSCOPE
 };
 LEGO_CAL_DEVICE_ATTR(cal_gyro_left, "calibrate_gyro", GYRO_CALIBRATE,
 		     LEFT_CONTROLLER, index);
@@ -2202,21 +2309,21 @@ static DEVICE_ATTR_RO_NAMED(rumble_notification_right_index,
 			    "rumble_notification_index");
 
 static struct go_cal_cfg_attr cal_trigg_right = {
-	SET_TRIGGER_CFG, &drvdata.gp_right_trigg_cal_status
+	SET_TRIGGER_CFG, CALDEV_TRIGGER
 };
 LEGO_CAL_DEVICE_ATTR(cal_trigg_right, "calibrate_trigger", TRIGGER_CALIBRATE,
 		     RIGHT_CONTROLLER, index);
 static DEVICE_ATTR_RO_NAMED(cal_trigg_right_index, "calibrate_trigger_index");
 
 static struct go_cal_cfg_attr cal_joy_right = {
-	SET_JOYSTICK_CFG, &drvdata.gp_right_joy_cal_status
+	SET_JOYSTICK_CFG, CALDEV_JOYSTICK
 };
 LEGO_CAL_DEVICE_ATTR(cal_joy_right, "calibrate_joystick", JOYSTICK_CALIBRATE,
 		     RIGHT_CONTROLLER, index);
 static DEVICE_ATTR_RO_NAMED(cal_joy_right_index, "calibrate_joystick_index");
 
 static struct go_cal_cfg_attr cal_gyro_right = {
-	SET_GYRO_CFG, &drvdata.gp_right_gyro_cal_status
+	SET_GYRO_CFG, CALDEV_GYROSCOPE
 };
 LEGO_CAL_DEVICE_ATTR(cal_gyro_right, "calibrate_gyro", GYRO_CALIBRATE,
 		     RIGHT_CONTROLLER, index);
@@ -2362,249 +2469,248 @@ static struct mc_subled go_rgb_subled_info[] = {
 
 static void cfg_setup(struct work_struct *work)
 {
+	struct go_cfg_drvdata *drvdata = container_of(work, struct go_cfg_drvdata,
+						      go_cfg_setup.work);
 	bool gp_registered, rgb_registered;
 	int ret;
 
 	/* MCU Version Attrs */
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PRODUCT_VERSION, USB_MCU, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Product Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PROTOCOL_VERSION, USB_MCU, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Protocol Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       FIRMWARE_VERSION, USB_MCU, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Firmware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_VERSION, USB_MCU, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Hardware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_GENERATION, USB_MCU, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve USB_MCU Hardware Generation: %i\n", ret);
 		return;
 	}
 
 	/* TX Dongle Version Attrs */
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PRODUCT_VERSION, TX_DONGLE, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Product Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PROTOCOL_VERSION, TX_DONGLE, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Protocol Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       FIRMWARE_VERSION, TX_DONGLE, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Firmware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_VERSION, TX_DONGLE, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Hardware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_GENERATION, TX_DONGLE, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve TX_DONGLE Hardware Generation: %i\n", ret);
 		return;
 	}
 
 	/* Left Handle Version Attrs */
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PRODUCT_VERSION, LEFT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Product Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PROTOCOL_VERSION, LEFT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Protocol Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       FIRMWARE_VERSION, LEFT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Firmware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_VERSION, LEFT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Hardware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_GENERATION, LEFT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve LEFT_CONTROLLER Hardware Generation: %i\n", ret);
 		return;
 	}
 
 	/* Right Handle Version Attrs */
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PRODUCT_VERSION, RIGHT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Product Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       PROTOCOL_VERSION, RIGHT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Protocol Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       FIRMWARE_VERSION, RIGHT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Firmware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_VERSION, RIGHT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Hardware Version: %i\n", ret);
 		return;
 	}
 
-	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
+	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
 			       HARDWARE_GENERATION, RIGHT_CONTROLLER, NULL, 0);
 	if (ret < 0) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to retrieve RIGHT_CONTROLLER Hardware Generation: %i\n", ret);
 		return;
 	}
 
-	/* Pairs with smp_store_release below */
-	gp_registered = smp_load_acquire(&drvdata.gp_registered);
+	/* Pairs with the smp_store_release later in this function */
+	gp_registered = smp_load_acquire(&drvdata->gp_registered);
 	if (gp_registered)
 		goto try_rgb;
 
-	ret = sysfs_create_groups(&drvdata.hdev->dev.kobj, top_level_attr_groups);
+	ret = sysfs_create_groups(&drvdata->hdev->dev.kobj, top_level_attr_groups);
 	if (ret) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to create gamepad configuration attributes: %i\n", ret);
 		drvdata.gp_registered = false;
 		goto try_rgb;
 	}
 
-	/* Pairs with smp_load_acquire in attribute show/store functions */
-	smp_store_release(&drvdata.gp_registered, true);
+	/* Pairs with the smp_load_acquire in attribute show and store paths */
+	smp_store_release(&drvdata->gp_registered, true);
 	gp_registered = true;
 
 try_rgb:
-	/* Pairs with smp_store_release below */
-	rgb_registered = smp_load_acquire(&drvdata.rgb_registered);
+	/* Pairs with the smp_store_release later in this function */
+	rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
 	if (rgb_registered)
 		goto update_kobjects;
 
-	ret = devm_led_classdev_multicolor_register(&drvdata.hdev->dev,
-						    &drvdata.led_mc);
+	ret = devm_led_classdev_multicolor_register(&drvdata->hdev->dev,
+						    &drvdata->led_mc);
 	if (ret) {
-		dev_err(&drvdata.hdev->dev, "Failed to create RGB device: %i\n",
+		dev_err(&drvdata->hdev->dev, "Failed to create RGB device: %i\n",
 			ret);
 		goto update_kobjects;
 	}
 
-	ret = devm_device_add_group(drvdata.led_mc.led_cdev.dev, &rgb_attr_group);
+	ret = devm_device_add_group(drvdata->led_mc.led_cdev.dev, &rgb_attr_group);
 	if (ret) {
-		dev_err(&drvdata.hdev->dev,
+		dev_err(&drvdata->hdev->dev,
 			"Failed to create RGB configuration attributes: %i\n", ret);
 		goto update_kobjects;
 	}
 
-	/* Pairs with smp_load_acquire in attribute show/store functions */
-	smp_store_release(&drvdata.rgb_registered, true);
+	/* Pairs with the smp_load_acquire in attribute show and store paths */
+	smp_store_release(&drvdata->rgb_registered, true);
 	rgb_registered = true;
 
 update_kobjects:
 	/* Attribute surfaces appeared outside the udev ADD event */
 	if (gp_registered)
-		kobject_uevent(&drvdata.hdev->dev.kobj, KOBJ_CHANGE);
+		kobject_uevent(&drvdata->hdev->dev.kobj, KOBJ_CHANGE);
 	if (rgb_registered)
-		kobject_uevent(&drvdata.led_mc.led_cdev.dev->kobj, KOBJ_CHANGE);
+		kobject_uevent(&drvdata->led_mc.led_cdev.dev->kobj, KOBJ_CHANGE);
 }
 
 static int hid_go_cfg_probe(struct hid_device *hdev,
 			    const struct hid_device_id *_id)
 {
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	int ret;
 
-	mutex_init(&drvdata.cfg_mutex);
-	hid_set_drvdata(hdev, &drvdata);
-	drvdata.hdev = hdev;
-
 	/* Device is hardwired and name is guaranteed to be unique */
-	drvdata.led_mc.led_cdev.name = "go:rgb:joystick_rings";
-	drvdata.led_mc.led_cdev.color = LED_COLOR_ID_RGB;
-	drvdata.led_mc.led_cdev.brightness = 0x50;
-	drvdata.led_mc.led_cdev.max_brightness = 0x64;
-	drvdata.led_mc.led_cdev.brightness_set = hid_go_brightness_set;
-	drvdata.led_mc.num_colors = ARRAY_SIZE(go_rgb_subled_info);
-	drvdata.led_mc.subled_info = devm_kmemdup(&hdev->dev, go_rgb_subled_info,
-						  sizeof(go_rgb_subled_info), GFP_KERNEL);
-	if (!drvdata.led_mc.subled_info)
+	drvdata->led_mc.led_cdev.name = "go:rgb:joystick_rings";
+	drvdata->led_mc.led_cdev.color = LED_COLOR_ID_RGB;
+	drvdata->led_mc.led_cdev.brightness = 0x50;
+	drvdata->led_mc.led_cdev.max_brightness = 0x64;
+	drvdata->led_mc.led_cdev.brightness_set = hid_go_brightness_set;
+	drvdata->led_mc.num_colors = ARRAY_SIZE(go_rgb_subled_info);
+	drvdata->led_mc.subled_info = devm_kmemdup(&hdev->dev, go_rgb_subled_info,
+						   sizeof(go_rgb_subled_info), GFP_KERNEL);
+	if (!drvdata->led_mc.subled_info)
 		return -ENOMEM;
 
 	/* Executing calls prior to returning from probe will lock the MCU. Schedule
 	 * initial data call after probe has completed and MCU can accept calls.
 	 */
-	INIT_DELAYED_WORK(&drvdata.go_cfg_setup, &cfg_setup);
-	ret = schedule_delayed_work(&drvdata.go_cfg_setup, msecs_to_jiffies(2));
+	INIT_DELAYED_WORK(&drvdata->go_cfg_setup, &cfg_setup);
+	ret = schedule_delayed_work(&drvdata->go_cfg_setup, msecs_to_jiffies(2));
 	if (!ret) {
 		dev_err(&hdev->dev,
 			"Failed to schedule startup delayed work\n");
@@ -2615,16 +2721,18 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 
 static void hid_go_cfg_remove(struct hid_device *hdev)
 {
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
+
 	/*
 	 * cfg_setup is scheduled from hid_go_cfg_probe() with a 2 ms delay
-	 * and dereferences drvdata.hdev.  Drain it here before tearing
+	 * and dereferences drvdata->hdev.  Drain it here before tearing
 	 * down so the workqueue cannot run after hid_destroy_device()'s
 	 * put_device() has released the underlying hdev and dereference
-	 * a stale drvdata.hdev pointer.
+	 * a stale drvdata->hdev pointer.
 	 */
-	cancel_delayed_work_sync(&drvdata.go_cfg_setup);
+	cancel_delayed_work_sync(&drvdata->go_cfg_setup);
 
-	guard(mutex)(&drvdata.cfg_mutex);
+	guard(mutex)(&drvdata->cfg_mutex);
 	sysfs_remove_groups(&hdev->dev.kobj, top_level_attr_groups);
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
@@ -2633,6 +2741,7 @@ static void hid_go_cfg_remove(struct hid_device *hdev)
 
 static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
+	struct go_cfg_drvdata *drvdata;
 	int ret, ep;
 
 	if (!hid_is_usb(hdev))
@@ -2648,9 +2757,16 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ep = get_endpoint_address(hdev);
 	if (ep == GO_GP_INTF_IN) {
-		init_completion(&drvdata.cmd.done);
-		spin_lock_init(&drvdata.cmd.lock);
-		drvdata.cmd.pending = false;
+		drvdata = devm_kzalloc(&hdev->dev, sizeof(*drvdata), GFP_KERNEL);
+		if (!drvdata)
+			return -ENOMEM;
+
+		hid_set_drvdata(hdev, drvdata);
+		drvdata->hdev = hdev;
+		mutex_init(&drvdata->cfg_mutex);
+		init_completion(&drvdata->cmd.done);
+		spin_lock_init(&drvdata->cmd.lock);
+		drvdata->cmd.pending = false;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
