@@ -53,6 +53,8 @@ struct hid_go_cmd {
 static struct hid_go_cfg {
 	struct delayed_work go_cfg_setup;
 	struct hid_go_cmd cmd;
+	bool gp_registered;
+	bool rgb_registered;
 	struct led_classdev_mc led_mc;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
@@ -840,6 +842,10 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 			    char *buf, enum version_data_index index,
 			    enum dev_type device_type)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	ssize_t count = 0;
 	int ret;
 
@@ -970,6 +976,19 @@ static ssize_t feature_status_store(struct device *dev,
 				    enum feature_status_index index,
 				    enum dev_type device_type)
 {
+	bool dev_registered;
+
+	if (index == FEATURE_LIGHT_ENABLE) {
+		/* Pairs with smp_store_release from cfg_setup */
+		dev_registered = smp_load_acquire(&drvdata.rgb_registered);
+	} else {
+		/* Pairs with smp_store_release from cfg_setup */
+		dev_registered = smp_load_acquire(&drvdata.gp_registered);
+	}
+
+	if (!dev_registered)
+		return -ENODEV;
+
 	size_t size = 1;
 	u8 val = 0;
 	int ret;
@@ -1022,6 +1041,19 @@ static ssize_t feature_status_show(struct device *dev,
 				   enum feature_status_index index,
 				   enum dev_type device_type)
 {
+	bool dev_registered;
+
+	if (index == FEATURE_LIGHT_ENABLE) {
+		/* Pairs with smp_store_release from cfg_setup */
+		dev_registered = smp_load_acquire(&drvdata.rgb_registered);
+	} else {
+		/* Pairs with smp_store_release from cfg_setup */
+		dev_registered = smp_load_acquire(&drvdata.gp_registered);
+	}
+
+	if (!dev_registered)
+		return -ENODEV;
+
 	ssize_t count = 0;
 	int ret;
 	u8 i;
@@ -1159,6 +1191,10 @@ static ssize_t motor_config_store(struct device *dev,
 				  enum motor_cfg_index index,
 				  enum dev_type device_type)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	size_t size = 1;
 	u8 val = 0;
 	int ret;
@@ -1207,6 +1243,10 @@ static ssize_t motor_config_show(struct device *dev,
 				 enum motor_cfg_index index,
 				 enum dev_type device_type)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	ssize_t count = 0;
 	int ret;
 	u8 i;
@@ -1320,6 +1360,10 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 				  const char *buf, size_t count)
 
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	size_t size = 4;
 	u32 value;
 	u8 val[4];
@@ -1345,6 +1389,10 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 static ssize_t fps_mode_dpi_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	int ret;
 
 	ret = mcu_property_out(drvdata.hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
@@ -1367,6 +1415,10 @@ static ssize_t device_status_show(struct device *dev,
 				  enum dev_type device_type,
 				  enum cal_device_type cal_type)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	u8 i;
 
 	switch (index) {
@@ -1422,6 +1474,10 @@ static ssize_t calibrate_config_store(struct device *dev,
 				      size_t count, enum dev_type device_type,
 				      u8 *cal_status)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	u8 val;
 	int ret;
 
@@ -1461,6 +1517,10 @@ static ssize_t calibrate_config_options(struct device *dev,
 static ssize_t os_mode_store(struct device *dev, struct device_attribute *attr,
 			     const char *buf, size_t count)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	size_t size = 1;
 	int ret;
 	u8 val;
@@ -1483,6 +1543,10 @@ static ssize_t os_mode_store(struct device *dev, struct device_attribute *attr,
 static ssize_t os_mode_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.gp_registered))
+		return -ENODEV;
+
 	ssize_t count = 0;
 	int ret;
 	u8 i;
@@ -1542,6 +1606,10 @@ static ssize_t rgb_effect_store(struct device *dev,
 				struct device_attribute *attr, const char *buf,
 				size_t count)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
 	enum rgb_config_index index;
 	u8 effect;
@@ -1571,6 +1639,10 @@ static ssize_t rgb_effect_store(struct device *dev,
 static ssize_t rgb_effect_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	int ret;
 
 	ret = rgb_attr_show();
@@ -1602,6 +1674,10 @@ static ssize_t rgb_speed_store(struct device *dev,
 			       struct device_attribute *attr, const char *buf,
 			       size_t count)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	struct led_classdev_mc *mc_cdev = &drvdata.led_mc;
 	enum rgb_config_index index;
 	int val = 0;
@@ -1637,6 +1713,10 @@ static ssize_t rgb_speed_store(struct device *dev,
 static ssize_t rgb_speed_show(struct device *dev, struct device_attribute *attr,
 			      char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	int ret, val;
 
 	ret = rgb_attr_show();
@@ -1660,6 +1740,10 @@ static ssize_t rgb_speed_range_show(struct device *dev,
 static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	int ret;
 	u8 val;
 
@@ -1681,6 +1765,10 @@ static ssize_t rgb_mode_store(struct device *dev, struct device_attribute *attr,
 static ssize_t rgb_mode_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	int ret;
 
 	ret = rgb_cfg_call(drvdata.hdev, GET_RGB_CFG, LIGHT_MODE_SEL, NULL, 0);
@@ -1712,6 +1800,10 @@ static ssize_t rgb_profile_store(struct device *dev,
 				 struct device_attribute *attr, const char *buf,
 				 size_t count)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	size_t size = 1;
 	int ret;
 	u8 val;
@@ -1735,6 +1827,10 @@ static ssize_t rgb_profile_store(struct device *dev,
 static ssize_t rgb_profile_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
+	/* Pairs with smp_store_release from cfg_setup */
+	if (!smp_load_acquire(&drvdata.rgb_registered))
+		return -ENODEV;
+
 	int ret;
 
 	ret = rgb_cfg_call(drvdata.hdev, GET_RGB_CFG, LIGHT_PROFILE_SEL, NULL, 0);
@@ -2266,6 +2362,7 @@ static struct mc_subled go_rgb_subled_info[] = {
 
 static void cfg_setup(struct work_struct *work)
 {
+	bool gp_registered, rgb_registered;
 	int ret;
 
 	/* MCU Version Attrs */
@@ -2431,6 +2528,55 @@ static void cfg_setup(struct work_struct *work)
 			"Failed to retrieve RIGHT_CONTROLLER Hardware Generation: %i\n", ret);
 		return;
 	}
+
+	/* Pairs with smp_store_release below */
+	gp_registered = smp_load_acquire(&drvdata.gp_registered);
+	if (gp_registered)
+		goto try_rgb;
+
+	ret = sysfs_create_groups(&drvdata.hdev->dev.kobj, top_level_attr_groups);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev,
+			"Failed to create gamepad configuration attributes: %i\n", ret);
+		drvdata.gp_registered = false;
+		goto try_rgb;
+	}
+
+	/* Pairs with smp_load_acquire in attribute show/store functions */
+	smp_store_release(&drvdata.gp_registered, true);
+	gp_registered = true;
+
+try_rgb:
+	/* Pairs with smp_store_release below */
+	rgb_registered = smp_load_acquire(&drvdata.rgb_registered);
+	if (rgb_registered)
+		goto update_kobjects;
+
+	ret = devm_led_classdev_multicolor_register(&drvdata.hdev->dev,
+						    &drvdata.led_mc);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev, "Failed to create RGB device: %i\n",
+			ret);
+		goto update_kobjects;
+	}
+
+	ret = devm_device_add_group(drvdata.led_mc.led_cdev.dev, &rgb_attr_group);
+	if (ret) {
+		dev_err(&drvdata.hdev->dev,
+			"Failed to create RGB configuration attributes: %i\n", ret);
+		goto update_kobjects;
+	}
+
+	/* Pairs with smp_load_acquire in attribute show/store functions */
+	smp_store_release(&drvdata.rgb_registered, true);
+	rgb_registered = true;
+
+update_kobjects:
+	/* Attribute surfaces appeared outside the udev ADD event */
+	if (gp_registered)
+		kobject_uevent(&drvdata.hdev->dev.kobj, KOBJ_CHANGE);
+	if (rgb_registered)
+		kobject_uevent(&drvdata.led_mc.led_cdev.dev->kobj, KOBJ_CHANGE);
 }
 
 static int hid_go_cfg_probe(struct hid_device *hdev,
@@ -2453,26 +2599,6 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 						  sizeof(go_rgb_subled_info), GFP_KERNEL);
 	if (!drvdata.led_mc.subled_info)
 		return -ENOMEM;
-
-	ret = sysfs_create_groups(&hdev->dev.kobj, top_level_attr_groups);
-	if (ret) {
-		dev_err_probe(&hdev->dev, ret,
-			      "Failed to create gamepad configuration attributes\n");
-		return ret;
-	}
-
-	ret = devm_led_classdev_multicolor_register(&hdev->dev, &drvdata.led_mc);
-	if (ret) {
-		dev_err_probe(&hdev->dev, ret, "Failed to create RGB device\n");
-		return ret;
-	}
-
-	ret = devm_device_add_group(drvdata.led_mc.led_cdev.dev, &rgb_attr_group);
-	if (ret) {
-		dev_err_probe(&hdev->dev, ret,
-			      "Failed to create RGB configuration attributes\n");
-		return ret;
-	}
 
 	/* Executing calls prior to returning from probe will lock the MCU. Schedule
 	 * initial data call after probe has completed and MCU can accept calls.
