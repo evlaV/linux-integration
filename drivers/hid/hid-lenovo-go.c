@@ -94,6 +94,7 @@ struct go_cfg_drvdata {
 	u8 gen1_link[RIGHT_CONTROLLER + 1];
 	u8 gen1_cal_mode;
 	u8 gen1_cal_state[RIGHT_CONTROLLER + 1];
+	u8 gen1_fps_mode;
 	u8 gen1_gyro_cal_state[RIGHT_CONTROLLER + 1];
 	u32 gen1_dpi_current;
 	u32 gen1_dpi_values[4];
@@ -159,6 +160,7 @@ enum go_support {
 	SUP_DPI,
 	SUP_FPS_MODE_DPI,
 	SUP_FPS_SWITCH,
+	SUP_FPS_MODE,
 	SUP_GAMEPAD_MODE,
 	SUP_OS_MODE,
 	SUP_RESET,
@@ -180,7 +182,8 @@ enum go_support {
 			 BIT(SUP_TOUCHPAD) | BIT(SUP_RGB) | \
 			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
 			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK) | \
-			 BIT(SUP_CAL_GYRO))
+			 BIT(SUP_CAL_GYRO) | BIT(SUP_FPS_SWITCH) | \
+			 BIT(SUP_FPS_MODE))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -254,6 +257,8 @@ enum gen1_command_id {
 	GEN1_DPI			= 0x68,
 	GEN1_GYRO			= 0x6A,
 	GEN1_TOUCHPAD			= 0x6B,
+	GEN1_FPS_SWITCH			= 0x6D,
+	GEN1_FPS_MODE			= 0x6E,
 	GEN1_RGB_ENABLE			= 0x70,
 	GEN1_RGB_PROFILE		= 0x71,
 	GEN1_RGB_SET			= 0x72,
@@ -805,6 +810,21 @@ static int hid_go_gen1_gyro_cal_done_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_fps_event(struct go_cfg_drvdata *drvdata,
+				 struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	if (cmd_rep->cmd == GEN1_FPS_SWITCH) {
+		drvdata->fps_mode = cmd_rep->data[0];
+		return 0;
+	}
+
+	drvdata->gen1_fps_mode = cmd_rep->data[0];
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -827,6 +847,9 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		return hid_go_gen1_cal_done_event(drvdata, cmd_rep);
 	case GEN1_DEVICE_STATE:
 		return hid_go_gen1_device_state_event(drvdata, cmd_rep);
+	case GEN1_FPS_SWITCH:
+	case GEN1_FPS_MODE:
+		return hid_go_gen1_fps_event(drvdata, cmd_rep);
 	case GEN1_RGB_ENABLE:
 		return hid_go_gen1_rgb_enable_event(drvdata, cmd_rep);
 	case GEN1_RGB_PROFILE:
@@ -1329,6 +1352,39 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	return hid_go_cmd_finish(drvdata, wait_result);
 }
 
+enum gen1_fps_index {
+	GEN1_FPS_PROFILE,
+};
+
+/* Gen1 has no hardware-verified write for the FPS mode profile */
+static ssize_t gen1_fps_show(struct device *dev,
+			     struct device_attribute *attr, char *buf,
+			     enum gen1_fps_index index,
+			     enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 dev_byte = RIGHT_CONTROLLER;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_FPS_MODE,
+			       GEN1_OP_QUERY, UNSPECIFIED, &dev_byte,
+			       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", drvdata->gen1_fps_mode);
+}
+
+static ssize_t fps_mode_index_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "1 2 3 4\n");
+}
+
 enum gen1_state_index {
 	GEN1_STATE_BATTERY,
 	GEN1_STATE_CONNECTION,
@@ -1647,6 +1703,20 @@ static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
 			return -EINVAL;
 
 		return sysfs_emit(buf, "%s\n", enabled_status_text[i]);
+	case FEATURE_FPS_SWITCH_STATUS:
+		dev_byte = RIGHT_CONTROLLER;
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_FPS_SWITCH,
+				       GEN1_OP_QUERY, UNSPECIFIED, &dev_byte,
+				       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		/* Raw zero is gamepad, one is fps; the table is one-based */
+		if (drvdata->fps_mode + 1 >= ARRAY_SIZE(fps_switch_text))
+			return -EINVAL;
+
+		return sysfs_emit(buf, "%s\n",
+				  fps_switch_text[drvdata->fps_mode + 1]);
 	case FEATURE_LIGHT_ENABLE:
 		dev_byte = UNSPECIFIED;
 		ret = mcu_property_out(drvdata->hdev, 0, GEN1_RGB_ENABLE,
@@ -3254,6 +3324,9 @@ LEGO_DEVICE_ATTR_RO(version_hardware_mcu, "hardware_version", USB_MCU, version, 
 LEGO_DEVICE_ATTR_RO(version_gen_mcu, "hardware_generation", USB_MCU, version, HARDWARE_GENERATION,
 		   SUP_HARDWARE);
 
+LEGO_DEVICE_ATTR_RO(fps_mode, "fps_mode", UNSPECIFIED, gen1_fps,
+		    GEN1_FPS_PROFILE, SUP_FPS_MODE);
+LEGO_ATTR_RO(fps_mode_index, "fps_mode_index", SUP_FPS_MODE);
 LEGO_DEVICE_ATTR_RO(fps_switch_status, "fps_switch_status", UNSPECIFIED, feature_status,
 		    FEATURE_FPS_SWITCH_STATUS, SUP_FPS_SWITCH);
 
@@ -3276,6 +3349,8 @@ LEGO_ATTR_RW(os_mode, "os_mode", SUP_OS_MODE);
 LEGO_ATTR_RO(os_mode_index, "os_mode_index", SUP_OS_MODE);
 
 static struct attribute *mcu_attrs[] = {
+	&fps_mode.dev_attr.attr,
+	&fps_mode_index.dev_attr.attr,
 	&fps_mode_dpi.dev_attr.attr,
 	&fps_mode_dpi_index.dev_attr.attr,
 	&fps_switch_status.dev_attr.attr,
