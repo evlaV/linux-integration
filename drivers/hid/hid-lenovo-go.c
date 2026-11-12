@@ -94,6 +94,7 @@ struct go_cfg_drvdata {
 	u8 gen1_link[RIGHT_CONTROLLER + 1];
 	u8 gen1_cal_mode;
 	u8 gen1_cal_state[RIGHT_CONTROLLER + 1];
+	u8 gen1_gyro_cal_state[RIGHT_CONTROLLER + 1];
 	u32 gen1_dpi_current;
 	u32 gen1_dpi_values[4];
 	u8 fps_mode;
@@ -178,7 +179,8 @@ enum go_support {
 			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI) | \
 			 BIT(SUP_TOUCHPAD) | BIT(SUP_RGB) | \
 			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
-			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK))
+			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK) | \
+			 BIT(SUP_CAL_GYRO))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -243,6 +245,9 @@ enum mcu_command_index {
 enum gen1_command_id {
 	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
+	GEN1_GYRO_CAL			= 0x41,
+	GEN1_GYRO_CAL_STOP		= 0x42,
+	GEN1_EVT_GYRO_CAL_DONE		= 0x43,
 	GEN1_CAL			= 0x55,
 	GEN1_CAL_STOP			= 0x56,
 	GEN1_EVT_CAL_DONE		= 0x57,
@@ -783,6 +788,23 @@ static int hid_go_gen1_cal_done_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_gyro_cal_done_event(struct go_cfg_drvdata *drvdata,
+					   struct command_report *cmd_rep
+					   __maybe_unused)
+{
+	int dev;
+
+	for (dev = LEFT_CONTROLLER; dev <= RIGHT_CONTROLLER; dev++)
+		drvdata->gen1_gyro_cal_state[dev] = 0;
+
+	sysfs_notify(&drvdata->hdev->dev.kobj, "left_handle",
+		     "calibrate_gyro_status");
+	sysfs_notify(&drvdata->hdev->dev.kobj, "right_handle",
+		     "calibrate_gyro_status");
+
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -799,6 +821,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
 		return hid_go_gen1_touchpad_event(drvdata, cmd_rep);
+	case GEN1_EVT_GYRO_CAL_DONE:
+		return hid_go_gen1_gyro_cal_done_event(drvdata, cmd_rep);
 	case GEN1_EVT_CAL_DONE:
 		return hid_go_gen1_cal_done_event(drvdata, cmd_rep);
 	case GEN1_DEVICE_STATE:
@@ -2277,6 +2301,63 @@ static const char *const gen1_cal_state_text[] = {
 	[1] = "calibrating",
 };
 
+static ssize_t hid_go_gen1_gyro_cal_store(struct go_cfg_drvdata *drvdata,
+					  const char *buf, size_t count,
+					  enum cal_device_type cal_type,
+					  enum dev_type device_type)
+{
+	u8 content[1] = { device_type };
+	bool start;
+	int ret;
+
+	if (cal_type != CALDEV_GYROSCOPE)
+		return -EOPNOTSUPP;
+
+	ret = sysfs_match_string(cal_enabled_text, buf);
+	if (ret < 0)
+		return ret;
+
+	if (ret == CAL_UNKNOWN)
+		return -EINVAL;
+
+	start = ret == CAL_START;
+
+	/* Stopping while nothing runs fails in firmware */
+	ret = mcu_property_out(drvdata->hdev, 0,
+			       start ? GEN1_GYRO_CAL : GEN1_GYRO_CAL_STOP,
+			       GEN1_OP_QUERY, device_type, content,
+			       sizeof(content), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	drvdata->gen1_gyro_cal_state[device_type] = start;
+
+	sysfs_notify(&drvdata->hdev->dev.kobj,
+		     device_type == LEFT_CONTROLLER ? "left_handle" :
+						     "right_handle",
+		     "calibrate_gyro_status");
+
+	return count;
+}
+
+static ssize_t hid_go_gen1_gyro_cal_status_show(struct go_cfg_drvdata *drvdata,
+						char *buf,
+						enum cal_device_type cal_type,
+						enum dev_type device_type)
+{
+	u8 state;
+
+	if (cal_type != CALDEV_GYROSCOPE)
+		return -EOPNOTSUPP;
+
+	/* Gen1 tracks a completion flow, not the Gen2 status codes */
+	state = drvdata->gen1_gyro_cal_state[device_type];
+	if (state >= ARRAY_SIZE(gen1_cal_state_text))
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%s\n", gen1_cal_state_text[state]);
+}
+
 static ssize_t device_status_show(struct device *dev,
 				  struct device_attribute *attr, char *buf,
 				  enum device_status_index index,
@@ -2289,6 +2370,11 @@ static ssize_t device_status_show(struct device *dev,
 	/* Pairs with smp_store_release in the config setup path */
 	if (!smp_load_acquire(&drvdata->gp_registered))
 		return -ENODEV;
+
+	if (drvdata->gen == GO_GEN1)
+		return hid_go_gen1_gyro_cal_status_show(drvdata, buf,
+							cal_type,
+							device_type);
 
 	switch (index) {
 	case GET_CAL_STATUS:
@@ -2416,6 +2502,10 @@ static ssize_t calibrate_config_store(struct device *dev,
 	/* Pairs with smp_store_release in the config setup path */
 	if (!smp_load_acquire(&drvdata->gp_registered))
 		return -ENODEV;
+
+	if (drvdata->gen == GO_GEN1)
+		return hid_go_gen1_gyro_cal_store(drvdata, buf, count,
+						  cal_type, device_type);
 
 	ret = sysfs_match_string(cal_enabled_text, buf);
 	if (ret < 0)
