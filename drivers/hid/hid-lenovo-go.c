@@ -91,7 +91,9 @@ struct go_cfg_drvdata {
 	struct led_classdev_mc led_mc;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
+	u8 gen1_abxy_mode;
 	u8 gen1_battery[RIGHT_CONTROLLER + 1];
+	u8 gen1_legion_mode;
 	u8 gen1_link[RIGHT_CONTROLLER + 1];
 	u8 gen1_cal_mode;
 	u8 gen1_cal_state[RIGHT_CONTROLLER + 1];
@@ -176,6 +178,8 @@ enum go_support {
 	SUP_BATTERY,
 	SUP_CONNECTION,
 	SUP_RGB_QUICK,
+	SUP_ABXY_SWAP,
+	SUP_LEGION_SWAP,
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
@@ -184,7 +188,8 @@ enum go_support {
 			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
 			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK) | \
 			 BIT(SUP_CAL_GYRO) | BIT(SUP_FPS_SWITCH) | \
-			 BIT(SUP_FPS_MODE) | BIT(SUP_RESET))
+			 BIT(SUP_FPS_MODE) | BIT(SUP_RESET) | \
+			 BIT(SUP_ABXY_SWAP) | BIT(SUP_LEGION_SWAP))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -257,6 +262,7 @@ enum gen1_command_id {
 	GEN1_CAL_STOP			= 0x56,
 	GEN1_EVT_CAL_DONE		= 0x57,
 	GEN1_DPI			= 0x68,
+	GEN1_LAYOUT			= 0x69,
 	GEN1_GYRO			= 0x6A,
 	GEN1_TOUCHPAD			= 0x6B,
 	GEN1_FPS_SWITCH			= 0x6D,
@@ -273,6 +279,13 @@ enum gen1_dpi_op {
 	GEN1_DPI_GET_CURRENT		= 0x01,
 	GEN1_DPI_GET_LIST		= 0x02,
 	GEN1_DPI_SET			= 0x03,
+};
+
+enum gen1_layout_sub {
+	GEN1_ABXY_GET			= 0x01,
+	GEN1_ABXY_SET			= 0x02,
+	GEN1_LEGION_GET			= 0x03,
+	GEN1_LEGION_SET			= 0x04,
 };
 
 /*
@@ -827,6 +840,24 @@ static int hid_go_gen1_fps_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_layout_event(struct go_cfg_drvdata *drvdata,
+				    struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	switch (cmd_rep->sub_cmd) {
+	case GEN1_ABXY_GET:
+		drvdata->gen1_abxy_mode = cmd_rep->data[0];
+		return 0;
+	case GEN1_LEGION_GET:
+		drvdata->gen1_legion_mode = cmd_rep->data[0];
+		return 0;
+	default:
+		return hid_go_gen1_ack(cmd_rep);
+	}
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -837,6 +868,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		return hid_go_gen1_auto_sleep_event(drvdata, cmd_rep);
 	case GEN1_DPI:
 		return hid_go_gen1_dpi_event(drvdata, cmd_rep);
+	case GEN1_LAYOUT:
+		return hid_go_gen1_layout_event(drvdata, cmd_rep);
 	case GEN1_GYRO:
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
@@ -2525,6 +2558,112 @@ static ssize_t device_status_show(struct device *dev,
 	return sysfs_emit(buf, "%s\n", cal_status_text[i]);
 }
 
+enum gen1_swap_index {
+	GEN1_SWAP_ABXY,
+	GEN1_SWAP_LEGION,
+};
+
+static ssize_t gen1_swap_show(struct device *dev,
+			      struct device_attribute *attr, char *buf,
+			      enum gen1_swap_index index,
+			      enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 dev_byte, sub, mode;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	if (index == GEN1_SWAP_ABXY) {
+		sub = GEN1_ABXY_GET;
+		/* ABXY layout lives in right pad storage */
+		dev_byte = RIGHT_CONTROLLER;
+	} else {
+		sub = GEN1_LEGION_GET;
+		/* The legion swap is stored in the MCU */
+		dev_byte = USB_MCU;
+	}
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_LAYOUT, sub,
+			       UNSPECIFIED, &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	mode = index == GEN1_SWAP_ABXY ? drvdata->gen1_abxy_mode :
+					 drvdata->gen1_legion_mode;
+
+	/* The firmware encodes default as one and swapped as two */
+	if (mode < 1 || mode > 2)
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%s\n", enabled_status_text[3 - mode]);
+}
+
+static ssize_t gen1_swap_store(struct device *dev,
+			       struct device_attribute *attr, const char *buf,
+			       size_t count, enum gen1_swap_index index,
+			       enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 content[2], sub;
+	u8 *mode;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	if (index == GEN1_SWAP_ABXY) {
+		content[0] = RIGHT_CONTROLLER;
+		sub = GEN1_ABXY_SET;
+		mode = &drvdata->gen1_abxy_mode;
+	} else {
+		content[0] = USB_MCU;
+		sub = GEN1_LEGION_SET;
+		mode = &drvdata->gen1_legion_mode;
+	}
+
+	ret = sysfs_match_string(enabled_status_text, buf);
+	if (ret <= 0)
+		return ret < 0 ? ret : -EINVAL;
+
+	content[1] = 3 - ret;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_LAYOUT, sub,
+			       UNSPECIFIED, content, sizeof(content),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	*mode = content[1];
+
+	return count;
+}
+
+static ssize_t gen1_swap_options(struct device *dev,
+				 struct device_attribute *attr, char *buf,
+				 enum gen1_swap_index index)
+{
+	ssize_t count = 0;
+	unsigned int i;
+
+	for (i = 1; i < ARRAY_SIZE(enabled_status_text); i++) {
+		if (!enabled_status_text[i])
+			continue;
+
+		count += sysfs_emit_at(buf, count, "%s ",
+				       enabled_status_text[i]);
+	}
+
+	if (count)
+		buf[count - 1] = '\n';
+
+	return count;
+}
+
 enum gen1_cal_index {
 	GEN1_CAL_STICK,
 };
@@ -3359,6 +3498,12 @@ LEGO_DEVICE_ATTR_RO(version_gen_mcu, "hardware_generation", USB_MCU, version, HA
 LEGO_DEVICE_ATTR_RO(fps_mode, "fps_mode", UNSPECIFIED, gen1_fps,
 		    GEN1_FPS_PROFILE, SUP_FPS_MODE);
 LEGO_ATTR_RO(fps_mode_index, "fps_mode_index", SUP_FPS_MODE);
+LEGO_DEVICE_ATTR_RW(abxy_swap, "abxy_swap", UNSPECIFIED, index, gen1_swap,
+		    GEN1_SWAP_ABXY, SUP_ABXY_SWAP);
+LEGO_ATTR_RO(abxy_swap_index, "abxy_swap_index", SUP_ABXY_SWAP);
+LEGO_DEVICE_ATTR_RW(legion_swap, "legion_swap", UNSPECIFIED, index,
+		    gen1_swap, GEN1_SWAP_LEGION, SUP_LEGION_SWAP);
+LEGO_ATTR_RO(legion_swap_index, "legion_swap_index", SUP_LEGION_SWAP);
 LEGO_DEVICE_ATTR_RO(fps_switch_status, "fps_switch_status", UNSPECIFIED, feature_status,
 		    FEATURE_FPS_SWITCH_STATUS, SUP_FPS_SWITCH);
 
@@ -3381,6 +3526,8 @@ LEGO_ATTR_RW(os_mode, "os_mode", SUP_OS_MODE);
 LEGO_ATTR_RO(os_mode_index, "os_mode_index", SUP_OS_MODE);
 
 static struct attribute *mcu_attrs[] = {
+	&abxy_swap.dev_attr.attr,
+	&abxy_swap_index.dev_attr.attr,
 	&fps_mode.dev_attr.attr,
 	&fps_mode_index.dev_attr.attr,
 	&fps_mode_dpi.dev_attr.attr,
@@ -3390,6 +3537,8 @@ static struct attribute *mcu_attrs[] = {
 	&gamepad_mode_index.dev_attr.attr,
 	&gamepad_rumble_intensity.dev_attr.attr,
 	&gamepad_rumble_intensity_index.dev_attr.attr,
+	&legion_swap.dev_attr.attr,
+	&legion_swap_index.dev_attr.attr,
 	&os_mode.dev_attr.attr,
 	&os_mode_index.dev_attr.attr,
 	&reset_mcu.dev_attr.attr,
