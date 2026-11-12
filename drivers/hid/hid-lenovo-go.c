@@ -92,6 +92,8 @@ struct go_cfg_drvdata {
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
 	u8 gen1_battery[RIGHT_CONTROLLER + 1];
 	u8 gen1_link[RIGHT_CONTROLLER + 1];
+	u8 gen1_cal_mode;
+	u8 gen1_cal_state[RIGHT_CONTROLLER + 1];
 	u32 gen1_dpi_current;
 	u32 gen1_dpi_values[4];
 	u8 fps_mode;
@@ -164,6 +166,7 @@ enum go_support {
 	SUP_CAL_JOYSTICK,
 	SUP_CAL_GYRO,
 	SUP_CAL_TRIGGER,
+	SUP_CAL_STICK,
 	SUP_RGB,
 	SUP_RGB_USR,
 	SUP_BATTERY,
@@ -175,7 +178,7 @@ enum go_support {
 			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI) | \
 			 BIT(SUP_TOUCHPAD) | BIT(SUP_RGB) | \
 			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
-			 BIT(SUP_CONNECTION))
+			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -240,6 +243,9 @@ enum mcu_command_index {
 enum gen1_command_id {
 	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
+	GEN1_CAL			= 0x55,
+	GEN1_CAL_STOP			= 0x56,
+	GEN1_EVT_CAL_DONE		= 0x57,
 	GEN1_DPI			= 0x68,
 	GEN1_GYRO			= 0x6A,
 	GEN1_TOUCHPAD			= 0x6B,
@@ -758,6 +764,25 @@ static int hid_go_gen1_device_state_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_cal_done_event(struct go_cfg_drvdata *drvdata,
+				      struct command_report *cmd_rep
+				      __maybe_unused)
+{
+	int dev;
+
+	for (dev = LEFT_CONTROLLER; dev <= RIGHT_CONTROLLER; dev++)
+		drvdata->gen1_cal_state[dev] = 0;
+
+	drvdata->gen1_cal_mode = 0;
+
+	sysfs_notify(&drvdata->hdev->dev.kobj, "left_handle",
+		     "calibrate_stick_status");
+	sysfs_notify(&drvdata->hdev->dev.kobj, "right_handle",
+		     "calibrate_stick_status");
+
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -774,6 +799,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
 		return hid_go_gen1_touchpad_event(drvdata, cmd_rep);
+	case GEN1_EVT_CAL_DONE:
+		return hid_go_gen1_cal_done_event(drvdata, cmd_rep);
 	case GEN1_DEVICE_STATE:
 		return hid_go_gen1_device_state_event(drvdata, cmd_rep);
 	case GEN1_RGB_ENABLE:
@@ -2239,6 +2266,17 @@ static u8 *go_cal_status_ptr(struct go_cfg_drvdata *drvdata, enum dev_type devic
 	}
 }
 
+static const char *const gen1_cal_mode_text[] = {
+	"stick_and_trigger",
+	"stick",
+	"trigger",
+};
+
+static const char *const gen1_cal_state_text[] = {
+	[0] = "idle",
+	[1] = "calibrating",
+};
+
 static ssize_t device_status_show(struct device *dev,
 				  struct device_attribute *attr, char *buf,
 				  enum device_status_index index,
@@ -2297,6 +2335,72 @@ static ssize_t device_status_show(struct device *dev,
 		return -EINVAL;
 
 	return sysfs_emit(buf, "%s\n", cal_status_text[i]);
+}
+
+enum gen1_cal_index {
+	GEN1_CAL_STICK,
+};
+
+static ssize_t gen1_cal_show(struct device *dev,
+			     struct device_attribute *attr, char *buf,
+			     enum gen1_cal_index index,
+			     enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 state = drvdata->gen1_cal_state[device_type];
+
+	if (state >= ARRAY_SIZE(gen1_cal_state_text))
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%s\n", gen1_cal_state_text[state]);
+}
+
+static ssize_t gen1_cal_store(struct device *dev,
+			      struct device_attribute *attr, const char *buf,
+			      size_t count, enum gen1_cal_index index,
+			      enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 content[1] = { device_type };
+	const char *group;
+	u8 command, sub_cmd;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = sysfs_match_string(gen1_cal_mode_text, buf);
+	if (ret >= 0) {
+		command = GEN1_CAL;
+		sub_cmd = ret + 1;
+	} else if (sysfs_streq(buf, "stop")) {
+		command = GEN1_CAL_STOP;
+		sub_cmd = drvdata->gen1_cal_mode ? drvdata->gen1_cal_mode : 1;
+	} else {
+		return -EINVAL;
+	}
+
+	/* The MCU echoes the accepted sub-command when calibration starts */
+	ret = mcu_property_out(drvdata->hdev, 0, command, sub_cmd,
+			       device_type, content, sizeof(content),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	if (command == GEN1_CAL) {
+		drvdata->gen1_cal_mode = sub_cmd;
+		drvdata->gen1_cal_state[device_type] = 1;
+	} else {
+		drvdata->gen1_cal_state[device_type] = 0;
+	}
+
+	group = device_type == LEFT_CONTROLLER ? "left_handle" :
+						 "right_handle";
+	sysfs_notify(&drvdata->hdev->dev.kobj, group,
+		     "calibrate_stick_status");
+
+	return count;
 }
 
 static ssize_t calibrate_config_store(struct device *dev,
@@ -3224,6 +3328,11 @@ LEGO_DEVICE_ATTR_RW(rumble_notification_left, "rumble_notification", LEFT_CONTRO
 LEGO_ATTR_RO(rumble_notification_left_index, "rumble_notification_index",
 		   SUP_RUMBLE);
 
+LEGO_DEVICE_ATTR_WO(cal_stick_left, "calibrate_stick", LEFT_CONTROLLER,
+		    gen1_cal, GEN1_CAL_STICK, SUP_CAL_STICK);
+LEGO_DEVICE_ATTR_RO(cal_stick_left_status, "calibrate_stick_status",
+		    LEFT_CONTROLLER, gen1_cal, GEN1_CAL_STICK,
+		    SUP_CAL_STICK);
 LEGO_CAL_DEVICE_ATTR(cal_trigg_left, "calibrate_trigger", SET_TRIGGER_CFG, TRIGGER_CALIBRATE,
 		     CALDEV_TRIGGER, LEFT_CONTROLLER, index, SUP_CAL_TRIGGER);
 LEGO_ATTR_RO(cal_trigg_left_index, "calibrate_trigger_index", SUP_CAL_TRIGGER);
@@ -3255,6 +3364,8 @@ static struct attribute *left_gamepad_attrs[] = {
 	&cal_joy_left.dev_attr.attr,
 	&cal_joy_left_index.dev_attr.attr,
 	&cal_joy_left_status.dev_attr.attr,
+	&cal_stick_left.dev_attr.attr,
+	&cal_stick_left_status.dev_attr.attr,
 	&cal_trigg_left.dev_attr.attr,
 	&cal_trigg_left_index.dev_attr.attr,
 	&cal_trigg_left_status.dev_attr.attr,
@@ -3328,6 +3439,11 @@ LEGO_DEVICE_ATTR_RW(rumble_notification_right, "rumble_notification", RIGHT_CONT
 LEGO_ATTR_RO(rumble_notification_right_index, "rumble_notification_index",
 		   SUP_RUMBLE);
 
+LEGO_DEVICE_ATTR_WO(cal_stick_right, "calibrate_stick", RIGHT_CONTROLLER,
+		    gen1_cal, GEN1_CAL_STICK, SUP_CAL_STICK);
+LEGO_DEVICE_ATTR_RO(cal_stick_right_status, "calibrate_stick_status",
+		    RIGHT_CONTROLLER, gen1_cal, GEN1_CAL_STICK,
+		    SUP_CAL_STICK);
 LEGO_CAL_DEVICE_ATTR(cal_trigg_right, "calibrate_trigger", SET_TRIGGER_CFG, TRIGGER_CALIBRATE,
 		     CALDEV_TRIGGER, RIGHT_CONTROLLER, index, SUP_CAL_TRIGGER);
 LEGO_ATTR_RO(cal_trigg_right_index, "calibrate_trigger_index", SUP_CAL_TRIGGER);
@@ -3359,6 +3475,8 @@ static struct attribute *right_gamepad_attrs[] = {
 	&cal_joy_right.dev_attr.attr,
 	&cal_joy_right_index.dev_attr.attr,
 	&cal_joy_right_status.dev_attr.attr,
+	&cal_stick_right.dev_attr.attr,
+	&cal_stick_right_status.dev_attr.attr,
 	&cal_trigg_right.dev_attr.attr,
 	&cal_trigg_right_index.dev_attr.attr,
 	&cal_trigg_right_status.dev_attr.attr,
