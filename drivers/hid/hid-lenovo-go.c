@@ -153,7 +153,8 @@ enum go_support {
 	SUP_RGB,
 };
 
-#define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP))
+#define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
+			 BIT(SUP_IMU))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -218,12 +219,14 @@ enum mcu_command_index {
 enum gen1_command_id {
 	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
+	GEN1_GYRO			= 0x6A,
 	GEN1_VERSION			= 0x79,
 };
 
 #define GEN1_ACK_OK			0x01
 #define GEN1_VAL_INVALID		0x04
 #define GEN1_OP_QUERY			0x01
+#define GEN1_OP_SET		0x02
 
 enum dev_type {
 	UNSPECIFIED,
@@ -588,12 +591,34 @@ static int hid_go_gen1_auto_sleep_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
+static int hid_go_gen1_gyro_event(struct go_cfg_drvdata *drvdata,
+				  struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	switch (cmd_rep->device_type) {
+	case LEFT_CONTROLLER:
+		drvdata->imu_left_sensor_en = cmd_rep->data[0];
+		return 0;
+	case RIGHT_CONTROLLER:
+		drvdata->imu_right_sensor_en = cmd_rep->data[0];
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
 	switch (cmd_rep->cmd) {
 	case GEN1_GET_AUTO_SLEEP_TIME:
 		return hid_go_gen1_auto_sleep_event(drvdata, cmd_rep);
+	case GEN1_GYRO:
+		if (cmd_rep->sub_cmd == GEN1_OP_SET)
+			return hid_go_gen1_ack(cmd_rep);
+		return hid_go_gen1_gyro_event(drvdata, cmd_rep);
 	case GEN1_VERSION:
 		return hid_go_gen1_version_event(drvdata, cmd_rep);
 	default:
@@ -1256,6 +1281,27 @@ static ssize_t hid_go_gen1_feature_status_store(struct go_cfg_drvdata *drvdata,
 
 		return count;
 	}
+	case FEATURE_IMU_ENABLE: {
+		u8 content[2] = { device_type };
+
+		ret = sysfs_match_string(enabled_status_text, buf);
+		if (ret < 0)
+			return ret;
+		content[1] = ret;
+
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_GYRO,
+				       GEN1_OP_SET, UNSPECIFIED, content,
+				       sizeof(content), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		if (device_type == LEFT_CONTROLLER)
+			drvdata->imu_left_sensor_en = content[1];
+		else
+			drvdata->imu_right_sensor_en = content[1];
+
+		return count;
+	}
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -1283,6 +1329,19 @@ static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
 
 		return sysfs_emit(buf, "%u\n",
 				  drvdata->gp_right_auto_sleep_time);
+	case FEATURE_IMU_ENABLE:
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_GYRO,
+				       GEN1_OP_QUERY, device_type, &dev_byte,
+				       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		if (device_type == LEFT_CONTROLLER)
+			return sysfs_emit(buf, "%u\n",
+					  drvdata->imu_left_sensor_en);
+
+		return sysfs_emit(buf, "%u\n",
+				  drvdata->imu_right_sensor_en);
 	default:
 		return -EOPNOTSUPP;
 	}
