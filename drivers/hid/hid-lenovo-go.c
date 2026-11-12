@@ -82,6 +82,8 @@ struct go_cfg_drvdata {
 	struct led_classdev_mc led_mc;
 	struct hid_device *hdev;
 	struct mutex cfg_mutex; /*ensure single synchronous output report*/
+	u32 gen1_dpi_current;
+	u32 gen1_dpi_values[4];
 	u8 fps_mode;
 	u8 gp_left_auto_sleep_time;
 	u8 gp_left_gyro_cal_status;
@@ -154,7 +156,7 @@ enum go_support {
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
-			 BIT(SUP_IMU))
+			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -219,8 +221,15 @@ enum mcu_command_index {
 enum gen1_command_id {
 	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
+	GEN1_DPI			= 0x68,
 	GEN1_GYRO			= 0x6A,
 	GEN1_VERSION			= 0x79,
+};
+
+enum gen1_dpi_op {
+	GEN1_DPI_GET_CURRENT		= 0x01,
+	GEN1_DPI_GET_LIST		= 0x02,
+	GEN1_DPI_SET			= 0x03,
 };
 
 #define GEN1_ACK_OK			0x01
@@ -609,12 +618,38 @@ static int hid_go_gen1_gyro_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
+static int hid_go_gen1_dpi_event(struct go_cfg_drvdata *drvdata,
+				 struct command_report *cmd_rep)
+{
+	int i;
+
+	switch (cmd_rep->sub_cmd) {
+	case GEN1_DPI_GET_CURRENT:
+		if (cmd_rep->id < 9)
+			return -EBADMSG;
+		drvdata->gen1_dpi_current =
+			get_unaligned_be32(&cmd_rep->data[0]);
+		return 0;
+	case GEN1_DPI_GET_LIST:
+		if (cmd_rep->id < 21)
+			return -EBADMSG;
+		for (i = 0; i < ARRAY_SIZE(drvdata->gen1_dpi_values); i++)
+			drvdata->gen1_dpi_values[i] =
+				get_unaligned_be32(&cmd_rep->data[4 * i]);
+		return 0;
+	default:
+		return hid_go_gen1_ack(cmd_rep);
+	}
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
 	switch (cmd_rep->cmd) {
 	case GEN1_GET_AUTO_SLEEP_TIME:
 		return hid_go_gen1_auto_sleep_event(drvdata, cmd_rep);
+	case GEN1_DPI:
+		return hid_go_gen1_dpi_event(drvdata, cmd_rep);
 	case GEN1_GYRO:
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
@@ -1770,6 +1805,87 @@ static ssize_t motor_config_options(struct device *dev,
 	return count;
 }
 
+static ssize_t hid_go_gen1_fps_mode_dpi_store(struct go_cfg_drvdata *drvdata,
+					      const char *buf, size_t count)
+{
+	u8 content[5] = { RIGHT_CONTROLLER };
+	u8 dev_byte = RIGHT_CONTROLLER;
+	bool valid = false;
+	u32 value;
+	int i, ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret)
+		return ret;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_DPI, GEN1_DPI_GET_LIST,
+			       UNSPECIFIED, &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(drvdata->gen1_dpi_values); i++) {
+		if (drvdata->gen1_dpi_values[i] == value) {
+			valid = true;
+			break;
+		}
+	}
+
+	if (!valid)
+		return -EINVAL;
+
+	put_unaligned_be32(value, &content[1]);
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_DPI, GEN1_DPI_SET,
+			       UNSPECIFIED, content, sizeof(content),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret < 0)
+		return ret;
+
+	drvdata->gen1_dpi_current = value;
+
+	return count;
+}
+
+static ssize_t hid_go_gen1_fps_mode_dpi_show(struct go_cfg_drvdata *drvdata,
+					     char *buf)
+{
+	u8 dev_byte = RIGHT_CONTROLLER;
+	int ret;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_DPI,
+			       GEN1_DPI_GET_CURRENT, UNSPECIFIED,
+			       &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", drvdata->gen1_dpi_current);
+}
+
+static ssize_t hid_go_gen1_fps_mode_dpi_index_show(struct go_cfg_drvdata *drvdata,
+						   char *buf)
+{
+	u8 dev_byte = RIGHT_CONTROLLER;
+	ssize_t count = 0;
+	int i, ret;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_DPI, GEN1_DPI_GET_LIST,
+			       UNSPECIFIED, &dev_byte, sizeof(dev_byte),
+			       GO_GEN1_TIMEOUT_MS);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(drvdata->gen1_dpi_values); i++)
+		count += sysfs_emit_at(buf, count, "%u ",
+				       drvdata->gen1_dpi_values[i]);
+
+	if (count)
+		buf[count - 1] = '\n';
+
+	return count;
+}
+
 static ssize_t fps_mode_dpi_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
@@ -1784,6 +1900,15 @@ static ssize_t fps_mode_dpi_store(struct device *dev,
 	/* Pairs with smp_store_release in the config setup path */
 	if (!smp_load_acquire(&drvdata->gp_registered))
 		return -ENODEV;
+
+	switch (drvdata->gen) {
+	case GO_GEN1:
+		return hid_go_gen1_fps_mode_dpi_store(drvdata, buf, count);
+	case GO_GEN2:
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	ret = kstrtou32(buf, 10, &value);
 	if (ret)
@@ -1813,6 +1938,15 @@ static ssize_t fps_mode_dpi_show(struct device *dev,
 	if (!smp_load_acquire(&drvdata->gp_registered))
 		return -ENODEV;
 
+	switch (drvdata->gen) {
+	case GO_GEN1:
+		return hid_go_gen1_fps_mode_dpi_show(drvdata, buf);
+	case GO_GEN2:
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_DPI_CFG,
 			       FPS_MODE_DPI, UNSPECIFIED, NULL, 0,
 			       GO_COMMAND_TIMEOUT_MS);
@@ -1825,7 +1959,20 @@ static ssize_t fps_mode_dpi_show(struct device *dev,
 static ssize_t fps_mode_dpi_index_show(struct device *dev,
 				       struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "500 800 1200 1800\n");
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	switch (drvdata->gen) {
+	case GO_GEN1:
+		return hid_go_gen1_fps_mode_dpi_index_show(drvdata, buf);
+	case GO_GEN2:
+		return sysfs_emit(buf, "500 800 1200 1800\n");
+	default:
+		return -EINVAL;
+	}
 }
 
 static u8 *go_cal_status_ptr(struct go_cfg_drvdata *drvdata, enum dev_type device_type,
