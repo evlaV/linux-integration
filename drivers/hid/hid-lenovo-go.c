@@ -38,6 +38,8 @@
 #define GO_GP_RESET_SUCCESS	0x01
 #define GO_PACKET_SIZE		64
 #define GO_COMMAND_TIMEOUT_MS	50
+#define GO_GEN1_TIMEOUT_MS		500
+#define GO_GEN1_RETRIES		3
 
 /*
  * Fields of an armed command a reply must agree with. Gen1 replies carry
@@ -65,7 +67,13 @@ struct hid_go_cmd {
 	int result;
 };
 
+enum go_hw_gen {
+	GO_GEN1,
+	GO_GEN2,
+};
+
 struct go_cfg_drvdata {
+	enum go_hw_gen gen;
 	unsigned long support;
 	struct delayed_work go_cfg_setup;
 	struct hid_go_cmd cmd;
@@ -145,6 +153,7 @@ enum go_support {
 	SUP_RGB,
 };
 
+#define SUPPORT_GEN1	BIT(SUP_VERSION)
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -176,6 +185,15 @@ enum command_id {
 	GAMEPAD_DATA = 0x3c,
 };
 
+/*
+ * Gen1 config replies: status byte at the start of the payload, an error
+ * code six bytes from the frame end on failure.
+ */
+struct gen1_cmd_data {
+	u8 status;
+	u8 content[];
+};
+
 enum mcu_command_index {
 	GET_VERSION_DATA = 0x02,
 	GET_FEATURE_STATUS,
@@ -192,6 +210,18 @@ enum mcu_command_index {
 	GET_DEVICE_STATUS = 0xa0,
 
 };
+
+/*
+ * Gen1 (2023) config protocol. Replies carry a length byte where gen2
+ * carries a request id, so reply matching excludes the id field.
+ */
+enum gen1_command_id {
+	GEN1_VERSION			= 0x79,
+};
+
+#define GEN1_ACK_OK			0x01
+#define GEN1_VAL_INVALID		0x04
+#define GEN1_OP_QUERY			0x01
 
 enum dev_type {
 	UNSPECIFIED,
@@ -468,6 +498,85 @@ static int hid_go_send_output_report(struct hid_device *hdev, u8 *packet)
 	if (ret < 0)
 		return ret;
 	return ret == GO_PACKET_SIZE ? 0 : -EINVAL;
+}
+
+static int hid_go_gen1_errno(u8 code)
+{
+	if (code == GEN1_VAL_INVALID)
+		return -EINVAL;
+
+	return -EIO;
+}
+
+/*
+ * Classify a gen1 SET ack. A success frame is six bytes with GEN1_ACK_OK
+ * first; fail frames are longer and carry an error code six bytes from
+ * the frame end.
+ */
+static int hid_go_gen1_ack(const struct command_report *cmd_rep)
+{
+	const struct gen1_cmd_data *data =
+		(const struct gen1_cmd_data *)cmd_rep->data;
+	u8 len = cmd_rep->id;
+
+	if (len < 6 || len >= GO_PACKET_SIZE)
+		return -EBADMSG;
+
+	if (data->status == GEN1_ACK_OK)
+		return 0;
+
+	return hid_go_gen1_errno(((const u8 *)data)[len - 6]);
+}
+
+static int hid_go_gen1_version_event(struct go_cfg_drvdata *drvdata,
+				     struct command_report *cmd_rep)
+{
+	u32 product, protocol, firmware;
+
+	if (cmd_rep->id < 0x15)
+		return -EBADMSG;
+
+	product = get_unaligned_le24(&cmd_rep->data[1]);
+	protocol = get_unaligned_le24(&cmd_rep->data[4]);
+	firmware = get_unaligned_le32(&cmd_rep->data[8]);
+
+	switch (cmd_rep->device_type) {
+	case USB_MCU:
+		drvdata->mcu_version_product = product;
+		drvdata->mcu_version_protocol = protocol;
+		drvdata->mcu_version_firmware = firmware;
+		break;
+	case TX_DONGLE:
+		drvdata->tx_dongle_version_product = product;
+		drvdata->tx_dongle_version_protocol = protocol;
+		drvdata->tx_dongle_version_firmware = firmware;
+		break;
+	case LEFT_CONTROLLER:
+		drvdata->gp_left_version_product = product;
+		drvdata->gp_left_version_protocol = protocol;
+		drvdata->gp_left_version_firmware = firmware;
+		break;
+	case RIGHT_CONTROLLER:
+		drvdata->gp_right_version_product = product;
+		drvdata->gp_right_version_protocol = protocol;
+		drvdata->gp_right_version_firmware = firmware;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
+				 struct command_report *cmd_rep)
+{
+	switch (cmd_rep->cmd) {
+	case GEN1_VERSION:
+		return hid_go_gen1_version_event(drvdata, cmd_rep);
+	default:
+		return hid_go_gen1_ack(cmd_rep);
+	}
 }
 
 static int hid_go_gen2_version_event(struct go_cfg_drvdata *drvdata,
@@ -821,6 +930,11 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 
 	cmd_rep = (struct command_report *)data;
 
+	if (drvdata->gen == GO_GEN1) {
+		ret = hid_go_gen1_raw_event(drvdata, cmd_rep);
+		goto consume;
+	}
+
 	switch (cmd_rep->id) {
 	case MCU_CONFIG_DATA:
 		switch (cmd_rep->cmd) {
@@ -862,6 +976,7 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 	default:
 		goto passthrough;
 	}
+consume:
 	dev_dbg(&hdev->dev, "Rx data as raw input report: [%*ph]\n",
 		GO_PACKET_SIZE, data);
 
@@ -880,19 +995,25 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 {
 	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 	unsigned char *dmabuf __free(kfree) = NULL;
-	u8 header[] = { GO_OUTPUT_REPORT_ID, id, command, index, device };
-	size_t header_size = ARRAY_SIZE(header);
-	unsigned int match = CMD_MATCH_ID | CMD_MATCH_CMD | CMD_MATCH_SUB |
-			     CMD_MATCH_DEV;
-	unsigned long timeout = msecs_to_jiffies(timeout_ms);
+	unsigned int retries = 1;
+	unsigned int off, match;
+	unsigned long timeout;
 	long wait_result;
-	int ret;
+	int ret, try;
 
 	if (!drvdata)
 		return -ENODEV;
 
-	if (header_size + len > GO_PACKET_SIZE)
-		return -EINVAL;
+	if (drvdata->gen == GO_GEN1) {
+		/* Gen1 frame: [report][length][command][sub?][content][ack] */
+		off = 3 + (index ? 1 : 0);
+		if (off + len + 1 > GO_PACKET_SIZE)
+			return -EINVAL;
+	} else {
+		off = 5;
+		if (off + len > GO_PACKET_SIZE)
+			return -EINVAL;
+	}
 
 	guard(mutex)(&drvdata->cfg_mutex);
 	/* We can't use a devm_alloc reusable buffer without side effects during suspend */
@@ -900,19 +1021,48 @@ static int mcu_property_out(struct hid_device *hdev, u8 id, u8 command,
 	if (!dmabuf)
 		return -ENOMEM;
 
-	memcpy(dmabuf, header, header_size);
-	memcpy(dmabuf + header_size, data, len);
+	if (drvdata->gen == GO_GEN1) {
+		dmabuf[0] = GO_OUTPUT_REPORT_ID;
+		dmabuf[1] = off + len;
+		dmabuf[2] = command;
+		if (index)
+			dmabuf[3] = index;
+		if (len)
+			memcpy(dmabuf + off, data, len);
+		dmabuf[off + len] = GEN1_ACK_OK;
+		match = CMD_MATCH_CMD | (index ? CMD_MATCH_SUB : 0) |
+			(device != UNSPECIFIED ? CMD_MATCH_DEV : 0);
+		/*
+		 * Gen1 replies echo the command, subID, and device but no
+		 * request id. The vendor stack repeats a request when a
+		 * reply is dropped, so mirror that retry behavior.
+		 */
+		retries = GO_GEN1_RETRIES;
+	} else {
+		u8 header[] = { GO_OUTPUT_REPORT_ID, id, command, index, device };
+
+		memcpy(dmabuf, header, ARRAY_SIZE(header));
+		memcpy(dmabuf + 5, data, len);
+		match = CMD_MATCH_ID | CMD_MATCH_CMD | CMD_MATCH_SUB |
+			CMD_MATCH_DEV;
+	}
+	timeout = msecs_to_jiffies(timeout_ms);
 
 	dev_dbg(&hdev->dev, "Send data as raw output report: [%*ph]\n",
 		GO_PACKET_SIZE, dmabuf);
 
-	hid_go_cmd_arm(drvdata, id, command, index, device, match);
-	ret = hid_go_send_output_report(hdev, dmabuf);
-	if (ret)
-		return hid_go_cmd_cancel(drvdata, ret);
+	for (try = 0; try < retries; try++) {
+		hid_go_cmd_arm(drvdata, id, command, index, device, match);
+		ret = hid_go_send_output_report(hdev, dmabuf);
+		if (ret)
+			return hid_go_cmd_cancel(drvdata, ret);
 
-	wait_result = wait_for_completion_interruptible_timeout(&drvdata->cmd.done,
-								timeout);
+		wait_result = wait_for_completion_interruptible_timeout(&drvdata->cmd.done,
+									timeout);
+		if (wait_result != 0)
+			break;
+	}
+
 	return hid_go_cmd_finish(drvdata, wait_result);
 }
 
@@ -928,9 +1078,14 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 	if (!smp_load_acquire(&drvdata->gp_registered))
 		return -ENODEV;
 
-	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
-			       index, device_type, NULL, 0,
-			       GO_COMMAND_TIMEOUT_MS);
+	if (drvdata->gen == GO_GEN1)
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_VERSION,
+				       GEN1_OP_QUERY, device_type, NULL, 0,
+				       GO_GEN1_TIMEOUT_MS);
+	else
+		ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
+				       GET_VERSION_DATA, index, device_type,
+				       NULL, 0, GO_COMMAND_TIMEOUT_MS);
 	if (ret)
 		return ret;
 
@@ -2559,12 +2714,27 @@ static struct mc_subled go_rgb_subled_info[] = {
 	},
 };
 
-static void cfg_setup(struct work_struct *work)
+static void hid_go_cfg_setup(struct work_struct *work)
 {
 	struct go_cfg_drvdata *drvdata = container_of(work, struct go_cfg_drvdata,
 						      go_cfg_setup.work);
 	bool gp_registered, rgb_registered;
+	enum dev_type dev;
 	int ret;
+
+	if (drvdata->gen == GO_GEN1) {
+		for (dev = USB_MCU; dev <= RIGHT_CONTROLLER; dev++) {
+			ret = mcu_property_out(drvdata->hdev, 0, GEN1_VERSION,
+					       GEN1_OP_QUERY, dev, NULL, 0,
+					       GO_GEN1_TIMEOUT_MS);
+			if (ret)
+				dev_warn(&drvdata->hdev->dev,
+					 "Failed to retrieve device %u version: %i\n",
+					 dev, ret);
+		}
+
+		goto try_gp;
+	}
 
 	/* MCU Version Attrs */
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA, GET_VERSION_DATA,
@@ -2750,6 +2920,7 @@ static void cfg_setup(struct work_struct *work)
 		return;
 	}
 
+try_gp:
 	/* Pairs with the smp_store_release later in this function */
 	gp_registered = smp_load_acquire(&drvdata->gp_registered);
 	if (gp_registered)
@@ -2768,6 +2939,12 @@ static void cfg_setup(struct work_struct *work)
 	gp_registered = true;
 
 try_rgb:
+	/* Gen1 has no LED surface until RGB support binds it */
+	if (drvdata->gen == GO_GEN1) {
+		rgb_registered = false;
+		goto update_kobjects;
+	}
+
 	/* Pairs with the smp_store_release later in this function */
 	rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
 	if (rgb_registered)
@@ -2824,7 +3001,7 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 	/* Executing calls prior to returning from probe will lock the MCU. Schedule
 	 * initial data call after probe has completed and MCU can accept calls.
 	 */
-	INIT_DELAYED_WORK(&drvdata->go_cfg_setup, &cfg_setup);
+	INIT_DELAYED_WORK(&drvdata->go_cfg_setup, &hid_go_cfg_setup);
 	ret = schedule_delayed_work(&drvdata->go_cfg_setup, msecs_to_jiffies(2));
 	if (!ret) {
 		dev_err(&hdev->dev,
@@ -2839,7 +3016,7 @@ static void hid_go_cfg_remove(struct hid_device *hdev)
 	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
 
 	/*
-	 * cfg_setup is scheduled from hid_go_cfg_probe() with a 2 ms delay
+	 * hid_go_cfg_setup is scheduled from hid_go_cfg_probe() with a 2 ms delay
 	 * and dereferences drvdata->hdev.  Drain it here before tearing
 	 * down so the workqueue cannot run after hid_destroy_device()'s
 	 * put_device() has released the underlying hdev and dereference
@@ -2877,7 +3054,9 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			return -ENOMEM;
 
 		hid_set_drvdata(hdev, drvdata);
-		drvdata->support = SUPPORT_GEN2;
+		drvdata->gen = (enum go_hw_gen)id->driver_data;
+		drvdata->support = drvdata->gen == GO_GEN1 ? SUPPORT_GEN1 :
+						       SUPPORT_GEN2;
 		drvdata->hdev = hdev;
 		mutex_init(&drvdata->cfg_mutex);
 		init_completion(&drvdata->cmd.done);
@@ -2935,9 +3114,9 @@ static int hid_go_resume(struct hid_device *hdev)
 	if (!drvdata)
 		return 0;
 
-	/* Pairs with smp_store_release from cfg_setup */
+	/* Pairs with smp_store_release in the config setup path */
 	gp_registered = smp_load_acquire(&drvdata->gp_registered);
-	/* Pairs with smp_store_release from cfg_setup */
+	/* Pairs with smp_store_release in the config setup path */
 	rgb_registered = smp_load_acquire(&drvdata->rgb_registered);
 
 	if (gp_registered && rgb_registered)
@@ -2966,13 +3145,26 @@ static void hid_go_remove(struct hid_device *hdev)
 
 static const struct hid_device_id hid_go_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
-			 USB_DEVICE_ID_LENOVO_LEGION_GO2_XINPUT) },
+			 USB_DEVICE_ID_LENOVO_LEGION_GO_XINPUT),
+	  .driver_data = GO_GEN1 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
-			 USB_DEVICE_ID_LENOVO_LEGION_GO2_DINPUT) },
+			 USB_DEVICE_ID_LENOVO_LEGION_GO_DINPUT),
+	  .driver_data = GO_GEN1 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
-			 USB_DEVICE_ID_LENOVO_LEGION_GO2_DUAL_DINPUT) },
+			 USB_DEVICE_ID_LENOVO_LEGION_GO_FPS),
+	  .driver_data = GO_GEN1 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
-			 USB_DEVICE_ID_LENOVO_LEGION_GO2_FPS) },
+			 USB_DEVICE_ID_LENOVO_LEGION_GO2_XINPUT),
+	  .driver_data = GO_GEN2 },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
+			 USB_DEVICE_ID_LENOVO_LEGION_GO2_DINPUT),
+	  .driver_data = GO_GEN2 },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
+			 USB_DEVICE_ID_LENOVO_LEGION_GO2_DUAL_DINPUT),
+	  .driver_data = GO_GEN2 },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO,
+			 USB_DEVICE_ID_LENOVO_LEGION_GO2_FPS),
+	  .driver_data = GO_GEN2 },
 	{}
 };
 MODULE_DEVICE_TABLE(hid, hid_go_devices);
