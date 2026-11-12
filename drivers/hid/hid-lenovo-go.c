@@ -37,6 +37,7 @@
 #define GO_OUTPUT_REPORT_ID	0x05
 #define GO_GP_RESET_SUCCESS	0x01
 #define GO_PACKET_SIZE		64
+#define GEN1_RESET_SETTLE_MS		8000
 #define GO_COMMAND_TIMEOUT_MS	50
 #define GO_GEN1_TIMEOUT_MS		500
 #define GO_GEN1_RETRIES		3
@@ -183,7 +184,7 @@ enum go_support {
 			 BIT(SUP_RGB_QUICK) | BIT(SUP_BATTERY) | \
 			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK) | \
 			 BIT(SUP_CAL_GYRO) | BIT(SUP_FPS_SWITCH) | \
-			 BIT(SUP_FPS_MODE))
+			 BIT(SUP_FPS_MODE) | BIT(SUP_RESET))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -246,6 +247,7 @@ enum mcu_command_index {
  * carries a request id, so reply matching excludes the id field.
  */
 enum gen1_command_id {
+	GEN1_RESET			= 0x05,
 	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
 	GEN1_GYRO_CAL			= 0x41,
@@ -829,6 +831,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
 	switch (cmd_rep->cmd) {
+	case GEN1_RESET:
+		return hid_go_gen1_ack(cmd_rep);
 	case GEN1_GET_AUTO_SLEEP_TIME:
 		return hid_go_gen1_auto_sleep_event(drvdata, cmd_rep);
 	case GEN1_DPI:
@@ -1624,6 +1628,34 @@ static ssize_t hid_go_gen1_feature_status_store(struct go_cfg_drvdata *drvdata,
 			return ret;
 
 		drvdata->tp_en = content[1];
+
+		return count;
+	}
+	case FEATURE_RESET_GAMEPAD: {
+		u8 content[1] = { device_type };
+		u8 val;
+
+		ret = kstrtou8(buf, 10, &val);
+		if (ret)
+			return ret;
+
+		if (val != GO_GP_RESET_SUCCESS)
+			return -EINVAL;
+
+		/* Only per-device resets are accepted */
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_RESET,
+				       GEN1_OP_QUERY, UNSPECIFIED, content,
+				       sizeof(content), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		/*
+		 * Settings revert seconds after the ack. Re-run the config
+		 * setup from a workqueue once the firmware has settled
+		 * instead of blocking this path.
+		 */
+		schedule_delayed_work(&drvdata->go_cfg_setup,
+				      msecs_to_jiffies(GEN1_RESET_SETTLE_MS));
 
 		return count;
 	}
