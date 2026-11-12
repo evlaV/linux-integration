@@ -444,8 +444,8 @@ static int hid_go_send_output_report(struct hid_device *hdev, u8 *packet)
 	return ret == GO_PACKET_SIZE ? 0 : -EINVAL;
 }
 
-static int hid_go_version_event(struct go_cfg_drvdata *drvdata,
-				struct command_report *cmd_rep)
+static int hid_go_gen2_version_event(struct go_cfg_drvdata *drvdata,
+				     struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case PRODUCT_VERSION:
@@ -554,8 +554,8 @@ static int hid_go_version_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
-static int hid_go_feature_status_event(struct go_cfg_drvdata *drvdata,
-				       struct command_report *cmd_rep)
+static int hid_go_gen2_feature_status_event(struct go_cfg_drvdata *drvdata,
+					    struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case FEATURE_RESET_GAMEPAD:
@@ -612,8 +612,8 @@ static int hid_go_feature_status_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
-static int hid_go_motor_event(struct go_cfg_drvdata *drvdata,
-			      struct command_report *cmd_rep)
+static int hid_go_gen2_motor_event(struct go_cfg_drvdata *drvdata,
+				   struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case MOTOR_CFG_ALL:
@@ -654,8 +654,8 @@ static int hid_go_motor_event(struct go_cfg_drvdata *drvdata,
 	return -EINVAL;
 }
 
-static int hid_go_fps_dpi_event(struct go_cfg_drvdata *drvdata,
-				struct command_report *cmd_rep)
+static int hid_go_gen2_fps_dpi_event(struct go_cfg_drvdata *drvdata,
+				     struct command_report *cmd_rep)
 {
 	if (cmd_rep->sub_cmd != FPS_MODE_DPI)
 		return -EINVAL;
@@ -665,8 +665,8 @@ static int hid_go_fps_dpi_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
-static int hid_go_light_event(struct go_cfg_drvdata *drvdata,
-			      struct command_report *cmd_rep)
+static int hid_go_gen2_light_event(struct go_cfg_drvdata *drvdata,
+				   struct command_report *cmd_rep)
 {
 	struct led_classdev_mc *mc_cdev;
 
@@ -693,8 +693,8 @@ static int hid_go_light_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
-static int hid_go_device_status_event(struct go_cfg_drvdata *drvdata,
-				      struct command_report *cmd_rep)
+static int hid_go_gen2_device_status_event(struct go_cfg_drvdata *drvdata,
+					   struct command_report *cmd_rep)
 {
 	u8 device_type = cmd_rep->device_type;
 	u8 caldev = cmd_rep->data[0];
@@ -741,8 +741,8 @@ static int hid_go_device_status_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
-static int hid_go_os_mode_cfg_event(struct go_cfg_drvdata *drvdata,
-				    struct command_report *cmd_rep)
+static int hid_go_gen2_os_mode_cfg_event(struct go_cfg_drvdata *drvdata,
+					 struct command_report *cmd_rep)
 {
 	switch (cmd_rep->sub_cmd) {
 	case SET_OS_MODE:
@@ -757,7 +757,7 @@ static int hid_go_os_mode_cfg_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
-static int hid_go_set_event_return(struct command_report *cmd_rep)
+static int hid_go_gen2_set_event_return(struct command_report *cmd_rep)
 {
 	if (cmd_rep->data[0] != 0)
 		return -EIO;
@@ -800,22 +800,22 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 	case MCU_CONFIG_DATA:
 		switch (cmd_rep->cmd) {
 		case GET_VERSION_DATA:
-			ret = hid_go_version_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_version_event(drvdata, cmd_rep);
 			break;
 		case GET_FEATURE_STATUS:
-			ret = hid_go_feature_status_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_feature_status_event(drvdata, cmd_rep);
 			break;
 		case GET_MOTOR_CFG:
-			ret = hid_go_motor_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_motor_event(drvdata, cmd_rep);
 			break;
 		case GET_DPI_CFG:
-			ret = hid_go_fps_dpi_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_fps_dpi_event(drvdata, cmd_rep);
 			break;
 		case GET_RGB_CFG:
-			ret = hid_go_light_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_light_event(drvdata, cmd_rep);
 			break;
 		case GET_DEVICE_STATUS:
-			ret = hid_go_device_status_event(drvdata, cmd_rep);
+			ret = hid_go_gen2_device_status_event(drvdata, cmd_rep);
 			break;
 		case SET_FEATURE_STATUS:
 		case SET_MOTOR_CFG:
@@ -824,7 +824,7 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 		case SET_TRIGGER_CFG:
 		case SET_JOYSTICK_CFG:
 		case SET_GYRO_CFG:
-			ret = hid_go_set_event_return(cmd_rep);
+			ret = hid_go_gen2_set_event_return(cmd_rep);
 			break;
 		default:
 			ret = -EINVAL;
@@ -832,7 +832,7 @@ static int hid_go_raw_event(struct hid_device *hdev, struct hid_report *report,
 		}
 		break;
 	case OS_MODE_DATA:
-		ret = hid_go_os_mode_cfg_event(drvdata, cmd_rep);
+		ret = hid_go_gen2_os_mode_cfg_event(drvdata, cmd_rep);
 		break;
 	default:
 		goto passthrough;
