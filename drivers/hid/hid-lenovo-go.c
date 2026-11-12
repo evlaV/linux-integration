@@ -140,6 +140,8 @@ struct go_cfg_drvdata {
 	u8 rgb_effect;
 	u8 gen1_rgb_quick_en;
 	u8 gen1_rgb_quick_id;
+	u8 gen1_trigg_dz[RIGHT_CONTROLLER + 1];
+	u8 gen1_trigg_margin[RIGHT_CONTROLLER + 1];
 	u8 rgb_en;
 	u8 rgb_mode;
 	u8 rgb_profile;
@@ -180,6 +182,7 @@ enum go_support {
 	SUP_RGB_QUICK,
 	SUP_ABXY_SWAP,
 	SUP_LEGION_SWAP,
+	SUP_TRIGGER_DEADZONE,
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
@@ -189,7 +192,8 @@ enum go_support {
 			 BIT(SUP_CONNECTION) | BIT(SUP_CAL_STICK) | \
 			 BIT(SUP_CAL_GYRO) | BIT(SUP_FPS_SWITCH) | \
 			 BIT(SUP_FPS_MODE) | BIT(SUP_RESET) | \
-			 BIT(SUP_ABXY_SWAP) | BIT(SUP_LEGION_SWAP))
+			 BIT(SUP_ABXY_SWAP) | BIT(SUP_LEGION_SWAP) | \
+			 BIT(SUP_TRIGGER_DEADZONE))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -273,6 +277,7 @@ enum gen1_command_id {
 	GEN1_RGB_QUICK			= 0x73,
 	GEN1_DEVICE_STATE		= 0x74,
 	GEN1_VERSION			= 0x79,
+	GEN1_TRIGGER_DZ			= 0x85,
 };
 
 enum gen1_dpi_op {
@@ -286,6 +291,11 @@ enum gen1_layout_sub {
 	GEN1_ABXY_SET			= 0x02,
 	GEN1_LEGION_GET			= 0x03,
 	GEN1_LEGION_SET			= 0x04,
+};
+
+enum gen1_trigg_sub {
+	GEN1_TRIGG_SET			= 0x01,
+	GEN1_TRIGG_GET			= 0x02,
 };
 
 /*
@@ -858,6 +868,25 @@ static int hid_go_gen1_layout_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
+static int hid_go_gen1_trigg_dz_event(struct go_cfg_drvdata *drvdata,
+				      struct command_report *cmd_rep)
+{
+	u8 dev = cmd_rep->device_type;
+
+	if (cmd_rep->sub_cmd != GEN1_TRIGG_GET)
+		return hid_go_gen1_ack(cmd_rep);
+
+	if (cmd_rep->id < 7)
+		return -EBADMSG;
+
+	if (dev < LEFT_CONTROLLER || dev > RIGHT_CONTROLLER)
+		return -EINVAL;
+
+	drvdata->gen1_trigg_dz[dev] = cmd_rep->data[0];
+	drvdata->gen1_trigg_margin[dev] = cmd_rep->data[1];
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -895,6 +924,8 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		return hid_go_gen1_ack(cmd_rep);
 	case GEN1_RGB_QUICK:
 		return hid_go_gen1_rgb_quick_event(drvdata, cmd_rep);
+	case GEN1_TRIGGER_DZ:
+		return hid_go_gen1_trigg_dz_event(drvdata, cmd_rep);
 	case GEN1_VERSION:
 		return hid_go_gen1_version_event(drvdata, cmd_rep);
 	default:
@@ -2558,6 +2589,86 @@ static ssize_t device_status_show(struct device *dev,
 	return sysfs_emit(buf, "%s\n", cal_status_text[i]);
 }
 
+enum gen1_trigg_index {
+	GEN1_TRIGG_DEADZONE,
+	GEN1_TRIGG_MARGIN,
+};
+
+static ssize_t gen1_trigg_show(struct device *dev,
+			       struct device_attribute *attr, char *buf,
+			       enum gen1_trigg_index index,
+			       enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 dev_byte = device_type;
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_TRIGGER_DZ,
+			       GEN1_TRIGG_GET, device_type, &dev_byte,
+			       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	if (index == GEN1_TRIGG_DEADZONE)
+		return sysfs_emit(buf, "%u\n",
+				  drvdata->gen1_trigg_dz[device_type]);
+
+	return sysfs_emit(buf, "%u\n",
+			  drvdata->gen1_trigg_margin[device_type]);
+}
+
+static ssize_t gen1_trigg_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t count, enum gen1_trigg_index index,
+				enum dev_type device_type)
+{
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	u8 content[3] = { device_type };
+	int ret;
+
+	/* Pairs with smp_store_release in the config setup path */
+	if (!smp_load_acquire(&drvdata->gp_registered))
+		return -ENODEV;
+
+	if (index == GEN1_TRIGG_DEADZONE)
+		ret = kstrtou8(buf, 10, &content[1]);
+	else
+		ret = kstrtou8(buf, 10, &content[2]);
+	if (ret)
+		return ret;
+
+	content[1] = index == GEN1_TRIGG_DEADZONE ?
+		content[1] : drvdata->gen1_trigg_dz[device_type];
+	content[2] = index == GEN1_TRIGG_MARGIN ?
+		content[2] : drvdata->gen1_trigg_margin[device_type];
+
+	/* Deadzone and margin share one hundred units of trigger travel */
+	if (content[1] > 99 || content[2] > 99 || content[1] + content[2] > 99)
+		return -EINVAL;
+
+	ret = mcu_property_out(drvdata->hdev, 0, GEN1_TRIGGER_DZ,
+			       GEN1_TRIGG_SET, device_type, content,
+			       sizeof(content), GO_GEN1_TIMEOUT_MS);
+	if (ret)
+		return ret;
+
+	drvdata->gen1_trigg_dz[device_type] = content[1];
+	drvdata->gen1_trigg_margin[device_type] = content[2];
+
+	return count;
+}
+
+static ssize_t gen1_trigg_options(struct device *dev,
+				  struct device_attribute *attr, char *buf,
+				  enum gen1_trigg_index index)
+{
+	return sysfs_emit(buf, "0-99\n");
+}
+
 enum gen1_swap_index {
 	GEN1_SWAP_ABXY,
 	GEN1_SWAP_LEGION,
@@ -3630,6 +3741,26 @@ static const struct attribute_group tx_dongle_attr_group = {
 };
 
 /* Gamepad - Left */
+LEGO_DEVICE_ATTR_RW(trigg_dz_left, "trigger_deadzone", LEFT_CONTROLLER,
+		    range, gen1_trigg, GEN1_TRIGG_DEADZONE,
+		    SUP_TRIGGER_DEADZONE);
+LEGO_ATTR_RO(trigg_dz_left_range, "trigger_deadzone_range",
+	     SUP_TRIGGER_DEADZONE);
+LEGO_DEVICE_ATTR_RW(trigg_margin_left, "trigger_deadzone_margin",
+		    LEFT_CONTROLLER, range, gen1_trigg, GEN1_TRIGG_MARGIN,
+		    SUP_TRIGGER_DEADZONE);
+LEGO_ATTR_RO(trigg_margin_left_range, "trigger_deadzone_margin_range",
+	     SUP_TRIGGER_DEADZONE);
+LEGO_DEVICE_ATTR_RW(trigg_dz_right, "trigger_deadzone", RIGHT_CONTROLLER,
+		    range, gen1_trigg, GEN1_TRIGG_DEADZONE,
+		    SUP_TRIGGER_DEADZONE);
+LEGO_ATTR_RO(trigg_dz_right_range, "trigger_deadzone_range",
+	     SUP_TRIGGER_DEADZONE);
+LEGO_DEVICE_ATTR_RW(trigg_margin_right, "trigger_deadzone_margin",
+		    RIGHT_CONTROLLER, range, gen1_trigg, GEN1_TRIGG_MARGIN,
+		    SUP_TRIGGER_DEADZONE);
+LEGO_ATTR_RO(trigg_margin_right_range, "trigger_deadzone_margin_range",
+	     SUP_TRIGGER_DEADZONE);
 LEGO_DEVICE_ATTR_RO(version_product_left, "product_version", LEFT_CONTROLLER, version,
 		    PRODUCT_VERSION, SUP_VERSION);
 
@@ -3725,6 +3856,10 @@ static struct attribute *left_gamepad_attrs[] = {
 	&rumble_mode_left_index.dev_attr.attr,
 	&rumble_notification_left.dev_attr.attr,
 	&rumble_notification_left_index.dev_attr.attr,
+	&trigg_dz_left.dev_attr.attr,
+	&trigg_dz_left_range.dev_attr.attr,
+	&trigg_margin_left.dev_attr.attr,
+	&trigg_margin_left_range.dev_attr.attr,
 	&version_hardware_left.dev_attr.attr,
 	&version_firmware_left.dev_attr.attr,
 	&version_gen_left.dev_attr.attr,
@@ -3836,6 +3971,10 @@ static struct attribute *right_gamepad_attrs[] = {
 	&rumble_mode_right_index.dev_attr.attr,
 	&rumble_notification_right.dev_attr.attr,
 	&rumble_notification_right_index.dev_attr.attr,
+	&trigg_dz_right.dev_attr.attr,
+	&trigg_dz_right_range.dev_attr.attr,
+	&trigg_margin_right.dev_attr.attr,
+	&trigg_margin_right_range.dev_attr.attr,
 	&version_hardware_right.dev_attr.attr,
 	&version_firmware_right.dev_attr.attr,
 	&version_gen_right.dev_attr.attr,
