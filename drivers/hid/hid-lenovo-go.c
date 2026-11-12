@@ -156,7 +156,8 @@ enum go_support {
 };
 
 #define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP) | \
-			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI))
+			 BIT(SUP_IMU) | BIT(SUP_FPS_MODE_DPI) | \
+			 BIT(SUP_TOUCHPAD))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -223,6 +224,7 @@ enum gen1_command_id {
 	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
 	GEN1_DPI			= 0x68,
 	GEN1_GYRO			= 0x6A,
+	GEN1_TOUCHPAD			= 0x6B,
 	GEN1_VERSION			= 0x79,
 };
 
@@ -642,6 +644,16 @@ static int hid_go_gen1_dpi_event(struct go_cfg_drvdata *drvdata,
 	}
 }
 
+static int hid_go_gen1_touchpad_event(struct go_cfg_drvdata *drvdata,
+				      struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	drvdata->tp_en = cmd_rep->data[0];
+	return 0;
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
@@ -654,6 +666,10 @@ static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 		if (cmd_rep->sub_cmd == GEN1_OP_SET)
 			return hid_go_gen1_ack(cmd_rep);
 		return hid_go_gen1_gyro_event(drvdata, cmd_rep);
+	case GEN1_TOUCHPAD:
+		if (cmd_rep->sub_cmd == GEN1_OP_SET)
+			return hid_go_gen1_ack(cmd_rep);
+		return hid_go_gen1_touchpad_event(drvdata, cmd_rep);
 	case GEN1_VERSION:
 		return hid_go_gen1_version_event(drvdata, cmd_rep);
 	default:
@@ -1337,6 +1353,25 @@ static ssize_t hid_go_gen1_feature_status_store(struct go_cfg_drvdata *drvdata,
 
 		return count;
 	}
+	case FEATURE_TOUCHPAD_ENABLE: {
+		u8 content[2] = { UNSPECIFIED };
+
+		ret = sysfs_match_string(enabled_status_text, buf);
+		if (ret < 0)
+			return ret;
+
+		content[1] = ret;
+
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_TOUCHPAD,
+				       GEN1_OP_SET, UNSPECIFIED, content,
+				       sizeof(content), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		drvdata->tp_en = content[1];
+
+		return count;
+	}
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -1347,7 +1382,7 @@ static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
 					       enum dev_type device_type)
 {
 	u8 dev_byte = device_type;
-	int ret;
+	int i, ret;
 
 	switch (index) {
 	case FEATURE_AUTO_SLEEP_TIME:
@@ -1372,11 +1407,27 @@ static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
 			return ret;
 
 		if (device_type == LEFT_CONTROLLER)
-			return sysfs_emit(buf, "%u\n",
-					  drvdata->imu_left_sensor_en);
+			i = drvdata->imu_left_sensor_en;
+		else
+			i = drvdata->imu_right_sensor_en;
 
-		return sysfs_emit(buf, "%u\n",
-				  drvdata->imu_right_sensor_en);
+		if (i >= ARRAY_SIZE(enabled_status_text))
+			return -EINVAL;
+
+		return sysfs_emit(buf, "%s\n", enabled_status_text[i]);
+	case FEATURE_TOUCHPAD_ENABLE:
+		dev_byte = LEFT_CONTROLLER;
+		ret = mcu_property_out(drvdata->hdev, 0, GEN1_TOUCHPAD,
+				       GEN1_OP_QUERY, UNSPECIFIED, &dev_byte,
+				       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		i = drvdata->tp_en;
+		if (i >= ARRAY_SIZE(enabled_status_text))
+			return -EINVAL;
+
+		return sysfs_emit(buf, "%s\n", enabled_status_text[i]);
 	default:
 		return -EOPNOTSUPP;
 	}
