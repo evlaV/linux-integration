@@ -153,7 +153,7 @@ enum go_support {
 	SUP_RGB,
 };
 
-#define SUPPORT_GEN1	BIT(SUP_VERSION)
+#define SUPPORT_GEN1	(BIT(SUP_VERSION) | BIT(SUP_AUTO_SLEEP))
 #define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
 			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
 			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
@@ -216,6 +216,8 @@ enum mcu_command_index {
  * carries a request id, so reply matching excludes the id field.
  */
 enum gen1_command_id {
+	GEN1_GET_AUTO_SLEEP_TIME	= 0x32,
+	GEN1_SET_AUTO_SLEEP_TIME	= 0x33,
 	GEN1_VERSION			= 0x79,
 };
 
@@ -568,10 +570,30 @@ static int hid_go_gen1_version_event(struct go_cfg_drvdata *drvdata,
 	return 0;
 }
 
+static int hid_go_gen1_auto_sleep_event(struct go_cfg_drvdata *drvdata,
+					struct command_report *cmd_rep)
+{
+	if (cmd_rep->id < 6)
+		return -EBADMSG;
+
+	switch (cmd_rep->device_type) {
+	case LEFT_CONTROLLER:
+		drvdata->gp_left_auto_sleep_time = cmd_rep->data[0];
+		return 0;
+	case RIGHT_CONTROLLER:
+		drvdata->gp_right_auto_sleep_time = cmd_rep->data[0];
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static int hid_go_gen1_raw_event(struct go_cfg_drvdata *drvdata,
 				 struct command_report *cmd_rep)
 {
 	switch (cmd_rep->cmd) {
+	case GEN1_GET_AUTO_SLEEP_TIME:
+		return hid_go_gen1_auto_sleep_event(drvdata, cmd_rep);
 	case GEN1_VERSION:
 		return hid_go_gen1_version_event(drvdata, cmd_rep);
 	default:
@@ -1205,6 +1227,67 @@ static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+static ssize_t hid_go_gen1_feature_status_store(struct go_cfg_drvdata *drvdata,
+						const char *buf, size_t count,
+						u8 index,
+						enum dev_type device_type)
+{
+	int ret;
+
+	switch (index) {
+	case FEATURE_AUTO_SLEEP_TIME: {
+		u8 content[2] = { device_type };
+
+		ret = kstrtou8(buf, 10, &content[1]);
+		if (ret)
+			return ret;
+
+		ret = mcu_property_out(drvdata->hdev, 0,
+				       GEN1_SET_AUTO_SLEEP_TIME, GEN1_OP_QUERY,
+				       UNSPECIFIED, content, sizeof(content),
+				       GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		if (device_type == LEFT_CONTROLLER)
+			drvdata->gp_left_auto_sleep_time = content[1];
+		else
+			drvdata->gp_right_auto_sleep_time = content[1];
+
+		return count;
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static ssize_t hid_go_gen1_feature_status_show(struct go_cfg_drvdata *drvdata,
+					       char *buf, u8 index,
+					       enum dev_type device_type)
+{
+	u8 dev_byte = device_type;
+	int ret;
+
+	switch (index) {
+	case FEATURE_AUTO_SLEEP_TIME:
+		ret = mcu_property_out(drvdata->hdev, 0,
+				       GEN1_GET_AUTO_SLEEP_TIME, GEN1_OP_QUERY,
+				       device_type, &dev_byte,
+				       sizeof(dev_byte), GO_GEN1_TIMEOUT_MS);
+		if (ret)
+			return ret;
+
+		if (device_type == LEFT_CONTROLLER)
+			return sysfs_emit(buf, "%u\n",
+					  drvdata->gp_left_auto_sleep_time);
+
+		return sysfs_emit(buf, "%u\n",
+				  drvdata->gp_right_auto_sleep_time);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
 static ssize_t feature_status_store(struct device *dev,
 				    struct device_attribute *attr,
 				    const char *buf, size_t count,
@@ -1233,6 +1316,16 @@ static ssize_t feature_status_store(struct device *dev,
 
 	if (!dev_registered)
 		return -ENODEV;
+
+	switch (drvdata->gen) {
+	case GO_GEN1:
+		return hid_go_gen1_feature_status_store(drvdata, buf, count,
+							index, device_type);
+	case GO_GEN2:
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	switch (index) {
 	case FEATURE_IMU_ENABLE:
@@ -1305,6 +1398,16 @@ static ssize_t feature_status_show(struct device *dev,
 
 	if (!dev_registered)
 		return -ENODEV;
+
+	switch (drvdata->gen) {
+	case GO_GEN1:
+		return hid_go_gen1_feature_status_show(drvdata, buf, index,
+						       device_type);
+	case GO_GEN2:
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	ret = mcu_property_out(drvdata->hdev, MCU_CONFIG_DATA,
 			       GET_FEATURE_STATUS, index, device_type, NULL, 0,
