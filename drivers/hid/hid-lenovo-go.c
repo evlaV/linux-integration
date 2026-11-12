@@ -66,6 +66,7 @@ struct hid_go_cmd {
 };
 
 struct go_cfg_drvdata {
+	unsigned long support;
 	struct delayed_work go_cfg_setup;
 	struct hid_go_cmd cmd;
 	bool gp_registered;
@@ -124,15 +125,40 @@ struct go_cfg_drvdata {
 	u32 tx_dongle_version_protocol;
 };
 
-static struct go_cfg_drvdata *drvdata;
+enum go_support {
+	SUP_VERSION,
+	SUP_HARDWARE,
+	SUP_AUTO_SLEEP,
+	SUP_IMU,
+	SUP_IMU_BYPASS,
+	SUP_DPI,
+	SUP_FPS_MODE_DPI,
+	SUP_FPS_SWITCH,
+	SUP_GAMEPAD_MODE,
+	SUP_OS_MODE,
+	SUP_RESET,
+	SUP_RUMBLE,
+	SUP_TOUCHPAD,
+	SUP_CAL_JOYSTICK,
+	SUP_CAL_GYRO,
+	SUP_CAL_TRIGGER,
+	SUP_RGB,
+};
+
+#define SUPPORT_GEN2	(BIT(SUP_VERSION) | BIT(SUP_HARDWARE) | \
+			 BIT(SUP_AUTO_SLEEP) | BIT(SUP_IMU) | \
+			 BIT(SUP_IMU_BYPASS) | BIT(SUP_DPI) | \
+			 BIT(SUP_FPS_MODE_DPI) | BIT(SUP_FPS_SWITCH) | \
+			 BIT(SUP_GAMEPAD_MODE) | BIT(SUP_OS_MODE) | \
+			 BIT(SUP_RESET) | BIT(SUP_RUMBLE) | \
+			 BIT(SUP_TOUCHPAD) | BIT(SUP_CAL_JOYSTICK) | \
+			 BIT(SUP_CAL_GYRO) | BIT(SUP_CAL_TRIGGER) | \
+			 BIT(SUP_RGB))
 
 struct go_cfg_attr {
 	u8 index;
-};
-
-struct go_cal_cfg_attr {
-	u8 index;
-	u8 cal_type;
+	unsigned long support;
+	struct device_attribute dev_attr;
 };
 
 struct command_report {
@@ -740,7 +766,6 @@ static int hid_go_gen2_device_status_event(struct go_cfg_drvdata *drvdata,
 
 	return 0;
 }
-
 static int hid_go_gen2_os_mode_cfg_event(struct go_cfg_drvdata *drvdata,
 					 struct command_report *cmd_rep)
 {
@@ -2018,422 +2043,462 @@ static int hid_go_brightness_set_blocking(struct led_classdev *led_cdev,
 	return rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
 }
 
-#define LEGO_DEVICE_ATTR_RW(_name, _attrname, _dtype, _rtype, _group)         \
-	static ssize_t _name##_store(struct device *dev,                      \
-				     struct device_attribute *attr,           \
-				     const char *buf, size_t count)           \
-	{                                                                     \
-		return _group##_store(dev, attr, buf, count, _name.index,     \
-				      _dtype);                                \
-	}                                                                     \
-	static ssize_t _name##_show(struct device *dev,                       \
-				    struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return _group##_show(dev, attr, buf, _name.index, _dtype);    \
-	}                                                                     \
-	static ssize_t _name##_##_rtype##_show(                               \
-		struct device *dev, struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return _group##_options(dev, attr, buf, _name.index);         \
-	}                                                                     \
-	static DEVICE_ATTR_RW_NAMED(_name, _attrname)
+#define GO_DEV_ATTR_RO(_name, _attrname)                        \
+	{ .attr = { .name = _attrname, .mode = 0444 },              \
+	  __DEVICE_ATTR_SHOW_STORE(_name##_show, NULL) }
 
-#define LEGO_DEVICE_ATTR_WO(_name, _attrname, _dtype, _group)             \
-	static ssize_t _name##_store(struct device *dev,                  \
-				     struct device_attribute *attr,       \
-				     const char *buf, size_t count)       \
-	{                                                                 \
-		return _group##_store(dev, attr, buf, count, _name.index, \
-				      _dtype);                            \
-	}                                                                 \
-	static DEVICE_ATTR_WO_NAMED(_name, _attrname)
+#define GO_DEV_ATTR_WO(_name, _attrname)                        \
+	{ .attr = { .name = _attrname, .mode = 0200 },              \
+	  __DEVICE_ATTR_SHOW_STORE(NULL, _name##_store) }
 
-#define LEGO_DEVICE_ATTR_RO(_name, _attrname, _dtype, _group)                 \
-	static ssize_t _name##_show(struct device *dev,                       \
-				    struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return _group##_show(dev, attr, buf, _name.index, _dtype);    \
-	}                                                                     \
-	static DEVICE_ATTR_RO_NAMED(_name, _attrname)
+#define GO_DEV_ATTR_RW(_name, _attrname)                        \
+	{ .attr = { .name = _attrname, .mode = 0644 },              \
+	  __DEVICE_ATTR_SHOW_STORE(_name##_show, _name##_store) }
 
-#define LEGO_CAL_DEVICE_ATTR(_name, _attrname, _scmd, _dtype, _rtype)         \
-	static ssize_t _name##_store(struct device *dev,                      \
-				     struct device_attribute *attr,           \
-				     const char *buf, size_t count)           \
-	{                                                                     \
-		return calibrate_config_store(dev, attr, buf, _name.index,    \
-					      _scmd, count, _dtype,           \
-					      _name.cal_type);                   \
-	}                                                                     \
-	static ssize_t _name##_##_rtype##_show(                               \
-		struct device *dev, struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return calibrate_config_options(dev, attr, buf);              \
-	}                                                                     \
-	static DEVICE_ATTR_WO_NAMED(_name, _attrname)
+/* Read-only attribute backed by an already defined _name##_show() */
+#define LEGO_ATTR_RO(_name, _attrname, _support)                 \
+	static struct go_cfg_attr _name = {                      \
+		.support = BIT(_support),                        \
+		.dev_attr = GO_DEV_ATTR_RO(_name, _attrname),    \
+	}
 
-#define LEGO_DEVICE_STATUS_ATTR(_name, _attrname, _scmd, _dtype)              \
-	static ssize_t _name##_show(struct device *dev,                       \
-				    struct device_attribute *attr, char *buf) \
-	{                                                                     \
-		return device_status_show(dev, attr, buf, _name.index, _scmd, \
-					  _dtype);                            \
-	}                                                                     \
-	static DEVICE_ATTR_RO_NAMED(_name, _attrname)
+/* Read-write attribute backed by existing _name##_show() and _name##_store() */
+#define LEGO_ATTR_RW(_name, _attrname, _support)                 \
+	static struct go_cfg_attr _name = {                      \
+		.support = BIT(_support),                        \
+		.dev_attr = GO_DEV_ATTR_RW(_name, _attrname),    \
+	}
+
+#define LEGO_DEVICE_ATTR_RW(_name, _attrname, _dtype, _rtype, _group,    \
+			    _index, _support)                            \
+	static ssize_t _name##_store(struct device *dev,                 \
+				     struct device_attribute *attr,      \
+				     const char *buf, size_t count)      \
+	{                                                                \
+		return _group##_store(dev, attr, buf, count, _index,     \
+				      _dtype);                           \
+	}                                                                \
+	static ssize_t _name##_show(struct device *dev,                  \
+				    struct device_attribute *attr,       \
+				    char *buf)                           \
+	{                                                                \
+		return _group##_show(dev, attr, buf, _index, _dtype);    \
+	}                                                                \
+	static ssize_t _name##_##_rtype##_show(                          \
+		struct device *dev, struct device_attribute *attr,       \
+		char *buf)                                               \
+	{                                                                \
+		return _group##_options(dev, attr, buf, _index);         \
+	}                                                                \
+	static struct go_cfg_attr _name = {                              \
+		.index = _index,                                         \
+		.support = BIT(_support),                                \
+		.dev_attr = GO_DEV_ATTR_RW(_name, _attrname),            \
+	}
+
+#define LEGO_DEVICE_ATTR_WO(_name, _attrname, _dtype, _group, _index,    \
+			    _support)                                    \
+	static ssize_t _name##_store(struct device *dev,                 \
+				     struct device_attribute *attr,      \
+				     const char *buf, size_t count)      \
+	{                                                                \
+		return _group##_store(dev, attr, buf, count, _index,     \
+				      _dtype);                           \
+	}                                                                \
+	static struct go_cfg_attr _name = {                              \
+		.index = _index,                                         \
+		.support = BIT(_support),                                \
+		.dev_attr = GO_DEV_ATTR_WO(_name, _attrname),            \
+	}
+
+#define LEGO_DEVICE_ATTR_RO(_name, _attrname, _dtype, _group, _index,    \
+			    _support)                                    \
+	static ssize_t _name##_show(struct device *dev,                  \
+				    struct device_attribute *attr,       \
+				    char *buf)                           \
+	{                                                                \
+		return _group##_show(dev, attr, buf, _index, _dtype);    \
+	}                                                                \
+	static struct go_cfg_attr _name = {                              \
+		.index = _index,                                         \
+		.support = BIT(_support),                                \
+		.dev_attr = GO_DEV_ATTR_RO(_name, _attrname),            \
+	}
+
+#define LEGO_CAL_DEVICE_ATTR(_name, _attrname, _index, _scmd, _caltype,    \
+			     _dtype, _rtype, _support)                     \
+	static ssize_t _name##_store(struct device *dev,                   \
+				     struct device_attribute *attr,        \
+				     const char *buf, size_t count)        \
+	{                                                                  \
+		return calibrate_config_store(dev, attr, buf, _index,      \
+					      _scmd, count, _dtype,        \
+					      _caltype);                   \
+	}                                                                  \
+	static ssize_t _name##_##_rtype##_show(                            \
+		struct device *dev, struct device_attribute *attr,         \
+		char *buf)                                                 \
+	{                                                                  \
+		return calibrate_config_options(dev, attr, buf);           \
+	}                                                                  \
+	static struct go_cfg_attr _name = {                                \
+		.index = _index,                                           \
+		.support = BIT(_support),                                  \
+		.dev_attr = GO_DEV_ATTR_WO(_name, _attrname),              \
+	}
+
+#define LEGO_DEVICE_STATUS_ATTR(_name, _attrname, _scmd, _dtype, _index,    \
+				_support)                                   \
+	static ssize_t _name##_show(struct device *dev,                     \
+				    struct device_attribute *attr,          \
+				    char *buf)                              \
+	{                                                                   \
+		return device_status_show(dev, attr, buf, _index, _scmd,    \
+					  _dtype);                          \
+	}                                                                   \
+	static struct go_cfg_attr _name = {                                 \
+		.index = _index,                                            \
+		.support = BIT(_support),                                   \
+		.dev_attr = GO_DEV_ATTR_RO(_name, _attrname),               \
+	}
 
 /* Gamepad - MCU */
-static struct go_cfg_attr version_product_mcu = { PRODUCT_VERSION };
-LEGO_DEVICE_ATTR_RO(version_product_mcu, "product_version", USB_MCU, version);
+LEGO_DEVICE_ATTR_RO(version_product_mcu, "product_version", USB_MCU, version, PRODUCT_VERSION,
+		   SUP_VERSION);
 
-static struct go_cfg_attr version_protocol_mcu = { PROTOCOL_VERSION };
-LEGO_DEVICE_ATTR_RO(version_protocol_mcu, "protocol_version", USB_MCU, version);
+LEGO_DEVICE_ATTR_RO(version_protocol_mcu, "protocol_version", USB_MCU, version, PROTOCOL_VERSION,
+		   SUP_VERSION);
 
-static struct go_cfg_attr version_firmware_mcu = { FIRMWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_firmware_mcu, "firmware_version", USB_MCU, version);
+LEGO_DEVICE_ATTR_RO(version_firmware_mcu, "firmware_version", USB_MCU, version, FIRMWARE_VERSION,
+		   SUP_VERSION);
 
-static struct go_cfg_attr version_hardware_mcu = { HARDWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_hardware_mcu, "hardware_version", USB_MCU, version);
+LEGO_DEVICE_ATTR_RO(version_hardware_mcu, "hardware_version", USB_MCU, version, HARDWARE_VERSION,
+		   SUP_HARDWARE);
 
-static struct go_cfg_attr version_gen_mcu = { HARDWARE_GENERATION };
-LEGO_DEVICE_ATTR_RO(version_gen_mcu, "hardware_generation", USB_MCU, version);
+LEGO_DEVICE_ATTR_RO(version_gen_mcu, "hardware_generation", USB_MCU, version, HARDWARE_GENERATION,
+		   SUP_HARDWARE);
 
-static struct go_cfg_attr fps_switch_status = { FEATURE_FPS_SWITCH_STATUS };
-LEGO_DEVICE_ATTR_RO(fps_switch_status, "fps_switch_status", UNSPECIFIED,
-		    feature_status);
+LEGO_DEVICE_ATTR_RO(fps_switch_status, "fps_switch_status", UNSPECIFIED, feature_status,
+		    FEATURE_FPS_SWITCH_STATUS, SUP_FPS_SWITCH);
 
-static struct go_cfg_attr gamepad_mode = { FEATURE_GAMEPAD_MODE };
-LEGO_DEVICE_ATTR_RW(gamepad_mode, "mode", UNSPECIFIED, index, feature_status);
-static DEVICE_ATTR_RO_NAMED(gamepad_mode_index, "mode_index");
+LEGO_DEVICE_ATTR_RW(gamepad_mode, "mode", UNSPECIFIED, index, feature_status, FEATURE_GAMEPAD_MODE,
+		   SUP_GAMEPAD_MODE);
+LEGO_ATTR_RO(gamepad_mode_index, "mode_index", SUP_GAMEPAD_MODE);
 
-static struct go_cfg_attr reset_mcu = { FEATURE_RESET_GAMEPAD };
-LEGO_DEVICE_ATTR_WO(reset_mcu, "reset_mcu", USB_MCU, feature_status);
+LEGO_DEVICE_ATTR_WO(reset_mcu, "reset_mcu", USB_MCU, feature_status, FEATURE_RESET_GAMEPAD,
+		   SUP_RESET);
 
-static struct go_cfg_attr gamepad_rumble_intensity = { MOTOR_INTENSITY };
-LEGO_DEVICE_ATTR_RW(gamepad_rumble_intensity, "rumble_intensity", UNSPECIFIED,
-		    index, motor_config);
-static DEVICE_ATTR_RO_NAMED(gamepad_rumble_intensity_index,
-			    "rumble_intensity_index");
+LEGO_DEVICE_ATTR_RW(gamepad_rumble_intensity, "rumble_intensity", UNSPECIFIED, index, motor_config,
+		    MOTOR_INTENSITY, SUP_RUMBLE);
+LEGO_ATTR_RO(gamepad_rumble_intensity_index, "rumble_intensity_index",
+		   SUP_RUMBLE);
 
-static DEVICE_ATTR_RW(fps_mode_dpi);
-static DEVICE_ATTR_RO(fps_mode_dpi_index);
+LEGO_ATTR_RW(fps_mode_dpi, "fps_mode_dpi", SUP_FPS_MODE_DPI);
+LEGO_ATTR_RO(fps_mode_dpi_index, "fps_mode_dpi_index", SUP_FPS_MODE_DPI);
 
-static DEVICE_ATTR_RW(os_mode);
-static DEVICE_ATTR_RO(os_mode_index);
+LEGO_ATTR_RW(os_mode, "os_mode", SUP_OS_MODE);
+LEGO_ATTR_RO(os_mode_index, "os_mode_index", SUP_OS_MODE);
 
 static struct attribute *mcu_attrs[] = {
-	&dev_attr_fps_mode_dpi.attr,
-	&dev_attr_fps_mode_dpi_index.attr,
-	&dev_attr_fps_switch_status.attr,
-	&dev_attr_gamepad_mode.attr,
-	&dev_attr_gamepad_mode_index.attr,
-	&dev_attr_gamepad_rumble_intensity.attr,
-	&dev_attr_gamepad_rumble_intensity_index.attr,
-	&dev_attr_os_mode.attr,
-	&dev_attr_os_mode_index.attr,
-	&dev_attr_reset_mcu.attr,
-	&dev_attr_version_firmware_mcu.attr,
-	&dev_attr_version_gen_mcu.attr,
-	&dev_attr_version_hardware_mcu.attr,
-	&dev_attr_version_product_mcu.attr,
-	&dev_attr_version_protocol_mcu.attr,
+	&fps_mode_dpi.dev_attr.attr,
+	&fps_mode_dpi_index.dev_attr.attr,
+	&fps_switch_status.dev_attr.attr,
+	&gamepad_mode.dev_attr.attr,
+	&gamepad_mode_index.dev_attr.attr,
+	&gamepad_rumble_intensity.dev_attr.attr,
+	&gamepad_rumble_intensity_index.dev_attr.attr,
+	&os_mode.dev_attr.attr,
+	&os_mode_index.dev_attr.attr,
+	&reset_mcu.dev_attr.attr,
+	&version_firmware_mcu.dev_attr.attr,
+	&version_gen_mcu.dev_attr.attr,
+	&version_hardware_mcu.dev_attr.attr,
+	&version_product_mcu.dev_attr.attr,
+	&version_protocol_mcu.dev_attr.attr,
 	NULL,
 };
 
+static umode_t hid_go_attr_is_visible(struct kobject *kobj,
+				      struct attribute *attr, int idx)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct go_cfg_drvdata *drvdata = hid_get_drvdata(to_hid_device(dev));
+	const struct device_attribute *dattr;
+	const struct go_cfg_attr *gattr;
+
+	dattr = container_of_const(attr, struct device_attribute, attr);
+	gattr = container_of_const(dattr, struct go_cfg_attr, dev_attr);
+
+	if (gattr->support & drvdata->support)
+		return attr->mode;
+
+	return 0;
+}
+
 static const struct attribute_group mcu_attr_group = {
 	.attrs = mcu_attrs,
+	.is_visible = hid_go_attr_is_visible,
 };
 
 /* Gamepad - TX Dongle */
-static struct go_cfg_attr version_product_tx_dongle = { PRODUCT_VERSION };
-LEGO_DEVICE_ATTR_RO(version_product_tx_dongle, "product_version", TX_DONGLE, version);
+LEGO_DEVICE_ATTR_RO(version_product_tx_dongle, "product_version", TX_DONGLE, version,
+		    PRODUCT_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_protocol_tx_dongle = { PROTOCOL_VERSION };
-LEGO_DEVICE_ATTR_RO(version_protocol_tx_dongle, "protocol_version", TX_DONGLE, version);
+LEGO_DEVICE_ATTR_RO(version_protocol_tx_dongle, "protocol_version", TX_DONGLE, version,
+		    PROTOCOL_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_firmware_tx_dongle = { FIRMWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_firmware_tx_dongle, "firmware_version", TX_DONGLE, version);
+LEGO_DEVICE_ATTR_RO(version_firmware_tx_dongle, "firmware_version", TX_DONGLE, version,
+		    FIRMWARE_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_hardware_tx_dongle = { HARDWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_hardware_tx_dongle, "hardware_version", TX_DONGLE, version);
+LEGO_DEVICE_ATTR_RO(version_hardware_tx_dongle, "hardware_version", TX_DONGLE, version,
+		    HARDWARE_VERSION, SUP_HARDWARE);
 
-static struct go_cfg_attr version_gen_tx_dongle = { HARDWARE_GENERATION };
-LEGO_DEVICE_ATTR_RO(version_gen_tx_dongle, "hardware_generation", TX_DONGLE, version);
+LEGO_DEVICE_ATTR_RO(version_gen_tx_dongle, "hardware_generation", TX_DONGLE, version,
+		    HARDWARE_GENERATION, SUP_HARDWARE);
 
-static struct go_cfg_attr reset_tx_dongle = { FEATURE_RESET_GAMEPAD };
-LEGO_DEVICE_ATTR_RO(reset_tx_dongle, "reset", TX_DONGLE, feature_status);
+LEGO_DEVICE_ATTR_RO(reset_tx_dongle, "reset", TX_DONGLE, feature_status, FEATURE_RESET_GAMEPAD,
+		   SUP_RESET);
 
 static struct attribute *tx_dongle_attrs[] = {
-	&dev_attr_reset_tx_dongle.attr,
-	&dev_attr_version_hardware_tx_dongle.attr,
-	&dev_attr_version_firmware_tx_dongle.attr,
-	&dev_attr_version_gen_tx_dongle.attr,
-	&dev_attr_version_product_tx_dongle.attr,
-	&dev_attr_version_protocol_tx_dongle.attr,
+	&reset_tx_dongle.dev_attr.attr,
+	&version_hardware_tx_dongle.dev_attr.attr,
+	&version_firmware_tx_dongle.dev_attr.attr,
+	&version_gen_tx_dongle.dev_attr.attr,
+	&version_product_tx_dongle.dev_attr.attr,
+	&version_protocol_tx_dongle.dev_attr.attr,
 	NULL,
 };
 
 static const struct attribute_group tx_dongle_attr_group = {
 	.name = "tx_dongle",
 	.attrs = tx_dongle_attrs,
+	.is_visible = hid_go_attr_is_visible,
 };
 
 /* Gamepad - Left */
-static struct go_cfg_attr version_product_left = { PRODUCT_VERSION };
-LEGO_DEVICE_ATTR_RO(version_product_left, "product_version", LEFT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_product_left, "product_version", LEFT_CONTROLLER, version,
+		    PRODUCT_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_protocol_left = { PROTOCOL_VERSION };
-LEGO_DEVICE_ATTR_RO(version_protocol_left, "protocol_version", LEFT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_protocol_left, "protocol_version", LEFT_CONTROLLER, version,
+		    PROTOCOL_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_firmware_left = { FIRMWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_firmware_left, "firmware_version", LEFT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_firmware_left, "firmware_version", LEFT_CONTROLLER, version,
+		    FIRMWARE_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_hardware_left = { HARDWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_hardware_left, "hardware_version", LEFT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_hardware_left, "hardware_version", LEFT_CONTROLLER, version,
+		    HARDWARE_VERSION, SUP_HARDWARE);
 
-static struct go_cfg_attr version_gen_left = { HARDWARE_GENERATION };
-LEGO_DEVICE_ATTR_RO(version_gen_left, "hardware_generation", LEFT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_gen_left, "hardware_generation", LEFT_CONTROLLER, version,
+		    HARDWARE_GENERATION, SUP_HARDWARE);
 
-static struct go_cfg_attr auto_sleep_time_left = { FEATURE_AUTO_SLEEP_TIME };
-LEGO_DEVICE_ATTR_RW(auto_sleep_time_left, "auto_sleep_time", LEFT_CONTROLLER,
-		    range, feature_status);
-static DEVICE_ATTR_RO_NAMED(auto_sleep_time_left_range,
-			    "auto_sleep_time_range");
+LEGO_DEVICE_ATTR_RW(auto_sleep_time_left, "auto_sleep_time", LEFT_CONTROLLER, range, feature_status,
+		    FEATURE_AUTO_SLEEP_TIME, SUP_AUTO_SLEEP);
+LEGO_ATTR_RO(auto_sleep_time_left_range, "auto_sleep_time_range",
+		   SUP_AUTO_SLEEP);
 
-static struct go_cfg_attr imu_bypass_left = { FEATURE_IMU_BYPASS };
-LEGO_DEVICE_ATTR_RW(imu_bypass_left, "imu_bypass_enabled", LEFT_CONTROLLER,
-		    index, feature_status);
-static DEVICE_ATTR_RO_NAMED(imu_bypass_left_index, "imu_bypass_enabled_index");
+LEGO_DEVICE_ATTR_RW(imu_bypass_left, "imu_bypass_enabled", LEFT_CONTROLLER, index, feature_status,
+		    FEATURE_IMU_BYPASS, SUP_IMU_BYPASS);
+LEGO_ATTR_RO(imu_bypass_left_index, "imu_bypass_enabled_index", SUP_IMU_BYPASS);
 
-static struct go_cfg_attr imu_enabled_left = { FEATURE_IMU_ENABLE };
-LEGO_DEVICE_ATTR_RW(imu_enabled_left, "imu_enabled", LEFT_CONTROLLER, index,
-		    feature_status);
-static DEVICE_ATTR_RO_NAMED(imu_enabled_left_index, "imu_enabled_index");
+LEGO_DEVICE_ATTR_RW(imu_enabled_left, "imu_enabled", LEFT_CONTROLLER, index, feature_status,
+		    FEATURE_IMU_ENABLE, SUP_IMU);
+LEGO_ATTR_RO(imu_enabled_left_index, "imu_enabled_index", SUP_IMU);
 
-static struct go_cfg_attr reset_left = { FEATURE_RESET_GAMEPAD };
-LEGO_DEVICE_ATTR_WO(reset_left, "reset", LEFT_CONTROLLER, feature_status);
+LEGO_DEVICE_ATTR_WO(reset_left, "reset", LEFT_CONTROLLER, feature_status, FEATURE_RESET_GAMEPAD,
+		   SUP_RESET);
 
-static struct go_cfg_attr rumble_mode_left = { RUMBLE_MODE };
-LEGO_DEVICE_ATTR_RW(rumble_mode_left, "rumble_mode", LEFT_CONTROLLER, index,
-		    motor_config);
-static DEVICE_ATTR_RO_NAMED(rumble_mode_left_index, "rumble_mode_index");
+LEGO_DEVICE_ATTR_RW(rumble_mode_left, "rumble_mode", LEFT_CONTROLLER, index, motor_config,
+		    RUMBLE_MODE, SUP_RUMBLE);
+LEGO_ATTR_RO(rumble_mode_left_index, "rumble_mode_index", SUP_RUMBLE);
 
-static struct go_cfg_attr rumble_notification_left = { VIBRATION_NOTIFY_ENABLE };
-LEGO_DEVICE_ATTR_RW(rumble_notification_left, "rumble_notification",
-		    LEFT_CONTROLLER, index, motor_config);
-static DEVICE_ATTR_RO_NAMED(rumble_notification_left_index,
-			    "rumble_notification_index");
+LEGO_DEVICE_ATTR_RW(rumble_notification_left, "rumble_notification", LEFT_CONTROLLER, index,
+		    motor_config, VIBRATION_NOTIFY_ENABLE, SUP_RUMBLE);
+LEGO_ATTR_RO(rumble_notification_left_index, "rumble_notification_index",
+		   SUP_RUMBLE);
 
-static struct go_cal_cfg_attr cal_trigg_left = {
-	SET_TRIGGER_CFG, CALDEV_TRIGGER
-};
-LEGO_CAL_DEVICE_ATTR(cal_trigg_left, "calibrate_trigger", TRIGGER_CALIBRATE,
-		     LEFT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_trigg_left_index, "calibrate_trigger_index");
+LEGO_CAL_DEVICE_ATTR(cal_trigg_left, "calibrate_trigger", SET_TRIGGER_CFG, TRIGGER_CALIBRATE,
+		     CALDEV_TRIGGER, LEFT_CONTROLLER, index, SUP_CAL_TRIGGER);
+LEGO_ATTR_RO(cal_trigg_left_index, "calibrate_trigger_index", SUP_CAL_TRIGGER);
 
-static struct go_cal_cfg_attr cal_joy_left = {
-	SET_JOYSTICK_CFG, CALDEV_JOYSTICK
-};
-LEGO_CAL_DEVICE_ATTR(cal_joy_left, "calibrate_joystick", JOYSTICK_CALIBRATE,
-		     LEFT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_joy_left_index, "calibrate_joystick_index");
+LEGO_CAL_DEVICE_ATTR(cal_joy_left, "calibrate_joystick", SET_JOYSTICK_CFG, JOYSTICK_CALIBRATE,
+		     CALDEV_JOYSTICK, LEFT_CONTROLLER, index, SUP_CAL_JOYSTICK);
+LEGO_ATTR_RO(cal_joy_left_index, "calibrate_joystick_index", SUP_CAL_JOYSTICK);
 
-static struct go_cal_cfg_attr cal_gyro_left = {
-	SET_GYRO_CFG, CALDEV_GYROSCOPE
-};
-LEGO_CAL_DEVICE_ATTR(cal_gyro_left, "calibrate_gyro", GYRO_CALIBRATE,
-		     LEFT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_gyro_left_index, "calibrate_gyro_index");
+LEGO_CAL_DEVICE_ATTR(cal_gyro_left, "calibrate_gyro", SET_GYRO_CFG, GYRO_CALIBRATE,
+		     CALDEV_GYROSCOPE, LEFT_CONTROLLER, index, SUP_CAL_GYRO);
+LEGO_ATTR_RO(cal_gyro_left_index, "calibrate_gyro_index", SUP_CAL_GYRO);
 
-static struct go_cfg_attr cal_trigg_left_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_trigg_left_status, "calibrate_trigger_status",
-			LEFT_CONTROLLER, CALDEV_TRIGGER);
+LEGO_DEVICE_STATUS_ATTR(cal_trigg_left_status, "calibrate_trigger_status", LEFT_CONTROLLER,
+			CALDEV_TRIGGER, GET_CAL_STATUS, SUP_CAL_TRIGGER);
 
-static struct go_cfg_attr cal_joy_left_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_joy_left_status, "calibrate_joystick_status",
-			LEFT_CONTROLLER, CALDEV_JOYSTICK);
+LEGO_DEVICE_STATUS_ATTR(cal_joy_left_status, "calibrate_joystick_status", LEFT_CONTROLLER,
+			CALDEV_JOYSTICK, GET_CAL_STATUS, SUP_CAL_JOYSTICK);
 
-static struct go_cfg_attr cal_gyro_left_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_gyro_left_status, "calibrate_gyro_status",
-			LEFT_CONTROLLER, CALDEV_GYROSCOPE);
+LEGO_DEVICE_STATUS_ATTR(cal_gyro_left_status, "calibrate_gyro_status", LEFT_CONTROLLER,
+			CALDEV_GYROSCOPE, GET_CAL_STATUS, SUP_CAL_GYRO);
 
 static struct attribute *left_gamepad_attrs[] = {
-	&dev_attr_auto_sleep_time_left.attr,
-	&dev_attr_auto_sleep_time_left_range.attr,
-	&dev_attr_cal_gyro_left.attr,
-	&dev_attr_cal_gyro_left_index.attr,
-	&dev_attr_cal_gyro_left_status.attr,
-	&dev_attr_cal_joy_left.attr,
-	&dev_attr_cal_joy_left_index.attr,
-	&dev_attr_cal_joy_left_status.attr,
-	&dev_attr_cal_trigg_left.attr,
-	&dev_attr_cal_trigg_left_index.attr,
-	&dev_attr_cal_trigg_left_status.attr,
-	&dev_attr_imu_bypass_left.attr,
-	&dev_attr_imu_bypass_left_index.attr,
-	&dev_attr_imu_enabled_left.attr,
-	&dev_attr_imu_enabled_left_index.attr,
-	&dev_attr_reset_left.attr,
-	&dev_attr_rumble_mode_left.attr,
-	&dev_attr_rumble_mode_left_index.attr,
-	&dev_attr_rumble_notification_left.attr,
-	&dev_attr_rumble_notification_left_index.attr,
-	&dev_attr_version_hardware_left.attr,
-	&dev_attr_version_firmware_left.attr,
-	&dev_attr_version_gen_left.attr,
-	&dev_attr_version_product_left.attr,
-	&dev_attr_version_protocol_left.attr,
+	&auto_sleep_time_left.dev_attr.attr,
+	&auto_sleep_time_left_range.dev_attr.attr,
+	&cal_gyro_left.dev_attr.attr,
+	&cal_gyro_left_index.dev_attr.attr,
+	&cal_gyro_left_status.dev_attr.attr,
+	&cal_joy_left.dev_attr.attr,
+	&cal_joy_left_index.dev_attr.attr,
+	&cal_joy_left_status.dev_attr.attr,
+	&cal_trigg_left.dev_attr.attr,
+	&cal_trigg_left_index.dev_attr.attr,
+	&cal_trigg_left_status.dev_attr.attr,
+	&imu_bypass_left.dev_attr.attr,
+	&imu_bypass_left_index.dev_attr.attr,
+	&imu_enabled_left.dev_attr.attr,
+	&imu_enabled_left_index.dev_attr.attr,
+	&reset_left.dev_attr.attr,
+	&rumble_mode_left.dev_attr.attr,
+	&rumble_mode_left_index.dev_attr.attr,
+	&rumble_notification_left.dev_attr.attr,
+	&rumble_notification_left_index.dev_attr.attr,
+	&version_hardware_left.dev_attr.attr,
+	&version_firmware_left.dev_attr.attr,
+	&version_gen_left.dev_attr.attr,
+	&version_product_left.dev_attr.attr,
+	&version_protocol_left.dev_attr.attr,
 	NULL,
 };
 
 static const struct attribute_group left_gamepad_attr_group = {
 	.name = "left_handle",
 	.attrs = left_gamepad_attrs,
+	.is_visible = hid_go_attr_is_visible,
 };
 
 /* Gamepad - Right */
-static struct go_cfg_attr version_product_right = { PRODUCT_VERSION };
-LEGO_DEVICE_ATTR_RO(version_product_right, "product_version", RIGHT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_product_right, "product_version", RIGHT_CONTROLLER, version,
+		    PRODUCT_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_protocol_right = { PROTOCOL_VERSION };
-LEGO_DEVICE_ATTR_RO(version_protocol_right, "protocol_version", RIGHT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_protocol_right, "protocol_version", RIGHT_CONTROLLER, version,
+		    PROTOCOL_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_firmware_right = { FIRMWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_firmware_right, "firmware_version", RIGHT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_firmware_right, "firmware_version", RIGHT_CONTROLLER, version,
+		    FIRMWARE_VERSION, SUP_VERSION);
 
-static struct go_cfg_attr version_hardware_right = { HARDWARE_VERSION };
-LEGO_DEVICE_ATTR_RO(version_hardware_right, "hardware_version", RIGHT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_hardware_right, "hardware_version", RIGHT_CONTROLLER, version,
+		    HARDWARE_VERSION, SUP_HARDWARE);
 
-static struct go_cfg_attr version_gen_right = { HARDWARE_GENERATION };
-LEGO_DEVICE_ATTR_RO(version_gen_right, "hardware_generation", RIGHT_CONTROLLER, version);
+LEGO_DEVICE_ATTR_RO(version_gen_right, "hardware_generation", RIGHT_CONTROLLER, version,
+		    HARDWARE_GENERATION, SUP_HARDWARE);
 
-static struct go_cfg_attr auto_sleep_time_right = { FEATURE_AUTO_SLEEP_TIME };
-LEGO_DEVICE_ATTR_RW(auto_sleep_time_right, "auto_sleep_time", RIGHT_CONTROLLER,
-		    range, feature_status);
-static DEVICE_ATTR_RO_NAMED(auto_sleep_time_right_range,
-			    "auto_sleep_time_range");
+LEGO_DEVICE_ATTR_RW(auto_sleep_time_right, "auto_sleep_time", RIGHT_CONTROLLER, range,
+		    feature_status, FEATURE_AUTO_SLEEP_TIME, SUP_AUTO_SLEEP);
+LEGO_ATTR_RO(auto_sleep_time_right_range, "auto_sleep_time_range",
+		   SUP_AUTO_SLEEP);
 
-static struct go_cfg_attr imu_bypass_right = { FEATURE_IMU_BYPASS };
-LEGO_DEVICE_ATTR_RW(imu_bypass_right, "imu_bypass_enabled", RIGHT_CONTROLLER,
-		    index, feature_status);
-static DEVICE_ATTR_RO_NAMED(imu_bypass_right_index, "imu_bypass_enabled_index");
+LEGO_DEVICE_ATTR_RW(imu_bypass_right, "imu_bypass_enabled", RIGHT_CONTROLLER, index, feature_status,
+		    FEATURE_IMU_BYPASS, SUP_IMU_BYPASS);
+LEGO_ATTR_RO(imu_bypass_right_index, "imu_bypass_enabled_index",
+		   SUP_IMU_BYPASS);
 
-static struct go_cfg_attr imu_enabled_right = { FEATURE_IMU_ENABLE };
-LEGO_DEVICE_ATTR_RW(imu_enabled_right, "imu_enabled", RIGHT_CONTROLLER, index,
-		    feature_status);
-static DEVICE_ATTR_RO_NAMED(imu_enabled_right_index, "imu_enabled_index");
+LEGO_DEVICE_ATTR_RW(imu_enabled_right, "imu_enabled", RIGHT_CONTROLLER, index, feature_status,
+		    FEATURE_IMU_ENABLE, SUP_IMU);
+LEGO_ATTR_RO(imu_enabled_right_index, "imu_enabled_index", SUP_IMU);
 
-static struct go_cfg_attr reset_right = { FEATURE_RESET_GAMEPAD };
-LEGO_DEVICE_ATTR_WO(reset_right, "reset", RIGHT_CONTROLLER, feature_status);
+LEGO_DEVICE_ATTR_WO(reset_right, "reset", RIGHT_CONTROLLER, feature_status, FEATURE_RESET_GAMEPAD,
+		   SUP_RESET);
 
-static struct go_cfg_attr rumble_mode_right = { RUMBLE_MODE };
-LEGO_DEVICE_ATTR_RW(rumble_mode_right, "rumble_mode", RIGHT_CONTROLLER, index,
-		    motor_config);
-static DEVICE_ATTR_RO_NAMED(rumble_mode_right_index, "rumble_mode_index");
+LEGO_DEVICE_ATTR_RW(rumble_mode_right, "rumble_mode", RIGHT_CONTROLLER, index, motor_config,
+		    RUMBLE_MODE, SUP_RUMBLE);
+LEGO_ATTR_RO(rumble_mode_right_index, "rumble_mode_index", SUP_RUMBLE);
 
-static struct go_cfg_attr rumble_notification_right = { VIBRATION_NOTIFY_ENABLE };
-LEGO_DEVICE_ATTR_RW(rumble_notification_right, "rumble_notification",
-		    RIGHT_CONTROLLER, index, motor_config);
-static DEVICE_ATTR_RO_NAMED(rumble_notification_right_index,
-			    "rumble_notification_index");
+LEGO_DEVICE_ATTR_RW(rumble_notification_right, "rumble_notification", RIGHT_CONTROLLER, index,
+		    motor_config, VIBRATION_NOTIFY_ENABLE, SUP_RUMBLE);
+LEGO_ATTR_RO(rumble_notification_right_index, "rumble_notification_index",
+		   SUP_RUMBLE);
 
-static struct go_cal_cfg_attr cal_trigg_right = {
-	SET_TRIGGER_CFG, CALDEV_TRIGGER
-};
-LEGO_CAL_DEVICE_ATTR(cal_trigg_right, "calibrate_trigger", TRIGGER_CALIBRATE,
-		     RIGHT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_trigg_right_index, "calibrate_trigger_index");
+LEGO_CAL_DEVICE_ATTR(cal_trigg_right, "calibrate_trigger", SET_TRIGGER_CFG, TRIGGER_CALIBRATE,
+		     CALDEV_TRIGGER, RIGHT_CONTROLLER, index, SUP_CAL_TRIGGER);
+LEGO_ATTR_RO(cal_trigg_right_index, "calibrate_trigger_index", SUP_CAL_TRIGGER);
 
-static struct go_cal_cfg_attr cal_joy_right = {
-	SET_JOYSTICK_CFG, CALDEV_JOYSTICK
-};
-LEGO_CAL_DEVICE_ATTR(cal_joy_right, "calibrate_joystick", JOYSTICK_CALIBRATE,
-		     RIGHT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_joy_right_index, "calibrate_joystick_index");
+LEGO_CAL_DEVICE_ATTR(cal_joy_right, "calibrate_joystick", SET_JOYSTICK_CFG, JOYSTICK_CALIBRATE,
+		     CALDEV_JOYSTICK, RIGHT_CONTROLLER, index, SUP_CAL_JOYSTICK);
+LEGO_ATTR_RO(cal_joy_right_index, "calibrate_joystick_index", SUP_CAL_JOYSTICK);
 
-static struct go_cal_cfg_attr cal_gyro_right = {
-	SET_GYRO_CFG, CALDEV_GYROSCOPE
-};
-LEGO_CAL_DEVICE_ATTR(cal_gyro_right, "calibrate_gyro", GYRO_CALIBRATE,
-		     RIGHT_CONTROLLER, index);
-static DEVICE_ATTR_RO_NAMED(cal_gyro_right_index, "calibrate_gyro_index");
+LEGO_CAL_DEVICE_ATTR(cal_gyro_right, "calibrate_gyro", SET_GYRO_CFG, GYRO_CALIBRATE,
+		     CALDEV_GYROSCOPE, RIGHT_CONTROLLER, index, SUP_CAL_GYRO);
+LEGO_ATTR_RO(cal_gyro_right_index, "calibrate_gyro_index", SUP_CAL_GYRO);
 
-static struct go_cfg_attr cal_trigg_right_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_trigg_right_status, "calibrate_trigger_status",
-			RIGHT_CONTROLLER, CALDEV_TRIGGER);
+LEGO_DEVICE_STATUS_ATTR(cal_trigg_right_status, "calibrate_trigger_status", RIGHT_CONTROLLER,
+			CALDEV_TRIGGER, GET_CAL_STATUS, SUP_CAL_TRIGGER);
 
-static struct go_cfg_attr cal_joy_right_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_joy_right_status, "calibrate_joystick_status",
-			RIGHT_CONTROLLER, CALDEV_JOYSTICK);
+LEGO_DEVICE_STATUS_ATTR(cal_joy_right_status, "calibrate_joystick_status", RIGHT_CONTROLLER,
+			CALDEV_JOYSTICK, GET_CAL_STATUS, SUP_CAL_JOYSTICK);
 
-static struct go_cfg_attr cal_gyro_right_status = { GET_CAL_STATUS };
-LEGO_DEVICE_STATUS_ATTR(cal_gyro_right_status, "calibrate_gyro_status",
-			RIGHT_CONTROLLER, CALDEV_GYROSCOPE);
+LEGO_DEVICE_STATUS_ATTR(cal_gyro_right_status, "calibrate_gyro_status", RIGHT_CONTROLLER,
+			CALDEV_GYROSCOPE, GET_CAL_STATUS, SUP_CAL_GYRO);
 
 static struct attribute *right_gamepad_attrs[] = {
-	&dev_attr_auto_sleep_time_right.attr,
-	&dev_attr_auto_sleep_time_right_range.attr,
-	&dev_attr_cal_gyro_right.attr,
-	&dev_attr_cal_gyro_right_index.attr,
-	&dev_attr_cal_gyro_right_status.attr,
-	&dev_attr_cal_joy_right.attr,
-	&dev_attr_cal_joy_right_index.attr,
-	&dev_attr_cal_joy_right_status.attr,
-	&dev_attr_cal_trigg_right.attr,
-	&dev_attr_cal_trigg_right_index.attr,
-	&dev_attr_cal_trigg_right_status.attr,
-	&dev_attr_imu_bypass_right.attr,
-	&dev_attr_imu_bypass_right_index.attr,
-	&dev_attr_imu_enabled_right.attr,
-	&dev_attr_imu_enabled_right_index.attr,
-	&dev_attr_reset_right.attr,
-	&dev_attr_rumble_mode_right.attr,
-	&dev_attr_rumble_mode_right_index.attr,
-	&dev_attr_rumble_notification_right.attr,
-	&dev_attr_rumble_notification_right_index.attr,
-	&dev_attr_version_hardware_right.attr,
-	&dev_attr_version_firmware_right.attr,
-	&dev_attr_version_gen_right.attr,
-	&dev_attr_version_product_right.attr,
-	&dev_attr_version_protocol_right.attr,
+	&auto_sleep_time_right.dev_attr.attr,
+	&auto_sleep_time_right_range.dev_attr.attr,
+	&cal_gyro_right.dev_attr.attr,
+	&cal_gyro_right_index.dev_attr.attr,
+	&cal_gyro_right_status.dev_attr.attr,
+	&cal_joy_right.dev_attr.attr,
+	&cal_joy_right_index.dev_attr.attr,
+	&cal_joy_right_status.dev_attr.attr,
+	&cal_trigg_right.dev_attr.attr,
+	&cal_trigg_right_index.dev_attr.attr,
+	&cal_trigg_right_status.dev_attr.attr,
+	&imu_bypass_right.dev_attr.attr,
+	&imu_bypass_right_index.dev_attr.attr,
+	&imu_enabled_right.dev_attr.attr,
+	&imu_enabled_right_index.dev_attr.attr,
+	&reset_right.dev_attr.attr,
+	&rumble_mode_right.dev_attr.attr,
+	&rumble_mode_right_index.dev_attr.attr,
+	&rumble_notification_right.dev_attr.attr,
+	&rumble_notification_right_index.dev_attr.attr,
+	&version_hardware_right.dev_attr.attr,
+	&version_firmware_right.dev_attr.attr,
+	&version_gen_right.dev_attr.attr,
+	&version_product_right.dev_attr.attr,
+	&version_protocol_right.dev_attr.attr,
 	NULL,
 };
 
 static const struct attribute_group right_gamepad_attr_group = {
 	.name = "right_handle",
 	.attrs = right_gamepad_attrs,
+	.is_visible = hid_go_attr_is_visible,
 };
 
 /* Touchpad */
-static struct go_cfg_attr touchpad_enabled = { FEATURE_TOUCHPAD_ENABLE };
-LEGO_DEVICE_ATTR_RW(touchpad_enabled, "enabled", UNSPECIFIED, index,
-		    feature_status);
-static DEVICE_ATTR_RO_NAMED(touchpad_enabled_index, "enabled_index");
+LEGO_DEVICE_ATTR_RW(touchpad_enabled, "enabled", UNSPECIFIED, index, feature_status,
+		    FEATURE_TOUCHPAD_ENABLE, SUP_TOUCHPAD);
+LEGO_ATTR_RO(touchpad_enabled_index, "enabled_index", SUP_TOUCHPAD);
 
-static struct go_cfg_attr touchpad_vibration_enabled = { TP_VIBRATION_ENABLE };
-LEGO_DEVICE_ATTR_RW(touchpad_vibration_enabled, "vibration_enabled", UNSPECIFIED,
-		    index, motor_config);
-static DEVICE_ATTR_RO_NAMED(touchpad_vibration_enabled_index,
-			    "vibration_enabled_index");
+LEGO_DEVICE_ATTR_RW(touchpad_vibration_enabled, "vibration_enabled", UNSPECIFIED, index,
+		    motor_config, TP_VIBRATION_ENABLE, SUP_RUMBLE);
+LEGO_ATTR_RO(touchpad_vibration_enabled_index, "vibration_enabled_index",
+		   SUP_RUMBLE);
 
-static struct go_cfg_attr touchpad_vibration_intensity = { TP_VIBRATION_INTENSITY };
-LEGO_DEVICE_ATTR_RW(touchpad_vibration_intensity, "vibration_intensity",
-		    UNSPECIFIED, index, motor_config);
-static DEVICE_ATTR_RO_NAMED(touchpad_vibration_intensity_index,
-			    "vibration_intensity_index");
+LEGO_DEVICE_ATTR_RW(touchpad_vibration_intensity, "vibration_intensity", UNSPECIFIED, index,
+		    motor_config, TP_VIBRATION_INTENSITY, SUP_RUMBLE);
+LEGO_ATTR_RO(touchpad_vibration_intensity_index, "vibration_intensity_index",
+		   SUP_RUMBLE);
 
 static struct attribute *touchpad_attrs[] = {
-	&dev_attr_touchpad_enabled.attr,
-	&dev_attr_touchpad_enabled_index.attr,
-	&dev_attr_touchpad_vibration_enabled.attr,
-	&dev_attr_touchpad_vibration_enabled_index.attr,
-	&dev_attr_touchpad_vibration_intensity.attr,
-	&dev_attr_touchpad_vibration_intensity_index.attr,
+	&touchpad_enabled.dev_attr.attr,
+	&touchpad_enabled_index.dev_attr.attr,
+	&touchpad_vibration_enabled.dev_attr.attr,
+	&touchpad_vibration_enabled_index.dev_attr.attr,
+	&touchpad_vibration_intensity.dev_attr.attr,
+	&touchpad_vibration_intensity_index.dev_attr.attr,
 	NULL,
 };
 
 static const struct attribute_group touchpad_attr_group = {
 	.name = "touchpad",
 	.attrs = touchpad_attrs,
+	.is_visible = hid_go_attr_is_visible,
 };
 
 static const struct attribute_group *top_level_attr_groups[] = {
@@ -2443,30 +2508,29 @@ static const struct attribute_group *top_level_attr_groups[] = {
 };
 
 /* RGB */
-static struct go_cfg_attr rgb_enabled = { FEATURE_LIGHT_ENABLE };
-
-LEGO_DEVICE_ATTR_RW(rgb_enabled, "enabled", UNSPECIFIED, index, feature_status);
-static DEVICE_ATTR_RO_NAMED(rgb_effect_index, "effect_index");
-static DEVICE_ATTR_RO_NAMED(rgb_enabled_index, "enabled_index");
-static DEVICE_ATTR_RO_NAMED(rgb_mode_index, "mode_index");
-static DEVICE_ATTR_RO_NAMED(rgb_profile_range, "profile_range");
-static DEVICE_ATTR_RO_NAMED(rgb_speed_range, "speed_range");
-static DEVICE_ATTR_RW_NAMED(rgb_effect, "effect");
-static DEVICE_ATTR_RW_NAMED(rgb_mode, "mode");
-static DEVICE_ATTR_RW_NAMED(rgb_profile, "profile");
-static DEVICE_ATTR_RW_NAMED(rgb_speed, "speed");
+LEGO_DEVICE_ATTR_RW(rgb_enabled, "enabled", UNSPECIFIED, index, feature_status,
+		    FEATURE_LIGHT_ENABLE, SUP_RGB);
+LEGO_ATTR_RO(rgb_effect_index, "effect_index", SUP_RGB);
+LEGO_ATTR_RO(rgb_enabled_index, "enabled_index", SUP_RGB);
+LEGO_ATTR_RO(rgb_mode_index, "mode_index", SUP_RGB);
+LEGO_ATTR_RO(rgb_profile_range, "profile_range", SUP_RGB);
+LEGO_ATTR_RO(rgb_speed_range, "speed_range", SUP_RGB);
+LEGO_ATTR_RW(rgb_effect, "effect", SUP_RGB);
+LEGO_ATTR_RW(rgb_mode, "mode", SUP_RGB);
+LEGO_ATTR_RW(rgb_profile, "profile", SUP_RGB);
+LEGO_ATTR_RW(rgb_speed, "speed", SUP_RGB);
 
 static struct attribute *go_rgb_attrs[] = {
-	&dev_attr_rgb_effect.attr,
-	&dev_attr_rgb_effect_index.attr,
-	&dev_attr_rgb_enabled.attr,
-	&dev_attr_rgb_enabled_index.attr,
-	&dev_attr_rgb_mode.attr,
-	&dev_attr_rgb_mode_index.attr,
-	&dev_attr_rgb_profile.attr,
-	&dev_attr_rgb_profile_range.attr,
-	&dev_attr_rgb_speed.attr,
-	&dev_attr_rgb_speed_range.attr,
+	&rgb_effect.dev_attr.attr,
+	&rgb_effect_index.dev_attr.attr,
+	&rgb_enabled.dev_attr.attr,
+	&rgb_enabled_index.dev_attr.attr,
+	&rgb_mode.dev_attr.attr,
+	&rgb_mode_index.dev_attr.attr,
+	&rgb_profile.dev_attr.attr,
+	&rgb_profile_range.dev_attr.attr,
+	&rgb_speed.dev_attr.attr,
+	&rgb_speed_range.dev_attr.attr,
 	NULL,
 };
 
@@ -2695,7 +2759,7 @@ static void cfg_setup(struct work_struct *work)
 	if (ret) {
 		dev_err(&drvdata->hdev->dev,
 			"Failed to create gamepad configuration attributes: %i\n", ret);
-		drvdata.gp_registered = false;
+		drvdata->gp_registered = false;
 		goto try_rgb;
 	}
 
@@ -2740,6 +2804,7 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 			    const struct hid_device_id *_id)
 {
 	struct go_cfg_drvdata *drvdata = hid_get_drvdata(hdev);
+
 	int ret;
 
 	/* Device is hardwired and name is guaranteed to be unique */
@@ -2812,6 +2877,7 @@ static int hid_go_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			return -ENOMEM;
 
 		hid_set_drvdata(hdev, drvdata);
+		drvdata->support = SUPPORT_GEN2;
 		drvdata->hdev = hdev;
 		mutex_init(&drvdata->cfg_mutex);
 		init_completion(&drvdata->cmd.done);
