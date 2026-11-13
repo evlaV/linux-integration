@@ -372,6 +372,7 @@ struct claw_drvdata {
 	bool rgb_registered;
 	u8 rgb_frame_count;
 	bool rgb_enabled;
+	bool rgb_dirty; /* State held by the driver that the MCU has not taken */
 	u8 rgb_speed;
 	u16 rgb_addr;
 };
@@ -1315,6 +1316,10 @@ static int claw_write_rgb_state(struct claw_drvdata *drvdata)
 	 * for ACK that ill never come.
 	 */
 	ret = claw_hw_output_report(drvdata->hdev, CLAW_COMMAND_TYPE_SYNC_TO_ROM, NULL, 0, 0);
+	if (!ret) {
+		/* The MCU holds the state now, so nothing is left to replay */
+		smp_store_release(&drvdata->rgb_dirty, false);
+	}
 
 	return ret;
 }
@@ -1495,9 +1500,23 @@ static void claw_rgb_queue_fn(struct work_struct *work)
 	}
 
 	ret = claw_apply_rgb_state(drvdata);
-	/* -EBUSY means the device is suspended; the update is not applied */
+	/* -EBUSY means the device is suspended; the state stays dirty until an
+	 * update lands after the MCU is ready again.
+	 */
 	if (ret && ret != -EBUSY)
 		dev_err(&drvdata->hdev->dev, "Failed to apply RGB state: %d\n", ret);
+}
+
+/* Queue an RGB update. Safe from any context, including IRQ handlers. */
+static void claw_rgb_schedule(struct claw_drvdata *drvdata)
+{
+	/* Mark the state pending before arming the work, so that a deferred or
+	 * cancelled apply is still replayed later. Pairs with smp_load_acquire
+	 * from cfg_resume_fn and cfg_setup_fn in system_wq context.
+	 */
+	smp_store_release(&drvdata->rgb_dirty, true);
+
+	mod_delayed_work(system_wq, &drvdata->rgb_queue, msecs_to_jiffies(50));
 }
 
 static ssize_t effect_store(struct device *dev,
@@ -1522,7 +1541,7 @@ static ssize_t effect_store(struct device *dev,
 	scoped_guard(spinlock_irqsave, &drvdata->profile_lock)
 		drvdata->rgb_effect = ret;
 
-	mod_delayed_work(system_wq, &drvdata->rgb_queue, msecs_to_jiffies(50));
+	claw_rgb_schedule(drvdata);
 
 	return count;
 }
@@ -1586,7 +1605,7 @@ static ssize_t enabled_store(struct device *dev,
 	scoped_guard(spinlock_irqsave, &drvdata->profile_lock)
 		drvdata->rgb_enabled = val;
 
-	mod_delayed_work(system_wq, &drvdata->rgb_queue, msecs_to_jiffies(50));
+	claw_rgb_schedule(drvdata);
 
 	return count;
 }
@@ -1643,7 +1662,7 @@ static ssize_t speed_store(struct device *dev, struct device_attribute *attr,
 	scoped_guard(spinlock_irqsave, &drvdata->profile_lock)
 		drvdata->rgb_speed = speed;
 
-	mod_delayed_work(system_wq, &drvdata->rgb_queue, msecs_to_jiffies(50));
+	claw_rgb_schedule(drvdata);
 
 	return count;
 }
@@ -1685,7 +1704,7 @@ static void claw_led_brightness_set(struct led_classdev *led_cdev,
 			return;
 	}
 
-	mod_delayed_work(system_wq, &drvdata->rgb_queue, msecs_to_jiffies(50));
+	claw_rgb_schedule(drvdata);
 }
 
 static struct attribute *claw_rgb_attrs[] = {
@@ -1796,13 +1815,19 @@ update_kobjects:
 		kobject_uevent(&drvdata->hdev->dev.kobj, KOBJ_CHANGE);
 	if (rgb_registered)
 		kobject_uevent(&drvdata->led_mc.led_cdev.dev->kobj, KOBJ_CHANGE);
+
+	/* The read above is what tells the driver what the MCU holds, so any
+	 * state the MCU has not taken is applied on top of it.
+	 */
+	if (smp_load_acquire(&drvdata->rgb_dirty))
+		claw_rgb_schedule(drvdata);
 }
 
 static void cfg_resume_fn(struct work_struct *work)
 {
 	struct delayed_work *dwork = container_of(work, struct delayed_work, work);
 	struct claw_drvdata *drvdata = container_of(dwork, struct claw_drvdata, cfg_resume);
-	bool gp_registered, rgb_registered, resync;
+	bool gp_registered, rgb_registered, resync, rgb_dirty;
 
 	/* MCU has had time to become ready; re-open the command path */
 	scoped_guard(mutex, &drvdata->rom_mutex)
@@ -1814,6 +1839,11 @@ static void cfg_resume_fn(struct work_struct *work)
 	/* Consumed here, so a later resume does not repeat the read */
 	smp_store_release(&drvdata->resync, false);
 
+	/* RGB state the MCU has not taken. Pairs with smp_store_release from
+	 * claw_rgb_schedule.
+	 */
+	rgb_dirty = smp_load_acquire(&drvdata->rgb_dirty);
+
 	scoped_guard(spinlock_irqsave, &drvdata->registration_lock) {
 		/* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
 		gp_registered = smp_load_acquire(&drvdata->gp_registered);
@@ -1822,10 +1852,13 @@ static void cfg_resume_fn(struct work_struct *work)
 	}
 
 	/* A bus reset re-initialises the MCU, so its state is re-read rather
-	 * than assumed to have survived.
+	 * than assumed to have survived. Deferred RGB state is replayed by
+	 * cfg_setup_fn() once that read completes.
 	 */
 	if (resync || !gp_registered || !rgb_registered)
 		schedule_delayed_work(&drvdata->cfg_setup, msecs_to_jiffies(500));
+	else if (rgb_dirty)
+		claw_rgb_schedule(drvdata);
 }
 
 static void claw_features_supported(struct claw_drvdata *drvdata)
