@@ -1692,8 +1692,8 @@ static ssize_t speed_range_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(speed_range);
 
-static void claw_led_brightness_set(struct led_classdev *led_cdev,
-				    enum led_brightness _brightness)
+static int claw_led_brightness_set_blocking(struct led_classdev *led_cdev,
+					    enum led_brightness _brightness)
 {
 	struct led_classdev_mc *led_mc = container_of(led_cdev, struct led_classdev_mc, led_cdev);
 	struct claw_drvdata *drvdata = container_of(led_mc, struct claw_drvdata, led_mc);
@@ -1701,10 +1701,12 @@ static void claw_led_brightness_set(struct led_classdev *led_cdev,
 	scoped_guard(spinlock_irqsave, &drvdata->registration_lock) {
 		/* Pairs with smp_store_release from cfg_setup_fn in system_wq context */
 		if (!smp_load_acquire(&drvdata->rgb_registered))
-			return;
+			return 0;
 	}
 
 	claw_rgb_schedule(drvdata);
+
+	return 0;
 }
 
 static struct attribute *claw_rgb_attrs[] = {
@@ -1918,7 +1920,7 @@ static int claw_probe(struct hid_device *hdev, u8 ep)
 	drvdata->led_mc.led_cdev.brightness = 0x50;
 	drvdata->led_mc.led_cdev.max_brightness = 0x64;
 	drvdata->led_mc.led_cdev.color = LED_COLOR_ID_RGB;
-	drvdata->led_mc.led_cdev.brightness_set = claw_led_brightness_set;
+	drvdata->led_mc.led_cdev.brightness_set_blocking = claw_led_brightness_set_blocking;
 	drvdata->led_mc.num_colors = 3;
 	drvdata->led_mc.subled_info = devm_kmemdup(&hdev->dev, claw_rgb_subled_info,
 						   sizeof(claw_rgb_subled_info), GFP_KERNEL);
