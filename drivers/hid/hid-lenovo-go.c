@@ -1954,21 +1954,13 @@ static ssize_t rgb_profile_range_show(struct device *dev,
 	return sysfs_emit(buf, "1-3\n");
 }
 
-static void hid_go_brightness_set(struct led_classdev *led_cdev,
-				  enum led_brightness brightness)
+static int hid_go_brightness_set_blocking(struct led_classdev *led_cdev,
+					  enum led_brightness brightness)
 {
 	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
 	struct go_cfg_drvdata *drvdata = container_of(mc_cdev,
 						      struct go_cfg_drvdata, led_mc);
-	enum rgb_config_index index;
-	int ret;
-
-	if (brightness > led_cdev->max_brightness) {
-		dev_err(led_cdev->dev, "Invalid argument\n");
-		return;
-	}
-
-	index = drvdata->rgb_profile + 3;
+	enum rgb_config_index index = drvdata->rgb_profile + 3;
 	u8 rgb_profile[6] = { drvdata->rgb_effect,
 			      mc_cdev->subled_info[0].intensity,
 			      mc_cdev->subled_info[1].intensity,
@@ -1976,18 +1968,7 @@ static void hid_go_brightness_set(struct led_classdev *led_cdev,
 			      brightness,
 			      drvdata->rgb_speed };
 
-	ret = rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
-	switch (ret) {
-	case 0:
-		led_cdev->brightness = brightness;
-		break;
-	case -ENODEV: /* during switch to IAP -ENODEV is expected */
-	case -ENOSYS: /* during rmmod -ENOSYS is expected */
-		dev_dbg(led_cdev->dev, "Failed to write RGB profile: %i\n", ret);
-		break;
-	default:
-		dev_err(led_cdev->dev, "Failed to write RGB profile: %i\n", ret);
-	}
+	return rgb_cfg_call(drvdata->hdev, SET_RGB_CFG, index, rgb_profile, 6);
 }
 
 #define LEGO_DEVICE_ATTR_RW(_name, _attrname, _dtype, _rtype, _group)         \
@@ -2699,7 +2680,9 @@ static int hid_go_cfg_probe(struct hid_device *hdev,
 	drvdata->led_mc.led_cdev.color = LED_COLOR_ID_RGB;
 	drvdata->led_mc.led_cdev.brightness = 0x50;
 	drvdata->led_mc.led_cdev.max_brightness = 0x64;
-	drvdata->led_mc.led_cdev.brightness_set = hid_go_brightness_set;
+	drvdata->led_mc.led_cdev.flags = LED_HW_PLUGGABLE;
+	drvdata->led_mc.led_cdev.brightness_set_blocking =
+		hid_go_brightness_set_blocking;
 	drvdata->led_mc.num_colors = ARRAY_SIZE(go_rgb_subled_info);
 	drvdata->led_mc.subled_info = devm_kmemdup(&hdev->dev, go_rgb_subled_info,
 						   sizeof(go_rgb_subled_info), GFP_KERNEL);
