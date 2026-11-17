@@ -53,6 +53,7 @@
 #include <asm/fcntl.h>
 #include <asm/e820/api.h>
 #include <asm/mtrr.h>
+#include <asm/hypervisor.h>
 #include <asm/page.h>
 #include <asm/msr.h>
 #include <asm/memtype.h>
@@ -362,6 +363,29 @@ static DEFINE_SPINLOCK(memtype_lock);	/* protects memtype accesses */
 static unsigned long pat_x_mtrr_type(u64 start, u64 end,
 				     enum page_cache_mode req_type)
 {
+	/*
+	 * WORKAROUND: when running as a KVM guest, ignore MTRR entirely and
+	 * trust the PAT request as-is. This is needed for virtio-gpu blob
+	 * hostmem BARs: firmware (e.g. OVMF) may leave a UC MTRR covering
+	 * the BAR, which would otherwise downgrade the guest's WB PAT
+	 * request to UC-/UC below and cause a severe performance regression
+	 * on access to that hostmem region. This is a guest-kernel-side
+	 * variant of the fix, independent of any hypervisor-side workaround
+	 * (QEMU mtrr-msr-filter) or firmware changes.
+	 *
+	 * Deliberately scoped to KVM specifically (rather than any
+	 * hypervisor) via the CPUID-derived x86_hyper_type, since the
+	 * assumption that MTRRs are inert/irrelevant to the guest only holds
+	 * for the virtualization model this was validated against.
+	 *
+	 * This must never change behavior on bare metal, where MTRRs reflect
+	 * real hardware memory-range properties and still need to be honored.
+	 *
+	 * Link: https://github.com/tianocore/edk2/issues/13129
+	 */
+	if (hypervisor_is_type(X86_HYPER_KVM))
+		return req_type;
+
 	/*
 	 * Look for MTRR hint to get the effective type in case where PAT
 	 * request is for WB.
