@@ -4115,8 +4115,8 @@ static void glk_load_lut_3d(struct intel_dsb *dsb,
 {
 	struct intel_display *display = to_intel_display(crtc->base.dev);
 	const struct drm_color_lut32 *lut = blob->data;
-	int i, lut_size = drm_color_lut32_size(blob);
 	enum pipe pipe = crtc->pipe;
+	int r, g, b;
 
 	if (!dsb && intel_de_read(display, LUT_3D_CTL(pipe)) & LUT_3D_READY) {
 		drm_err(display->drm, "[CRTC:%d:%s] 3D LUT not ready, not loading LUTs\n",
@@ -4124,9 +4124,16 @@ static void glk_load_lut_3d(struct intel_dsb *dsb,
 		return;
 	}
 
+	/*
+	 * The hardware walks the table with blue as the fastest axis, the
+	 * colorop blob with red.
+	 */
 	intel_de_write_dsb(display, dsb, LUT_3D_INDEX(pipe), LUT_3D_AUTO_INCREMENT);
-	for (i = 0; i < lut_size; i++)
-		intel_de_write_dsb(display, dsb, LUT_3D_DATA(pipe), glk_3dlut_10(&lut[i]));
+	for (r = 0; r < LUT_3D_SIZE; r++)
+		for (g = 0; g < LUT_3D_SIZE; g++)
+			for (b = 0; b < LUT_3D_SIZE; b++)
+				intel_de_write_dsb(display, dsb, LUT_3D_DATA(pipe),
+						   glk_3dlut_10(&lut[r + LUT_3D_SIZE * (g + LUT_3D_SIZE * b)]));
 	intel_de_write_dsb(display, dsb, LUT_3D_INDEX(pipe), 0);
 }
 
