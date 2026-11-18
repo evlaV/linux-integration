@@ -16,6 +16,7 @@ struct intel_dsb;
 struct intel_plane_state;
 struct drm_property_blob;
 enum pipe;
+enum plane_id;
 
 void intel_color_init_hooks(struct intel_display *display);
 int intel_color_init(struct intel_display *display);
@@ -47,6 +48,8 @@ void intel_color_plane_program_pipeline(struct intel_dsb *dsb,
 void intel_color_plane_commit_arm(struct intel_dsb *dsb,
 				  const struct intel_plane_state *plane_state);
 bool intel_color_crtc_has_3dlut(struct intel_display *display, enum pipe pipe);
+bool intel_color_plane_has_3dlut(struct intel_display *display,
+				 enum pipe pipe, enum plane_id plane_id);
 u32 intel_color_background_color_drm_to_hw(u64 drm_background_color);
 u64 intel_color_background_color_hw_to_drm(u32 hw_background_color);
 
