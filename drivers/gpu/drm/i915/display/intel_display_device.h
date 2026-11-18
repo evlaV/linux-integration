@@ -303,6 +303,7 @@ struct intel_display_runtime_info {
 	u8 num_scalers[I915_MAX_PIPES];
 
 	u8 fbc_mask;
+	u8 lut_3d_mask;
 
 	bool has_hdcp;
 	bool has_dmc;

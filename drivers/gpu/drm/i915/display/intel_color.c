@@ -4304,10 +4304,7 @@ intel_color_load_plane_luts(struct intel_dsb *dsb,
 bool
 intel_color_crtc_has_3dlut(struct intel_display *display, enum pipe pipe)
 {
-	if (DISPLAY_VER(display) >= 12)
-		return pipe == PIPE_A || pipe == PIPE_B;
-	else
-		return false;
+	return DISPLAY_RUNTIME_INFO(display)->lut_3d_mask & BIT(pipe);
 }
 
 static void

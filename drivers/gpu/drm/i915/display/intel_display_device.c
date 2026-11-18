@@ -999,7 +999,8 @@ static const struct platform_desc ehl_desc = {
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | \
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_D) | \
 		BIT(TRANSCODER_DSI_0) | BIT(TRANSCODER_DSI_1), \
-	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A)
+	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A), \
+	.__runtime_defaults.lut_3d_mask = BIT(PIPE_A) | BIT(PIPE_B)
 
 static const u16 tgl_uy_ids[] = {
 	INTEL_TGL_GT2_IDS(ID),
@@ -1160,6 +1161,7 @@ static const struct platform_desc adl_s_desc = {
 	.__runtime_defaults.has_dsc = 1,					\
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),			\
 	.__runtime_defaults.has_hdcp = 1,					\
+	.__runtime_defaults.lut_3d_mask = BIT(PIPE_A) | BIT(PIPE_B),		\
 	.__runtime_defaults.pipe_mask =						\
 		BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C) | BIT(PIPE_D)
 
@@ -1338,6 +1340,7 @@ static const struct platform_desc dg2_desc = {
 	.__runtime_defaults.has_dmc = 1,					\
 	.__runtime_defaults.has_dsc = 1,					\
 	.__runtime_defaults.has_hdcp = 1,					\
+	.__runtime_defaults.lut_3d_mask = BIT(PIPE_A) | BIT(PIPE_B),		\
 	.__runtime_defaults.pipe_mask =						\
 		BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C) | BIT(PIPE_D),		\
 	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |		\
@@ -1942,6 +1945,10 @@ static void __intel_display_device_info_runtime_init(struct intel_display *displ
 		    XE2LPD_DE_CAP_DSC_REMOVED)
 			display_runtime->has_dsc = 0;
 
+		/* Only 0 (3D LUT present) is a known encoding, so treat the rest as absent */
+		if (REG_FIELD_GET(XE2LPD_DE_CAP_3DLUT_MASK, cap))
+			display_runtime->lut_3d_mask = 0;
+
 		if (REG_FIELD_GET(XE2LPD_DE_CAP_SCALER_MASK, cap) ==
 		    XE2LPD_DE_CAP_SCALER_SINGLE) {
 			for_each_pipe(display, pipe)
@@ -1949,6 +1956,8 @@ static void __intel_display_device_info_runtime_init(struct intel_display *displ
 					display_runtime->num_scalers[pipe] = 1;
 		}
 	}
+
+	display_runtime->lut_3d_mask &= display_runtime->pipe_mask;
 
 	if (DISPLAY_VER(display) >= 30)
 		display_runtime->edp_typec_support =
