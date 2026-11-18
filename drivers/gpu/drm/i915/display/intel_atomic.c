@@ -251,6 +251,8 @@ intel_crtc_duplicate_state(struct drm_crtc *crtc)
 		drm_property_blob_get(crtc_state->hw.ctm);
 	if (crtc_state->hw.gamma_lut)
 		drm_property_blob_get(crtc_state->hw.gamma_lut);
+	if (crtc_state->hw.lut_3d)
+		drm_property_blob_get(crtc_state->hw.lut_3d);
 
 	if (crtc_state->pre_csc_lut)
 		drm_property_blob_get(crtc_state->pre_csc_lut);
@@ -269,6 +271,7 @@ intel_crtc_duplicate_state(struct drm_crtc *crtc)
 	crtc_state->update_wm_post = false;
 	crtc_state->fifo_changed = false;
 	crtc_state->preload_luts = false;
+	crtc_state->update_lut_3d = false;
 	crtc_state->wm.need_postvbl_update = false;
 	crtc_state->do_async_flip = false;
 	crtc_state->fb_bits = 0;
@@ -285,6 +288,7 @@ static void intel_crtc_put_color_blobs(struct intel_crtc_state *crtc_state)
 	drm_property_blob_put(crtc_state->hw.degamma_lut);
 	drm_property_blob_put(crtc_state->hw.gamma_lut);
 	drm_property_blob_put(crtc_state->hw.ctm);
+	drm_property_blob_put(crtc_state->hw.lut_3d);
 
 	drm_property_blob_put(crtc_state->pre_csc_lut);
 	drm_property_blob_put(crtc_state->post_csc_lut);
@@ -292,6 +296,7 @@ static void intel_crtc_put_color_blobs(struct intel_crtc_state *crtc_state)
 	crtc_state->hw.degamma_lut = NULL;
 	crtc_state->hw.gamma_lut = NULL;
 	crtc_state->hw.ctm = NULL;
+	crtc_state->hw.lut_3d = NULL;
 	crtc_state->pre_csc_lut = NULL;
 	crtc_state->post_csc_lut = NULL;
 }

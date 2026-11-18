@@ -4562,15 +4562,19 @@ intel_crtc_copy_uapi_to_hw_state_nomodeset(struct intel_atomic_state *state,
 {
 	struct intel_crtc_state *crtc_state =
 		intel_atomic_get_new_crtc_state(state, crtc);
+	/* Clients with the CRTC color pipeline cap must not inherit legacy LUTs */
+	bool legacy_color = !crtc_state->uapi.color_pipeline_enabled;
 
 	WARN_ON(intel_crtc_is_joiner_secondary(crtc_state));
 
 	drm_property_replace_blob(&crtc_state->hw.degamma_lut,
-				  crtc_state->uapi.degamma_lut);
+				  legacy_color ? crtc_state->uapi.degamma_lut : NULL);
 	drm_property_replace_blob(&crtc_state->hw.gamma_lut,
-				  crtc_state->uapi.gamma_lut);
+				  legacy_color ? crtc_state->uapi.gamma_lut : NULL);
 	drm_property_replace_blob(&crtc_state->hw.ctm,
-				  crtc_state->uapi.ctm);
+				  legacy_color ? crtc_state->uapi.ctm : NULL);
+	drm_property_replace_blob(&crtc_state->hw.lut_3d,
+				  intel_color_crtc_lut_3d(state, crtc_state));
 	crtc_state->hw.background_color =
 		intel_color_background_color_drm_to_hw(crtc_state->uapi.background_color);
 }
@@ -4612,6 +4616,8 @@ copy_joiner_crtc_state_nomodeset(struct intel_atomic_state *state,
 				  primary_crtc_state->hw.gamma_lut);
 	drm_property_replace_blob(&secondary_crtc_state->hw.ctm,
 				  primary_crtc_state->hw.ctm);
+	drm_property_replace_blob(&secondary_crtc_state->hw.lut_3d,
+				  primary_crtc_state->hw.lut_3d);
 	secondary_crtc_state->hw.background_color = primary_crtc_state->hw.background_color;
 
 	secondary_crtc_state->uapi.color_mgmt_changed = primary_crtc_state->uapi.color_mgmt_changed;
@@ -6295,7 +6301,7 @@ static int intel_joiner_add_affected_crtcs(struct intel_atomic_state *state)
 	struct intel_crtc *crtc;
 	u8 affected_pipes = 0;
 	u8 modeset_pipes = 0;
-	int i;
+	int i, ret;
 
 	/*
 	 * Any plane which is in use by the joiner needs its crtc.
@@ -6326,8 +6332,6 @@ static int intel_joiner_add_affected_crtcs(struct intel_atomic_state *state)
 	}
 
 	for_each_intel_crtc_in_pipe_mask(display, crtc, modeset_pipes) {
-		int ret;
-
 		crtc_state = intel_atomic_get_new_crtc_state(state, crtc);
 
 		crtc_state->uapi.mode_changed = true;
@@ -6340,6 +6344,11 @@ static int intel_joiner_add_affected_crtcs(struct intel_atomic_state *state)
 		if (ret)
 			return ret;
 	}
+
+	/* Before kill_joiner_secondaries() copies uapi to hw for the secondaries */
+	ret = intel_color_add_affected_colorops(state);
+	if (ret)
+		return ret;
 
 	for_each_new_intel_crtc_in_state(state, crtc, crtc_state) {
 		/* Kill old joiner link, we may re-establish afterwards */
@@ -7359,7 +7368,8 @@ static void intel_atomic_dsb_finish(struct intel_atomic_state *state,
 	struct intel_display *display = to_intel_display(state);
 	struct intel_crtc_state *new_crtc_state =
 		intel_atomic_get_new_crtc_state(state, crtc);
-	unsigned int size = new_crtc_state->plane_color_changed ? 8192 : 1024;
+	unsigned int size = new_crtc_state->plane_color_changed ||
+		new_crtc_state->update_lut_3d ? 8192 : 1024;
 
 	if (!new_crtc_state->use_flipq &&
 	    !new_crtc_state->use_dsb &&
