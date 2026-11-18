@@ -569,6 +569,11 @@ int drm_plane_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *col
 				 uint32_t lut_size,
 				 enum drm_colorop_lut3d_interpolation_type interpolation,
 				 uint32_t flags);
+int drm_crtc_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *colorop,
+				struct drm_crtc *crtc, const struct drm_colorop_funcs *funcs,
+				uint32_t lut_size,
+				enum drm_colorop_lut3d_interpolation_type interpolation,
+				uint32_t flags);
 int drm_plane_colorop_fixed_matrix_init(struct drm_device *dev, struct drm_colorop *colorop,
 					struct drm_plane *plane,
 					const struct drm_colorop_funcs *funcs,

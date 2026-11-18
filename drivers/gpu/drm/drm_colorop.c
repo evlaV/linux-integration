@@ -548,19 +548,13 @@ int drm_plane_colorop_mult_init(struct drm_device *dev, struct drm_colorop *colo
 }
 EXPORT_SYMBOL(drm_plane_colorop_mult_init);
 
-int drm_plane_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *colorop,
-				 struct drm_plane *plane,
-				 const struct drm_colorop_funcs *funcs,
-				 uint32_t lut_size,
-				 enum drm_colorop_lut3d_interpolation_type interpolation,
-				 uint32_t flags)
+static int drm_common_colorop_3dlut_init(struct drm_device *dev,
+					 struct drm_colorop *colorop,
+					 uint32_t lut_size,
+					 enum drm_colorop_lut3d_interpolation_type interpolation)
 {
 	struct drm_property *prop;
 	int ret;
-
-	ret = drm_plane_colorop_init(dev, colorop, plane, funcs, DRM_COLOROP_3D_LUT, flags);
-	if (ret)
-		return ret;
 
 	/* LUT size */
 	prop = drm_property_create_range(dev, DRM_MODE_PROP_IMMUTABLE  | DRM_MODE_PROP_ATOMIC,
@@ -591,7 +585,52 @@ int drm_plane_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *col
 
 	return 0;
 }
+
+int drm_plane_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *colorop,
+				 struct drm_plane *plane,
+				 const struct drm_colorop_funcs *funcs,
+				 uint32_t lut_size,
+				 enum drm_colorop_lut3d_interpolation_type interpolation,
+				 uint32_t flags)
+{
+	int ret;
+
+	ret = drm_plane_colorop_init(dev, colorop, plane, funcs, DRM_COLOROP_3D_LUT, flags);
+	if (ret)
+		return ret;
+
+	return drm_common_colorop_3dlut_init(dev, colorop, lut_size, interpolation);
+}
 EXPORT_SYMBOL(drm_plane_colorop_3dlut_init);
+
+/**
+ * drm_crtc_colorop_3dlut_init - Initialize a post-blend DRM_COLOROP_3D_LUT
+ *
+ * @dev: DRM device
+ * @colorop: The drm_colorop object to initialize
+ * @crtc: The associated drm_crtc
+ * @funcs: control functions for the new colorop
+ * @lut_size: number of entries per dimension supported by the driver
+ * @interpolation: 3D LUT interpolation type
+ * @flags: bitmask of misc, see DRM_COLOROP_FLAG_* defines.
+ * @return zero on success, -E value on failure
+ */
+int drm_crtc_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *colorop,
+				struct drm_crtc *crtc,
+				const struct drm_colorop_funcs *funcs,
+				uint32_t lut_size,
+				enum drm_colorop_lut3d_interpolation_type interpolation,
+				uint32_t flags)
+{
+	int ret;
+
+	ret = drm_crtc_colorop_init(dev, colorop, crtc, funcs, DRM_COLOROP_3D_LUT, flags);
+	if (ret)
+		return ret;
+
+	return drm_common_colorop_3dlut_init(dev, colorop, lut_size, interpolation);
+}
+EXPORT_SYMBOL(drm_crtc_colorop_3dlut_init);
 
 /**
  * drm_plane_colorop_fixed_matrix_init - Initialize a DRM_COLOROP_FIXED_MATRIX
