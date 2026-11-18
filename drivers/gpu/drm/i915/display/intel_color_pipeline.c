@@ -88,7 +88,7 @@ struct intel_colorop *intel_color_pipeline_plane_add_colorop(struct drm_plane *p
 		break;
 	case INTEL_PLANE_CB_3DLUT:
 		ret = drm_plane_colorop_3dlut_init(dev, &colorop->base, plane,
-						   &intel_colorop_funcs, 17,
+						   &intel_colorop_funcs, LUT_3D_SIZE,
 						   DRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL,
 						   true);
 		break;
@@ -188,5 +188,42 @@ int intel_color_pipeline_plane_init(struct drm_plane *plane, enum pipe pipe)
 		kfree(pipelines[i].name);
 
 out:
+	return ret;
+}
+
+int intel_color_pipeline_crtc_init(struct intel_crtc *crtc)
+{
+	struct drm_device *dev = crtc->base.dev;
+	struct drm_prop_enum_list pipeline;
+	struct intel_colorop *colorop;
+	int ret;
+
+	colorop = intel_colorop_create(INTEL_CRTC_CB_3DLUT);
+	if (IS_ERR(colorop))
+		return PTR_ERR(colorop);
+
+	ret = drm_crtc_colorop_3dlut_init(dev, &colorop->base, &crtc->base,
+					  &intel_colorop_funcs, LUT_3D_SIZE,
+					  DRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL,
+					  DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	if (ret)
+		goto cleanup;
+
+	pipeline.type = colorop->base.base.id;
+	pipeline.name = kasprintf(GFP_KERNEL, "Color Pipeline %d", colorop->base.base.id);
+	if (!pipeline.name) {
+		ret = -ENOMEM;
+		goto cleanup;
+	}
+
+	ret = drm_crtc_create_color_pipeline_property(&crtc->base, &pipeline, 1);
+	kfree(pipeline.name);
+	if (ret)
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	intel_colorop_destroy(&colorop->base);
 	return ret;
 }

@@ -26,6 +26,7 @@
 
 #include "i9xx_plane_regs.h"
 #include "intel_color.h"
+#include "intel_color_pipeline.h"
 #include "intel_color_regs.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -184,6 +185,11 @@ static const struct intel_csc_matrix ilk_csc_matrix_rgb_to_ycbcr = {
 		0x0800, 0x0100, 0x0800,
 	},
 };
+
+static void glk_load_lut_3d(struct intel_dsb *dsb,
+			    struct intel_crtc *crtc,
+			    const struct drm_property_blob *blob);
+static void glk_lut_3d_commit(struct intel_dsb *dsb, struct intel_crtc *crtc, bool enable);
 
 static void intel_csc_clear(struct intel_csc_matrix *csc)
 {
@@ -999,6 +1005,10 @@ static void icl_color_commit_noarm(struct intel_dsb *dsb,
 	 * On TGL+ all CSC arming issues have been properly fixed.
 	 */
 	icl_load_csc_matrix(dsb, crtc_state);
+
+	if (crtc_state->update_lut_3d)
+		glk_load_lut_3d(dsb, to_intel_crtc(crtc_state->uapi.crtc),
+				crtc_state->hw.lut_3d);
 }
 
 static void skl_color_commit_noarm(struct intel_dsb *dsb,
@@ -1169,6 +1179,9 @@ static void icl_color_commit_arm(struct intel_dsb *dsb,
 	intel_de_write_dsb(display, dsb, GAMMA_MODE(crtc->pipe), crtc_state->gamma_mode);
 
 	intel_de_write_dsb(display, dsb, PIPE_CSC_MODE(crtc->pipe), crtc_state->csc_mode);
+
+	if (intel_color_crtc_has_post_blend_3dlut(display, pipe))
+		glk_lut_3d_commit(dsb, crtc, !!crtc_state->hw.lut_3d);
 }
 
 static void icl_color_post_update(const struct intel_crtc_state *crtc_state)
@@ -2119,6 +2132,23 @@ int intel_color_check(struct intel_atomic_state *state,
 	if (!old_crtc_state->c8_planes != !new_crtc_state->c8_planes ||
 	    old_crtc_state->hw.background_color != new_crtc_state->hw.background_color)
 		new_crtc_state->uapi.color_mgmt_changed = true;
+
+	if (old_crtc_state->hw.lut_3d != new_crtc_state->hw.lut_3d)
+		new_crtc_state->uapi.color_mgmt_changed = true;
+
+	/* Rewriting the table is not free and may be visible, only do it when needed */
+	new_crtc_state->update_lut_3d = new_crtc_state->hw.lut_3d &&
+		(old_crtc_state->hw.lut_3d != new_crtc_state->hw.lut_3d ||
+		 intel_crtc_needs_modeset(new_crtc_state));
+
+	/* A joined pipe without its own 3D LUT cannot replicate the primary's */
+	if (new_crtc_state->hw.lut_3d &&
+	    !intel_color_crtc_has_post_blend_3dlut(display, crtc->pipe)) {
+		drm_dbg_kms(display->drm,
+			    "[CRTC:%d:%s] 3D LUT not available on this pipe\n",
+			    crtc->base.base.id, crtc->base.name);
+		return -EINVAL;
+	}
 
 	if (DRM_ARGB64_GETA(new_crtc_state->uapi.background_color) != 0xffff) {
 		drm_dbg_kms(display->drm, "New background not completely opaque\n");
@@ -4102,6 +4132,16 @@ static bool lut_3d_on_plane(struct intel_display *display)
 	return DISPLAY_VER(display) >= 35;
 }
 
+/*
+ * Whether new table contents are armed with LUT_3D_READY, which the hardware
+ * clears once it has taken them. The register definition ties the bit to no
+ * display version and the Xe3p_LPD plane path always uses it.
+ */
+static bool lut_3d_uses_ready(struct intel_display *display)
+{
+	return true;
+}
+
 static u32 glk_3dlut_10(const struct drm_color_lut32 *color)
 {
 	return REG_FIELD_PREP(LUT_3D_DATA_RED_MASK, drm_color_lut32_extract(color->red, 10)) |
@@ -4118,7 +4158,8 @@ static void glk_load_lut_3d(struct intel_dsb *dsb,
 	enum pipe pipe = crtc->pipe;
 	int r, g, b;
 
-	if (!dsb && intel_de_read(display, LUT_3D_CTL(pipe)) & LUT_3D_READY) {
+	if (!dsb && lut_3d_uses_ready(display) &&
+	    intel_de_read(display, LUT_3D_CTL(pipe)) & LUT_3D_READY) {
 		drm_err(display->drm, "[CRTC:%d:%s] 3D LUT not ready, not loading LUTs\n",
 			crtc->base.base.id, crtc->base.name);
 		return;
@@ -4143,14 +4184,19 @@ static void glk_lut_3d_commit(struct intel_dsb *dsb, struct intel_crtc *crtc, bo
 	enum pipe pipe = crtc->pipe;
 	u32 val = 0;
 
-	if (!dsb && intel_de_read(display, LUT_3D_CTL(pipe)) & LUT_3D_READY) {
+	if (!dsb && lut_3d_uses_ready(display) &&
+	    intel_de_read(display, LUT_3D_CTL(pipe)) & LUT_3D_READY) {
 		drm_err(display->drm, "[CRTC:%d:%s] 3D LUT not ready, not committing change\n",
 			crtc->base.base.id, crtc->base.name);
 		return;
 	}
 
-	if (enable)
-		val = LUT_3D_ENABLE | LUT_3D_READY | LUT_3D_BIND_PLANE_1;
+	if (enable) {
+		val = LUT_3D_ENABLE;
+		if (lut_3d_uses_ready(display))
+			val |= LUT_3D_READY;
+		val |= lut_3d_on_plane(display) ? LUT_3D_BIND_PLANE_1 : LUT_3D_BIND_PIPE;
+	}
 
 	intel_de_write_dsb(display, dsb, LUT_3D_CTL(pipe), val);
 }
@@ -4328,6 +4374,52 @@ bool intel_color_plane_has_3dlut(struct intel_display *display,
 		intel_color_crtc_has_3dlut(display, pipe);
 }
 
+/* Older pipes have the block too, the pipe binding is only offered from Xe2_LPD */
+bool intel_color_crtc_has_post_blend_3dlut(struct intel_display *display, enum pipe pipe)
+{
+	return DISPLAY_VER(display) >= 20 && !lut_3d_on_plane(display) &&
+		intel_color_crtc_has_3dlut(display, pipe);
+}
+
+int intel_color_add_affected_colorops(struct intel_atomic_state *state)
+{
+	struct intel_crtc_state *crtc_state;
+	struct intel_crtc *crtc;
+
+	for_each_new_intel_crtc_in_state(state, crtc, crtc_state) {
+		struct drm_colorop *colorop;
+
+		for (colorop = crtc_state->uapi.color_pipeline; colorop;
+		     colorop = colorop->next) {
+			struct drm_colorop_state *colorop_state;
+
+			colorop_state = drm_atomic_get_colorop_state(&state->base, colorop);
+			if (IS_ERR(colorop_state))
+				return PTR_ERR(colorop_state);
+		}
+	}
+
+	return 0;
+}
+
+struct drm_property_blob *
+intel_color_crtc_lut_3d(struct intel_atomic_state *state,
+			const struct intel_crtc_state *crtc_state)
+{
+	struct intel_display *display = to_intel_display(state);
+	struct drm_colorop *colorop = crtc_state->uapi.color_pipeline;
+	const struct drm_colorop_state *colorop_state;
+
+	if (!colorop)
+		return NULL;
+
+	colorop_state = drm_atomic_get_new_colorop_state(&state->base, colorop);
+	if (drm_WARN_ON(display->drm, !colorop_state) || colorop_state->bypass)
+		return NULL;
+
+	return colorop_state->data;
+}
+
 static void
 intel_color_load_3dlut(struct intel_dsb *dsb,
 		       const struct intel_plane_state *plane_state)
@@ -4375,6 +4467,11 @@ void intel_color_crtc_init(struct intel_crtc *crtc)
 
 	drm_crtc_enable_color_mgmt(&crtc->base, degamma_lut_size,
 				   has_ctm, gamma_lut_size);
+
+	if (intel_color_crtc_has_post_blend_3dlut(display, crtc->pipe) &&
+	    intel_color_pipeline_crtc_init(crtc))
+		drm_err(display->drm, "[CRTC:%d:%s] failed to create color pipeline\n",
+			crtc->base.base.id, crtc->base.name);
 }
 
 int intel_color_init(struct intel_display *display)

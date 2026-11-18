@@ -50,6 +50,11 @@ void intel_color_plane_commit_arm(struct intel_dsb *dsb,
 bool intel_color_crtc_has_3dlut(struct intel_display *display, enum pipe pipe);
 bool intel_color_plane_has_3dlut(struct intel_display *display,
 				 enum pipe pipe, enum plane_id plane_id);
+bool intel_color_crtc_has_post_blend_3dlut(struct intel_display *display, enum pipe pipe);
+int intel_color_add_affected_colorops(struct intel_atomic_state *state);
+struct drm_property_blob *
+intel_color_crtc_lut_3d(struct intel_atomic_state *state,
+			const struct intel_crtc_state *crtc_state);
 u32 intel_color_background_color_drm_to_hw(u64 drm_background_color);
 u64 intel_color_background_color_hw_to_drm(u32 hw_background_color);
 
