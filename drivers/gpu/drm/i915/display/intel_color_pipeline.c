@@ -58,14 +58,6 @@ static const u64 intel_plane_supported_csc_ff =
 		BIT(DRM_COLOROP_FM_YCBCR2020_NC_FULL_RGB) |
 		BIT(DRM_COLOROP_FM_YCBCR2020_NC_LIMITED_RGB);
 
-static bool plane_has_3dlut(struct intel_display *display, enum pipe pipe,
-			    struct drm_plane *plane)
-{
-	return (DISPLAY_VER(display) >= 35 &&
-		intel_color_crtc_has_3dlut(display, pipe) &&
-		plane->type == DRM_PLANE_TYPE_PRIMARY);
-}
-
 static
 struct intel_colorop *intel_color_pipeline_plane_add_colorop(struct drm_plane *plane,
 							     struct intel_colorop *prev,
@@ -144,7 +136,7 @@ int _intel_color_pipeline_plane_init(struct drm_plane *plane, struct drm_prop_en
 	int ret = 0;
 	int i;
 
-	if (plane_has_3dlut(display, pipe, plane)) {
+	if (intel_color_plane_has_3dlut(display, pipe, to_intel_plane(plane)->id)) {
 		pipeline = xe3plpd_primary_plane_pipeline;
 		pipeline_len = ARRAY_SIZE(xe3plpd_primary_plane_pipeline);
 	} else if (icl_is_hdr_plane(display, to_intel_plane(plane)->id)) {
