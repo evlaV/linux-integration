@@ -3741,11 +3741,32 @@ drm_atomic_helper_duplicate_state(struct drm_device *dev,
 
 	drm_for_each_crtc(crtc, dev) {
 		struct drm_crtc_state *crtc_state;
+		struct drm_colorop *colorop;
 
 		crtc_state = drm_atomic_get_crtc_state(state, crtc);
 		if (IS_ERR(crtc_state)) {
 			err = PTR_ERR(crtc_state);
 			goto free;
+		}
+
+		/* No client cap applies here, keep the one the state was built with */
+		crtc_state->color_pipeline_enabled =
+			drm_atomic_get_old_crtc_state(state, crtc)->color_pipeline_enabled;
+
+		if (!crtc_state->color_pipeline)
+			continue;
+
+		drm_for_each_colorop(colorop, dev) {
+			struct drm_colorop_state *colorop_state;
+
+			if (colorop->crtc != crtc)
+				continue;
+
+			colorop_state = drm_atomic_get_colorop_state(state, colorop);
+			if (IS_ERR(colorop_state)) {
+				err = PTR_ERR(colorop_state);
+				goto free;
+			}
 		}
 	}
 
