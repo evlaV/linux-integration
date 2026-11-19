@@ -70,6 +70,7 @@ declare -a FILES=(
   "include/uapi/asm-generic/mman-common.h"
   "include/uapi/asm-generic/unistd.h"
   "scripts/syscall.tbl"
+  "scripts/syscall_common.tbl"
 )
 
 declare -a SYNC_CHECK_FILES=(

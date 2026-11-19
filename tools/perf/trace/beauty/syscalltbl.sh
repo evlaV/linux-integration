@@ -104,20 +104,20 @@ cat >> "$outfile" <<EOF
 
 #if defined(ALL_SYSCALLTBL) || defined(__arm__) || defined(__aarch64__)
 EOF
-build_tables "$tools_dir/perf/arch/arm/entry/syscalls/syscall.tbl" "$outfile" common,32,oabi EM_ARM
-build_tables "$tools_dir/perf/arch/arm64/entry/syscalls/syscall_64.tbl" "$outfile" common,64,renameat,rlimit,memfd_secret EM_AARCH64
+build_tables "$tools_dir/perf/arch/arm/entry/syscalls/syscall.tbl" "$outfile" common,32,oabi,clone3 EM_ARM "$tools_dir/scripts/syscall_common.tbl"
+build_tables "$tools_dir/perf/arch/arm64/entry/syscalls/syscall_64.tbl" "$outfile" common,64,renameat,rlimit,memfd_secret,clone3 EM_AARCH64 "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif // defined(ALL_SYSCALLTBL) || defined(__arm__) || defined(__aarch64__)
 
 #if defined(ALL_SYSCALLTBL) || defined(__csky__)
 EOF
-build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32,csky,time32,stat64,rlimit EM_CSKY
+build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32,csky,time32,stat64,rlimit,clone3 EM_CSKY "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif // defined(ALL_SYSCALLTBL) || defined(__csky__)
 
 #if defined(ALL_SYSCALLTBL) || defined(__mips__)
 EOF
-build_tables "$tools_dir/perf/arch/mips/entry/syscalls/syscall_n64.tbl" "$outfile" common,64,n64 EM_MIPS
+build_tables "$tools_dir/perf/arch/mips/entry/syscalls/syscall_n64.tbl" "$outfile" common,64,n64,clone3 EM_MIPS "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif // defined(ALL_SYSCALLTBL) || defined(__mips__)
 
@@ -141,15 +141,15 @@ cat >> "$outfile" <<EOF
 #if defined(ALL_SYSCALLTBL) || defined(__riscv)
 #if __BITS_PER_LONG != 64
 EOF
-build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32,riscv,memfd_secret EM_RISCV
+build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32,riscv,memfd_secret,clone3 EM_RISCV "$tools_dir/scripts/syscall_common.tbl"
 echo "#else" >> "$outfile"
-build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,64,riscv,rlimit,memfd_secret EM_RISCV
+build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,64,riscv,rlimit,memfd_secret,clone3 EM_RISCV "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif //__BITS_PER_LONG != 64
 #endif // defined(ALL_SYSCALLTBL) || defined(__riscv)
 #if defined(ALL_SYSCALLTBL) || defined(__s390x__)
 EOF
-build_tables "$tools_dir/perf/arch/s390/entry/syscalls/syscall.tbl" "$outfile" common,64,renameat,rlimit,memfd_secret EM_S390
+build_tables "$tools_dir/perf/arch/s390/entry/syscalls/syscall.tbl" "$outfile" common,64,renameat,rlimit,memfd_secret,clone3 EM_S390 "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif // defined(ALL_SYSCALLTBL) || defined(__s390x__)
 
@@ -162,9 +162,9 @@ cat >> "$outfile" <<EOF
 #if defined(ALL_SYSCALLTBL) || defined(__sparc64__) || defined(__sparc__)
 #if __BITS_PER_LONG != 64
 EOF
-build_tables "$tools_dir/perf/arch/sparc/entry/syscalls/syscall.tbl" "$outfile" common,32 EM_SPARC
+build_tables "$tools_dir/perf/arch/sparc/entry/syscalls/syscall.tbl" "$outfile" common,32,clone3 EM_SPARC "$tools_dir/scripts/syscall_common.tbl"
 echo "#else" >> "$outfile"
-build_tables "$tools_dir/perf/arch/sparc/entry/syscalls/syscall.tbl" "$outfile" common,64 EM_SPARC
+build_tables "$tools_dir/perf/arch/sparc/entry/syscalls/syscall.tbl" "$outfile" common,64,clone3 EM_SPARC "$tools_dir/scripts/syscall_common.tbl"
 cat >> "$outfile" <<EOF
 #endif //__BITS_PER_LONG != 64
 #endif // defined(ALL_SYSCALLTBL) || defined(__sparc64__) || defined(__sparc__)
@@ -184,9 +184,9 @@ cat >> "$outfile" <<EOF
 
 #if __BITS_PER_LONG != 64
 EOF
-build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32 EM_NONE
+build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,32,clone3 EM_NONE "$tools_dir/scripts/syscall_common.tbl"
 echo "#else" >> "$outfile"
-build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,64 EM_NONE
+build_tables "$tools_dir/scripts/syscall.tbl" "$outfile" common,64,clone3 EM_NONE "$tools_dir/scripts/syscall_common.tbl"
 echo "#endif //__BITS_PER_LONG != 64" >> "$outfile"
 
 build_outer_table() {
