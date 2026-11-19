@@ -36,14 +36,24 @@ build_tables() {
 	outfile="$2"
 	abis=$(echo "($3)" | tr ',' '|')
 	e_machine="$4"
+	common_tbl="$5"
 
 	if [ ! -f "$infile" ]
 	then
 		echo "Missing file $infile"
 		exit 1
 	fi
+
+	# if there's a common syscall table, join to the arch table
+	if [ -f "$common_tbl" ]
+	then
+		aux_file=$(mktemp /tmp/syscalltbl.XXXXXX)
+		cat "$common_tbl" "$infile" > "$aux_file"
+		infile="$aux_file"
+	fi
+
 	sorted_table=$(mktemp /tmp/syscalltbl.XXXXXX)
-	grep -E "^[0-9]+[[:space:]]+$abis" "$infile" | sort -n > "$sorted_table"
+	grep -E "^[0-9]+[[:space:]]+$abis+[[:space:]]" "$infile" | sort -n > "$sorted_table"
 
 	echo "static const char *const syscall_num_to_name_${e_machine}[] = {" >> "$outfile"
 	# the params are: nr abi name entry compat
@@ -60,13 +70,15 @@ build_tables() {
 	# those without. This default behavior of sort differs from that of
 	# strcmp used at runtime. Use sed to strip the trailing 0s suffix
 	# afterwards.
-	grep -E "^[0-9]+[[:space:]]+$abis" "$infile" | awk '{printf $3; for (i = length($3); i < 20; i++) { printf "0"; }; print " " $1}'| sort | sed 's/\([a-zA-Z1-9]\+\)0\+ \([0-9]\+\)/\1 \2/' > "$sorted_table"
+	grep -E "^[0-9]+[[:space:]]+$abis+[[:space:]]" "$infile" | awk '{printf $3; for (i = length($3); i < 20; i++) { printf "0"; }; print " " $1}'| sort | sed 's/\([a-zA-Z1-9]\+\)0\+ \([0-9]\+\)/\1 \2/' > "$sorted_table"
 	while read -r name nr; do
 		echo "	$nr,	/* $name */" >> "$outfile"
 	done < "$sorted_table"
 	echo "};" >> "$outfile"
 
 	rm -f "$sorted_table"
+
+	rm -f "$aux_file"
 }
 
 rm -f "$outfile"
