@@ -920,9 +920,6 @@ struct drm_get_cap {
  * the hidden model to default values.
  *
  * The client must enable &DRM_CLIENT_CAP_ATOMIC first.
- *
- * This client cap can only be set if the driver sets the corresponding driver
- * cap &DRM_CAP_CRTC_COLOR_PIPELINE.
  */
 #define DRM_CLIENT_CAP_CRTC_COLOR_PIPELINE	8
 
