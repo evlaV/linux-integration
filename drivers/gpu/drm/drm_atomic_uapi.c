@@ -1696,6 +1696,32 @@ static void complete_signaling(struct drm_device *dev,
 }
 
 static void
+reset_crtc_color_mgmt_props(struct drm_atomic_commit *state,
+			    struct drm_file *file_priv,
+			    bool async_flip)
+{
+	struct drm_crtc_state *crtc_state;
+	struct drm_crtc *crtc;
+	bool changed;
+	int i;
+
+	/* Async page flip doesn't change properties */
+	if (async_flip)
+		return;
+
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+		if (file_priv->crtc_color_pipeline) {
+			changed = drm_property_replace_blob(&crtc_state->degamma_lut, NULL);
+			changed |= drm_property_replace_blob(&crtc_state->ctm, NULL);
+			changed |= drm_property_replace_blob(&crtc_state->gamma_lut, NULL);
+		} else {
+			changed = drm_atomic_set_colorop_for_crtc(crtc_state, NULL);
+		}
+		crtc_state->color_mgmt_changed |= changed;
+	}
+}
+
+static void
 set_async_flip(struct drm_atomic_commit *state)
 {
 	struct drm_crtc *crtc;
@@ -1852,6 +1878,8 @@ retry:
 
 		drm_mode_object_put(obj);
 	}
+
+	reset_crtc_color_mgmt_props(state, file_priv, async_flip);
 
 	ret = prepare_signaling(dev, state, arg, file_priv, &fence_state,
 				&num_fences);

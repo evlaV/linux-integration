@@ -277,8 +277,10 @@ struct drm_crtc_state {
 	/**
 	 * @color_pipeline:
 	 *
-	 * The first colorop of the active color pipeline, or NULL, if no
-	 * color pipeline is active.
+	 * The first colorop of the active color pipeline, or NULL, if no color
+	 * pipeline is active. Drivers program CRTC color management from this
+	 * pipeline when it is set, and from @degamma_lut, @ctm and @gamma_lut
+	 * properties otherwise.
 	 */
 	struct drm_colorop *color_pipeline;
 

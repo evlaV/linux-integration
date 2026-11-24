@@ -915,6 +915,10 @@ struct drm_get_cap {
  * - DEGAMMA_LUT
  * - CTM
  *
+ * Userspace can only see one CRTC color management model. On every CRTC
+ * included in an atomic commit, the DRM core resets CRTC color properties of
+ * the hidden model to default values.
+ *
  * The client must enable &DRM_CLIENT_CAP_ATOMIC first.
  *
  * This client cap can only be set if the driver sets the corresponding driver
