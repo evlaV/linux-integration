@@ -301,12 +301,17 @@ EXPORT_SYMBOL(drm_atomic_set_colorop_for_plane);
  *
  * Helper function to select the color pipeline on a crtc by setting
  * it to the first drm_colorop element of the pipeline.
+ *
+ * Return: true if CRTC color pipeline value changed, false otherwise.
  */
-void
+bool
 drm_atomic_set_colorop_for_crtc(struct drm_crtc_state *crtc_state,
 				 struct drm_colorop *colorop)
 {
 	struct drm_crtc *crtc = crtc_state->crtc;
+
+	if (crtc_state->color_pipeline == colorop)
+		return false;
 
 	if (colorop)
 		drm_dbg_atomic(crtc->dev,
@@ -319,6 +324,8 @@ drm_atomic_set_colorop_for_crtc(struct drm_crtc_state *crtc_state,
 			       crtc->base.id, crtc->name, crtc_state);
 
 	crtc_state->color_pipeline = colorop;
+
+	return true;
 }
 EXPORT_SYMBOL(drm_atomic_set_colorop_for_crtc);
 
@@ -449,7 +456,8 @@ static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 		if (val && !colorop)
 			return -EACCES;
 
-		drm_atomic_set_colorop_for_crtc(state, colorop);
+		state->color_mgmt_changed |=
+			drm_atomic_set_colorop_for_crtc(state, colorop);
 	} else if (property == config->prop_mode_id) {
 		struct drm_property_blob *mode =
 			drm_property_lookup_blob(dev, val);
