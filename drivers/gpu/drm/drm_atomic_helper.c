@@ -3730,6 +3730,7 @@ drm_atomic_helper_duplicate_state(struct drm_device *dev,
 	struct drm_connector_list_iter conn_iter;
 	struct drm_plane *plane;
 	struct drm_crtc *crtc;
+	struct drm_colorop *colorop;
 	int err = 0;
 
 	state = drm_atomic_commit_alloc(dev);
@@ -3745,6 +3746,23 @@ drm_atomic_helper_duplicate_state(struct drm_device *dev,
 		crtc_state = drm_atomic_get_crtc_state(state, crtc);
 		if (IS_ERR(crtc_state)) {
 			err = PTR_ERR(crtc_state);
+			goto free;
+		}
+	}
+
+	/*
+	 * Add all CRTC colorops, active or not, so their settings survive the
+	 * colorop reset done on resume.
+	 */
+	drm_for_each_colorop(colorop, dev) {
+		struct drm_colorop_state *colorop_state;
+
+		if (!colorop->crtc)
+			continue;
+
+		colorop_state = drm_atomic_get_colorop_state(state, colorop);
+		if (IS_ERR(colorop_state)) {
+			err = PTR_ERR(colorop_state);
 			goto free;
 		}
 	}
