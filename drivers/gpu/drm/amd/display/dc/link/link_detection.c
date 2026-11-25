@@ -882,13 +882,12 @@ static void verify_link_capability_non_destructive(struct dc_link *link)
 		else
 			link->verified_link_cap = dp_get_max_link_cap(link);
 	} else if (dc_is_hdmi_signal(link->local_sink->sink_signal)) {
-		link->frl_verified_link_cap = link->frl_reported_link_cap;
+		link->verified_link_cap = link->reported_link_cap;
 
 		if (is_hdmi_frl_in_use(link)) {
 			link->local_sink->sink_signal = SIGNAL_TYPE_HDMI_TYPE_A;
 			link->frl_verified_link_cap.frl_link_rate = HDMI_FRL_LINK_RATE_DISABLE;
 		}
-
 	}
 }
 
@@ -934,7 +933,7 @@ static bool should_verify_link_capability_destructively(struct dc_link *link,
 		destrictive = true;
 		if (is_hdmi_frl_in_use(link)) {
 			destrictive = false;
-		} else if (link->local_sink->edid_caps.panel_patch.skip_frl_pre_training) {
+		} else if (link->dc->config.skip_frl_pretraining) {
 			for (i = 0; i < MAX_PIPES; i++) {
 				if (pipes[i].stream != NULL &&
 					pipes[i].stream->link == link) {
@@ -944,8 +943,6 @@ static bool should_verify_link_capability_destructively(struct dc_link *link,
 					}
 				}
 			}
-		} else if (link->dc->debug.skip_detection_link_training) {
-			destrictive = false;
 		}
 	}
 

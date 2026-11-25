@@ -183,7 +183,6 @@ struct dc_panel_patch {
 	unsigned int force_frl;
 	unsigned int vsdb_rcc_wa;
 	unsigned int delay_hdmi_link_training;
-	unsigned int skip_frl_pre_training;
 	unsigned int skip_avmute;
 	unsigned int skip_audio_sab_check;
 	unsigned int mst_start_top_delay;
@@ -194,7 +193,6 @@ struct dc_panel_patch {
 	bool oled_optimize_display_on;
 	unsigned int force_mst_blocked_discovery;
 	unsigned int wait_after_dpcd_poweroff_ms;
-	unsigned int force_freesync_min_hz;
 };
 
 /**
@@ -684,8 +682,7 @@ union dmcu_psr_level {
 		unsigned int SKIP_SINGLE_OTG_DISABLE:1;
 		unsigned int DISABLE_ALPM:1;
 		unsigned int ALPM_DEFAULT_PD_MODE:1;
-		unsigned int FORCE_P2CPM:1;
-		unsigned int RESERVED:19;
+		unsigned int RESERVED:20;
 	} bits;
 	unsigned int u32all;
 };
