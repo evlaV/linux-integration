@@ -2,7 +2,7 @@
 VERSION = 7
 PATCHLEVEL = 2
 SUBLEVEL = 15
-EXTRAVERSION = -valve1
+EXTRAVERSION = -valve1-nofrl
 NAME = Baby Opossum Posse
 
 # *DOCUMENTATION*
