@@ -4747,12 +4747,9 @@ static ssize_t rtw89_debug_priv_stations_get(struct rtw89_dev *rtwdev,
 		       (int)sizeof(rtwdev->pkt_offload),
 		       rtwdev->pkt_offload);
 
-	for (idx = NL80211_BAND_2GHZ; idx < NUM_NL80211_BANDS; idx++) {
-		if (!(rtwdev->chip->support_bands & BIT(idx)))
-			continue;
+	for_each_set_bit(idx, rtwdev->supported_bands, NUM_NL80211_BANDS)
 		p += rtw89_dump_pkt_offload(p, end - p, &rtwdev->scan_info.pkt_list[idx],
 					    "\t\t[SCAN %u]: ", idx);
-	}
 
 	rtw89_debugfs_iter_data_setup(&iter_data, p, end - p);
 	ieee80211_iterate_active_interfaces_atomic(rtwdev->hw,
@@ -4780,6 +4777,7 @@ static const struct rtw89_disabled_dm_info {
 	DM_INFO(INACTIVE_PS),
 	DM_INFO(DIG_PD),
 	DM_INFO(VCORE),
+	DM_INFO(REGD_LEARN),
 };
 
 static ssize_t
