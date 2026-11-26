@@ -411,6 +411,16 @@ void amdgpu_dm_update_stream_irq_parameters(
 	spin_lock_irqsave(&adev_to_drm(adev)->event_lock, flags);
 	vrr_params = acrtc->dm_irq_params.vrr_params;
 
+	/*
+	 * The vtotal limits are in lines of the timing they were calculated
+	 * for. Rebuild them when a modeset replaces that timing.
+	 */
+	if (drm_atomic_crtc_needs_modeset(&new_crtc_state->base)) {
+		memset(&vrr_params, 0, sizeof(vrr_params));
+		vrr_params.adjust.v_total_min = new_stream->timing.v_total;
+		vrr_params.adjust.v_total_max = new_stream->timing.v_total;
+	}
+
 	if (new_crtc_state->vrr_supported &&
 	    config.min_refresh_in_uhz &&
 	    config.max_refresh_in_uhz) {
