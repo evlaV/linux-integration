@@ -413,6 +413,7 @@ enum rtw89_mac_c2h_ofld_func {
 	RTW89_MAC_C2H_FUNC_SCANOFLD_RSP = 0x9,
 	RTW89_MAC_C2H_FUNC_TX_DUTY_RPT = 0xa,
 	RTW89_MAC_C2H_FUNC_BCNFLTR_RPT = 0xd,
+	RTW89_MAC_C2H_FUNC_REGD_LEARN = 0x24,
 	RTW89_MAC_C2H_FUNC_OFLD_MAX,
 };
 
@@ -1094,6 +1095,10 @@ struct rtw89_mac_gen_def {
 	void (*bf_assoc)(struct rtw89_dev *rtwdev,
 			 struct rtw89_vif_link *rtwvif_link,
 			 struct rtw89_sta_link *rtwsta_link);
+	void (*mlo_link_cfg)(struct rtw89_dev *rtwdev,
+			     struct rtw89_vif_link *rtwvif_link,
+			     bool enable);
+	void (*init_drv_txen)(struct rtw89_dev *rtwdev);
 
 	int (*typ_fltr_opt)(struct rtw89_dev *rtwdev,
 			    enum rtw89_machdr_frame_type type,
@@ -1542,6 +1547,26 @@ void rtw89_mac_bf_assoc(struct rtw89_dev *rtwdev,
 
 	if (mac->bf_assoc)
 		mac->bf_assoc(rtwdev, rtwvif_link, rtwsta_link);
+}
+
+static inline
+void rtw89_mac_mlo_link_cfg(struct rtw89_dev *rtwdev,
+			    struct rtw89_vif_link *rtwvif_link,
+			    bool enable)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (mac->mlo_link_cfg)
+		mac->mlo_link_cfg(rtwdev, rtwvif_link, enable);
+}
+
+static inline
+void rtw89_mac_init_drv_txen(struct rtw89_dev *rtwdev)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (mac->init_drv_txen)
+		mac->init_drv_txen(rtwdev);
 }
 
 void rtw89_mac_bf_disassoc(struct rtw89_dev *rtwdev,
